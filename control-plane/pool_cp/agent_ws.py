@@ -100,6 +100,7 @@ async def _authenticate(ws: WebSocket, nonce: bytes) -> tuple[pm.Hello, Device, 
         device.policy_digest = hello.policy_digest
         device.agent_version = hello.agent_version
         device.last_seen_at = utcnow()
+        await core.sync_shares_from_policy(s, device)
         stale = await core.reconcile_on_hello(s, settings, device.id, hello.running)
         await s.commit()
     return hello, device, stale
@@ -186,6 +187,8 @@ async def _dispatch(app, device_id: uuid.UUID, msg) -> pm._Msg | list | None:  #
                 device.owner_active = msg.owner_active
                 if msg.shares is not None:
                     device.reported_shares = [x.model_dump(mode="json") for x in msg.shares]
+                # Every heartbeat, so a group the owner joins later is picked up without a reconnect.
+                await core.sync_shares_from_policy(s, device)
                 renewed, stale = await core.renew_leases(s, settings, device_id, msg.running)
                 await s.commit()
                 return pm.HeartbeatAck(renewed=renewed, stale=stale, lease_expires_at=utcnow() + _ttl(settings))

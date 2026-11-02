@@ -76,13 +76,29 @@ def presign_put(settings: Settings, group_id: uuid.UUID, sha256: str, size: int)
     return url, expires
 
 
-def presign_get(settings: Settings, group_id: uuid.UUID, sha256: str) -> str | None:
+def presign_get(settings: Settings, group_id: uuid.UUID, sha256: str, filename: str | None = None) -> str | None:
+    """Short-lived download URL. With filename, the browser saves the file under that name."""
     if not enabled(settings):
         return None
-    return _signing_client(settings).generate_presigned_url(
-        "get_object", Params={"Bucket": settings.s3_bucket, "Key": object_key(group_id, sha256)},
-        ExpiresIn=settings.presign_ttl_s,
-    )
+    params = {"Bucket": settings.s3_bucket, "Key": object_key(group_id, sha256)}
+    if filename:
+        safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in filename)[:200] or "output"
+        params["ResponseContentDisposition"] = f'attachment; filename="{safe}"'
+    return _signing_client(settings).generate_presigned_url("get_object", Params=params,
+                                                             ExpiresIn=settings.presign_ttl_s)
+
+
+def object_exists(settings: Settings, group_id: uuid.UUID, sha256: str) -> bool:
+    """Whether the store holds this object (blocking; call it from a thread)."""
+    from botocore.exceptions import ClientError
+
+    try:
+        _internal_client(settings).head_object(Bucket=settings.s3_bucket, Key=object_key(group_id, sha256))
+        return True
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
+            return False
+        raise
 
 
 def ensure_bucket(settings: Settings) -> str:

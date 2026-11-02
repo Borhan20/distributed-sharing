@@ -127,6 +127,7 @@ D = denial of service, E = elevation of privilege.
 | R | Owner cannot tell what ran on their machine | "What ran here" view from audit and attempts; local status command | Implemented in slice 1 (server view); tray icon planned |
 | D | Owner loses use of their machine | Time windows, idle-only, limits, kill switch | Kill switch and limits in slice 1; idle detection needs spike S4 |
 | E | Parser bug in protocol handling | Go is memory-safe; fuzzing of parsers | Fuzzing planned phase 5 |
+| E | Stolen device key joins more groups (one-step sharing: the server records a share for every group the agent's policy offers) | Only groups where the device's owner is already a member with a sharing role; audit event `device.share` with source `local_policy`; a share turned off in the web UI stays off; 24 h certificates and revocation | Implemented (step 0 of `docs/design/easy-onboarding.md`); **needs security review** |
 
 ### 3.5 Sandbox (job container)
 
@@ -147,6 +148,7 @@ D = denial of service, E = elevation of privilege.
 | T | Device overwrites another task's output by claiming its hash | Same signed checksum: a device can only store the exact bytes for a hash | Implemented; tested in `tests/e2e/test_object_store.py` |
 | E | Control-plane store credentials too broad | Example identity limited to the `pool-artifacts` bucket (`Admin:`, `Read:`, `Write:`, `List:`, `Tagging:` scoped to it); agents never see the keys | Implemented in `deploy/seaweedfs-s3.json.example` |
 | I | Leaked presigned URL | 15 min expiry; bucket per group | Expiry in slice 1; bucket per group planned |
+| I | Group member downloads another member's outputs | By design: group members see the group's jobs, logs and outputs (same as logs). Download links are issued only to group members, per file, for 15 minutes; the file name in the link is sanitised | Implemented; revisit with data classes |
 | I | Data at rest on store host | Encryption at rest | Deployment config; open |
 
 ### 3.7 Identity provider and device CA
@@ -165,6 +167,7 @@ D = denial of service, E = elevation of privilege.
 | I | CLI token stolen from disk | Config file mode 0600; scoped, expiring tokens | 0600 in slice 1; scoped tokens planned |
 | T | XSS in job names or logs shown in UI | React escaping; never render logs as HTML | Implemented in slice 1; needs review |
 | S | CSRF | Bearer tokens, not cookies | Implemented in slice 1 |
+| T | Malicious output path writes outside the download folder (`pool download`) | Output paths come from devices and are untrusted: the CLI refuses absolute paths and `..`, resolves inside the target folder, and saves a file only after its SHA-256 matches | Implemented; unit-tested |
 
 ## 4. The 12 threats from the plan (§8.2)
 

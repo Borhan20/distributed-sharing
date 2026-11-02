@@ -115,3 +115,22 @@ ul.plain li { padding: 6px 0; border-bottom: 1px solid var(--border); }
   main { padding: 10px; }
   .kv { grid-template-columns: 1fr; }
 }
+
+/* Numbered how-to steps (Devices page, Guide) */
+.steps { padding-left: 1.4em; margin: 8px 0; }
+.steps > li { margin: 10px 0; }
+.steps > li .row { margin: 6px 0; flex-wrap: wrap; }
+.steps > li > button { margin-top: 6px; }
+
+/* Plain-language "why is this waiting" box on the job page */
+.waiting { border-left: 4px solid var(--warn-border, #d4a017); }
+.waiting ul { margin: 6px 0 0; padding-left: 1.2em; }
+.waiting li { margin: 6px 0; }
+.waiting .hint { display: block; color: var(--muted); margin-top: 2px; }
+
+/* Guide page */
+.guide-nav { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 16px; }
+.guide-nav a { padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; text-decoration: none; }
+.guide-nav a.mine { border-color: var(--accent, #2563eb); font-weight: 600; }
+.guide section h2 { margin-top: 0; }
+.guide pre { background: var(--code-bg); padding: 10px; border-radius: 8px; overflow-x: auto; }

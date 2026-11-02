@@ -171,10 +171,13 @@ class RevokedCert(Base):
 
 
 class DeviceShare(Base):
-    """Server-side record that an owner shared a device with a group.
+    """Server-side record that a device is shared with a group.
 
-    The agent's local policy is still the final say (plan §6.4); a task is only
-    offered when both this row and the agent's reported policy allow it.
+    Created when the owner shares in the web UI, or automatically when the
+    agent's local policy offers a group the owner belongs to (one-step sharing,
+    docs/design/easy-onboarding.md). enabled = false means the owner switched
+    it off on the server. The local policy is still the final say (plan §6.4):
+    a task is only offered when this row is enabled and the policy allows it.
     """
 
     __tablename__ = "device_shares"

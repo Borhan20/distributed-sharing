@@ -75,3 +75,36 @@ spec:
     hist = cli("devices", "history", agent.device_id).output
     assert "sweep" in hist and "succeeded" in hist
     await agent.close()
+
+
+async def test_download_refuses_paths_outside_the_folder(tmp_path):
+    from pool_cli.main import ApiError, safe_target
+
+    assert safe_target(tmp_path, "result.txt") == (tmp_path / "result.txt").resolve()
+    assert safe_target(tmp_path, "sub/dir/x.bin") == (tmp_path / "sub/dir/x.bin").resolve()
+    for bad in ("../escape.txt", "/etc/passwd", "a/../../b", ""):
+        with pytest.raises(ApiError):
+            safe_target(tmp_path, bad)
+
+
+async def test_cli_download_explains_missing_file_store(cli, tmp_path, enrolled, user):
+    g = gname()
+    cli("groups", "create", g, "--template", "research-team")
+    owner_name = cli("whoami").output.split()[0]
+    owner = await user(owner_name)
+    agent = await enrolled(owner)
+    await agent.connect([share(g)])
+    spec = tmp_path / "one.yaml"
+    spec.write_text(f"""
+apiVersion: pool/v1alpha1
+kind: Job
+metadata: {{name: one, group: {g}}}
+spec:
+  image: {IMG}
+  command: ["sh", "-c", "echo hi > /out/result.txt"]
+""")
+    job_id = cli("submit", str(spec)).output.strip().split("id=")[1]
+    assert (await agent.run_task(await agent.ready())).accepted
+    res = cli("download", job_id, "-o", str(tmp_path / "out"), ok=False)
+    assert res.exit_code != 0 and "no file store" in str(res.exception), res.exception
+    assert not (tmp_path / "out").exists(), "nothing is written when the download cannot start"

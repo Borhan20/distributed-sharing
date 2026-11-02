@@ -22,6 +22,10 @@ type Info struct {
 	GPUs       []protocol.GPUInfo
 }
 
+// TotalMemoryMB returns the computer's RAM in MiB, or 0 if unknown. Unlike
+// Collect it does not probe GPUs.
+func TotalMemoryMB() int64 { return memoryMB() }
+
 // Collect gathers device facts. workDir is where attempt data is stored.
 func Collect(workDir string) Info {
 	info := Info{OS: runtime.GOOS, Arch: runtime.GOARCH, CPUCores: runtime.NumCPU()}

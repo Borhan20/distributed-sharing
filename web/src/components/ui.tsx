@@ -14,6 +14,15 @@ export function Loading({ what = "Loading" }: { what?: string }) {
   return <p className="muted" aria-live="polite">{what}…</p>;
 }
 
+/** Plain text where `backtick` parts are shown as code (used for server-written hints). */
+export function RichText({ text }: { text: string }) {
+  return (
+    <>
+      {text.split("`").map((part, i) => (i % 2 === 1 ? <code key={i}>{part}</code> : <span key={i}>{part}</span>))}
+    </>
+  );
+}
+
 export function Empty({ children }: { children: ReactNode }) {
   return <p className="muted">{children}</p>;
 }

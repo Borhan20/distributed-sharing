@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import itertools
 import json
 import sys
@@ -365,6 +366,54 @@ def logs(job_id: str, task: int = typer.Option(0, help="Task index"),
             if task >= len(tasks) or tasks[task]["state"] in TERMINAL:
                 return
             time.sleep(2)
+
+
+# SECURITY-SENSITIVE: input handling of untrusted paths. Needs security review (plan §8.10).
+def safe_target(out_dir: Path, rel: str) -> Path:
+    """Where to save an output file. Output paths come from the computer that ran the task, so they are
+    untrusted: refuse absolute paths and anything that would leave out_dir."""
+    parts = Path(rel).parts
+    if not parts or Path(rel).is_absolute() or ".." in parts:
+        raise ApiError(f"refusing unsafe output path {rel!r}")
+    base = out_dir.resolve()
+    target = (base / rel).resolve()
+    if base != target and base not in target.parents:
+        raise ApiError(f"refusing unsafe output path {rel!r}")
+    return target
+
+
+@app.command()
+def download(job_id: str, task: int = typer.Option(0, help="Task index"),
+             path: str = typer.Option(None, help="One output file (default: all of the task's outputs)"),
+             out: Path = typer.Option(Path("."), "--out", "-o", help="Folder to save into")) -> None:
+    """Download a finished task's output files and check their SHA-256."""
+    tasks = api("GET", f"/api/v1/jobs/{job_id}/tasks")
+    row = next((t for t in tasks if t["index"] == task), None)
+    if row is None:
+        raise ApiError(f"job has no task {task}")
+    outputs = (row.get("result") or {}).get("outputs") or []
+    if path:
+        outputs = [o for o in outputs if o["path"] == path]
+    if not outputs:
+        raise ApiError("no output files for that task" + (f" named {path!r}" if path else " yet"))
+    for o in outputs:
+        target = safe_target(out, o["path"])
+        link = api("GET", f"/api/v1/jobs/{job_id}/tasks/{task}/download", params={"path": o["path"]})
+        digest = hashlib.sha256()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(target.name + ".part")
+        with httpx.stream("GET", link["url"], timeout=60) as r:
+            if r.status_code != 200:
+                raise ApiError(f"download of {o['path']} failed: HTTP {r.status_code}")
+            with open(tmp, "wb") as f:
+                for chunk in r.iter_bytes():
+                    digest.update(chunk)
+                    f.write(chunk)
+        if digest.hexdigest() != o["sha256"]:
+            tmp.unlink(missing_ok=True)
+            raise ApiError(f"{o['path']}: checksum does not match; file not saved")
+        tmp.replace(target)
+        typer.echo(f"saved {target} ({o['size']} bytes, sha256 ok)")
 
 
 @app.command()

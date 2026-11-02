@@ -398,6 +398,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/jobs/{job_id}/waiting": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Job Waiting
+         * @description Why tasks of this job are waiting, in plain language. Empty when nothing waits.
+         */
+        get: operations["job_waiting_api_v1_jobs__job_id__waiting_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/jobs/{job_id}/tasks/{index}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download Output
+         * @description A short-lived link to download one output file of a finished task (group members only).
+         */
+        get: operations["download_output_api_v1_jobs__job_id__tasks__index__download_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/jobs/{job_id}/tasks": {
         parameters: {
             query?: never;
@@ -677,6 +717,11 @@ export interface components {
             /** Shared With */
             shared_with: string[];
             /**
+             * Turned Off
+             * @description Groups the owner switched off on the server
+             */
+            turned_off: string[];
+            /**
              * Cert Not After
              * Format: date-time
              */
@@ -690,6 +735,20 @@ export interface components {
             always_on?: boolean | null;
             /** Org Owned Dedicated */
             org_owned_dedicated?: boolean | null;
+        };
+        /** DownloadOut */
+        DownloadOut: {
+            /** Path */
+            path: string;
+            /** Size */
+            size: number;
+            /** Url */
+            url: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
         };
         /** EnrollRequest */
         EnrollRequest: {
@@ -960,6 +1019,13 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /** JobWaitingOut */
+        JobWaitingOut: {
+            /** Pending Tasks */
+            pending_tasks: number;
+            /** Reasons */
+            reasons: components["schemas"]["WaitingReason"][];
+        };
         /** JoinRequestCreate */
         JoinRequestCreate: {
             /**
@@ -1103,6 +1169,15 @@ export interface components {
              * @enum {string}
              */
             decision: "approve" | "reject";
+        };
+        /** WaitingReason */
+        WaitingReason: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Hint */
+            hint?: string | null;
         };
     };
     responses: never;
@@ -2041,6 +2116,71 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    job_waiting_api_v1_jobs__job_id__waiting_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobWaitingOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    download_output_api_v1_jobs__job_id__tasks__index__download_get: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path: {
+                job_id: string;
+                index: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadOut"];
                 };
             };
             /** @description Validation Error */

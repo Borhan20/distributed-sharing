@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { client, unwrap, type LogLine, type Task } from "../api/client";
 import { errorMessage } from "../api/errors";
 import { useAuth } from "../auth/AuthContext";
-import { ErrorBox, Loading, StateBadge } from "../components/ui";
+import { ErrorBox, Loading, RichText, StateBadge } from "../components/ui";
 import { TERMINAL, fmtTime } from "../lib/format";
 import { TaskCounts } from "./group/JobsTab";
 
@@ -59,6 +59,7 @@ export function JobPage() {
         )}
         <ErrorBox error={cancel.error} />
       </header>
+      {!done && <WaitingReasons jobId={id} />}
       <section className="card">
         <h2>Spec</h2>
         <dl className="kv">
@@ -126,6 +127,7 @@ export function JobPage() {
           </div>
         )}
       </section>
+      {selectedTask && <TaskOutputs jobId={j.id} task={selectedTask} />}
       {selectedTask && <TaskLogs jobId={j.id} task={selectedTask} />}
     </>
   );
@@ -135,6 +137,7 @@ function resultText(t: Task): string {
   const r = t.result as Record<string, unknown> | null;
   if (!r) return "–";
   if (r.reason) return String(r.reason);
+  if (r.error) return `${String(r.error)}${r.exit_code !== undefined ? ` (exit ${r.exit_code})` : ""}`;
   if (r.exit_code !== undefined) return `exit ${r.exit_code}`;
   return "–";
 }
@@ -204,6 +207,81 @@ function TaskLogs({ jobId, task }: { jobId: string; task: Task }) {
           );
         })}
       </pre>
+    </section>
+  );
+}
+
+/** Why tasks are still waiting, in the server's plain words (GET /jobs/{id}/waiting). */
+function WaitingReasons({ jobId }: { jobId: string }) {
+  const waiting = useQuery({
+    queryKey: ["waiting", jobId],
+    queryFn: () => unwrap(client.GET("/api/v1/jobs/{job_id}/waiting", { params: { path: { job_id: jobId } } })),
+    refetchInterval: 5000,
+  });
+  const reasons = waiting.data?.reasons ?? [];
+  if (reasons.length === 0) return null;
+  const n = waiting.data?.pending_tasks ?? 0;
+  return (
+    <section className="card waiting" aria-live="polite">
+      <h2>
+        {n} task{n === 1 ? "" : "s"} waiting: why
+      </h2>
+      <ul>
+        {reasons.map((r) => (
+          <li key={r.code}>
+            <RichText text={r.message} />
+            {r.hint && (
+              <span className="hint">
+                <RichText text={r.hint} />
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+type Output = { path: string; sha256: string; size: number };
+
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KiB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MiB`;
+}
+
+/** Files the task wrote to /out. Downloading asks the server for a short-lived link to the file store. */
+function TaskOutputs({ jobId, task }: { jobId: string; task: Task }) {
+  const outputs = (((task.result ?? {}) as { outputs?: Output[] }).outputs ?? []) as Output[];
+  const download = useMutation({
+    mutationFn: (path: string) =>
+      unwrap(
+        client.GET("/api/v1/jobs/{job_id}/tasks/{index}/download", {
+          params: { path: { job_id: jobId, index: task.index }, query: { path } },
+        }),
+      ),
+    onSuccess: (link) => window.location.assign(link.url),
+  });
+  if (task.state !== "succeeded" || outputs.length === 0) return null;
+  return (
+    <section className="card">
+      <h2>Output files — task {task.index}</h2>
+      <ul className="plain">
+        {outputs.map((o) => (
+          <li key={o.path} className="row between">
+            <span>
+              <code>{o.path}</code> <span className="muted small-text">{fmtBytes(o.size)} · sha256 {o.sha256.slice(0, 12)}…</span>
+            </span>
+            <button type="button" className="small" disabled={download.isPending} onClick={() => download.mutate(o.path)}>
+              Download
+            </button>
+          </li>
+        ))}
+      </ul>
+      <ErrorBox error={download.error} />
+      <p className="muted small-text">
+        Command line: <code>pool download {jobId} --task {task.index}</code>
+      </p>
     </section>
   );
 }
