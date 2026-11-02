@@ -1,0 +1,55 @@
+{
+  "attempt_id": "6f9e2c71-0d3b-4c8e-a1f5-3b2e9d7c6a10",
+  "device_id": "2b1d8a63-5c0e-4a51-9f1e-7f8a3a1c2d44",
+  "epoch": 2,
+  "expires_at": "2026-11-02T12:01:00Z",
+  "group": "research-team",
+  "group_id": "0e1d2c3b-4a59-4687-b5a4-c3d2e1f0a9b8",
+  "issued_at": "2026-11-02T12:00:00Z",
+  "job_id": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+  "spec": {
+    "checkpoint": {
+      "every_s": 600,
+      "path": "/ckpt"
+    },
+    "command": [
+      "python",
+      "train_probe.py",
+      "--seed",
+      "3",
+      "--dataset",
+      "imdb"
+    ],
+    "data_class": "internal",
+    "env": {
+      "PYTHONUNBUFFERED": "1"
+    },
+    "image": "registry.example.org/research/probe@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "inputs": [
+      {
+        "mount": "/data",
+        "ref": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "url": null
+      }
+    ],
+    "max_runtime_s": 7200,
+    "min_tier": "T1",
+    "network": {
+      "allow": [],
+      "egress": "none"
+    },
+    "outputs_path": "/out",
+    "resources": {
+      "cpu": 4,
+      "disk_mb": 10240,
+      "gpu_memory_mb": 8192,
+      "gpu_vendor": "nvidia",
+      "gpus": 1,
+      "memory_mb": 16384
+    }
+  },
+  "submitter": "alice",
+  "submitter_probation": false,
+  "task_id": "c3a7e5d2-8b14-4f69-9e0a-1d2c3b4a5f60",
+  "v": "v1alpha1"
+}

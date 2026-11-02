@@ -1,0 +1,571 @@
+"""Matching, leases, fencing and retries (plan §7.1-7.4).
+
+Every function takes an AsyncSession and runs inside the caller's transaction.
+The fencing rule (docs/design/phase1-implementation.md §4): a message about an
+attempt is applied only if the attempt belongs to the sending device, its
+epoch matches, it is the task's current attempt, and it is still active.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import logging
+import random
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Any
+
+from sqlalchemy import func, select, text, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from pool_protocol import messages as pm
+
+from .. import audit
+from ..ca import EnvelopeSigner
+from ..config import Settings
+from ..models import (
+    ACTIVE_ATTEMPT_STATES,
+    Attempt,
+    Device,
+    DeviceShare,
+    Group,
+    Job,
+    Membership,
+    Task,
+    TaskLog,
+    UsageLedger,
+)
+from ..timeutil import utcnow
+
+log = logging.getLogger(__name__)
+
+SHARE_ROLES = ("coordinator", "admin", "member", "contributor")
+
+
+@dataclass
+class Fenced:
+    attempt: Attempt
+    task: Task
+
+
+class FenceError(Exception):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+# --------------------------------------------------------------------------
+# Matching
+# --------------------------------------------------------------------------
+
+
+async def eligible_groups(session: AsyncSession, device: Device) -> list[tuple[Group, dict[str, Any]]]:
+    """Groups this device may serve now, in the agent's priority order.
+
+    Needs (1) a server-side share by the owner, (2) the owner still a member
+    with a role that may share, (3) an active group, and (4) the agent's local
+    policy reporting the group as active right now.
+    """
+    reported = [s for s in (device.reported_shares or []) if s.get("active_now")]
+    if not reported or device.owner_active is None:
+        return []
+    names = [s["group"] for s in reported]
+    rows = (await session.execute(
+        select(Group)
+        .join(DeviceShare, DeviceShare.group_id == Group.id)
+        .join(Membership, (Membership.group_id == Group.id) & (Membership.user_id == device.owner_id))
+        .where(DeviceShare.device_id == device.id, DeviceShare.enabled.is_(True), Group.state == "active",
+               Group.name.in_(names), Membership.role.in_(SHARE_ROLES))
+    )).scalars().all()
+    by_name = {g.name: g for g in rows}
+    return [(by_name[s["group"]], s) for s in reported if s["group"] in by_name]
+
+
+def _tier_rank(tiers: list[str]) -> int:
+    return max((pm.TIER_RANK[t] for t in tiers if t in pm.TIER_RANK), default=-1)
+
+
+async def claim_task(session: AsyncSession, settings: Settings, signer: EnvelopeSigner, device: Device,
+                     ready: pm.Ready) -> pm.Offer | None:
+    """Pick one pending task for this device and create an attempt (lease) for it."""
+    if device.state != "active":
+        return None
+    groups = await eligible_groups(session, device)
+    if not groups:
+        return None
+    caps = device.capabilities or {}
+    allowed = [t for t in ready.tiers if t in (caps.get("tiers") or [])]
+    tier_rank = _tier_rank(allowed)
+    gpu_tier_rank = _tier_rank([t for t in allowed if t in (caps.get("gpu_tiers") or [])])
+    if tier_rank < 0:
+        return None
+    max_gpu_mem = max((g.get("memory_mb", 0) for g in caps.get("gpus") or []), default=0)
+    now = utcnow()
+    # The agent's share settings per group, in its priority order (plan §6.4, §7.7).
+    shares = [{"group_id": str(g.id), "prio": i, "accept_all": sh.get("accept_from", "all-members") == "all-members",
+               "handles": [] if sh.get("accept_from", "all-members") == "all-members" else list(sh["accept_from"]),
+               "accept_new": bool(sh.get("accept_new_members", False))} for i, (g, sh) in enumerate(groups)]
+
+    params = {
+        "shares": json.dumps(shares),
+        "since": now - timedelta(days=7),
+        "now": now,
+        "cpu": ready.free.cpu,
+        "mem": ready.free.memory_mb,
+        "disk": ready.free.disk_mb if ready.free.disk_mb else 2**31 - 1,
+        "gpus": ready.free.gpus,
+        "gpu_mem": max_gpu_mem,
+        "tier": tier_rank,
+        "gpu_tier": gpu_tier_rank,
+        "os": caps.get("os", device.os),
+        "dedicated": device.org_owned_dedicated,
+        "device": device.id,
+        "decline_since": now - timedelta(seconds=settings.decline_cooldown_s),
+    }
+    # Step 1: rank the active jobs this device may run (jobs are few; tasks can
+    # be many). Order: the agent's group priority, then fair share (least
+    # CPU-seconds in the last 7 days for the submitter in that group, plan
+    # §7.7), then submission order. All hard filters except per-task ones.
+    jobs = (await session.execute(
+        text("""
+        WITH sh AS (
+            SELECT * FROM jsonb_to_recordset(CAST(:shares AS jsonb))
+                AS x(group_id uuid, prio int, accept_all bool, handles jsonb, accept_new bool)
+        ), usage AS (
+            SELECT group_id, user_id, sum(cpu_seconds) AS cpu_s
+            FROM usage_ledger
+            WHERE created_at > :since AND group_id IN (SELECT group_id FROM sh)
+            GROUP BY group_id, user_id
+        )
+        SELECT j.id, u.handle, (m.probation_until IS NOT NULL AND m.probation_until > :now) AS on_probation
+        FROM jobs j
+        JOIN sh ON sh.group_id = j.group_id
+        JOIN users u ON u.id = j.submitter_id
+        JOIN memberships m ON m.group_id = j.group_id AND m.user_id = j.submitter_id
+        LEFT JOIN usage us ON us.group_id = j.group_id AND us.user_id = j.submitter_id
+        WHERE j.state IN ('pending', 'running')
+          AND j.cpu <= :cpu AND j.memory_mb <= :mem AND j.disk_mb <= :disk AND j.gpus <= :gpus
+          AND j.gpu_memory_mb <= :gpu_mem
+          AND ((j.gpus = 0 AND j.min_tier_rank <= :tier) OR (j.gpus > 0 AND j.min_tier_rank <= :gpu_tier))
+          AND (j.os IS NULL OR j.os = :os)
+          AND (j.data_class <> 'confidential' OR (:dedicated AND :tier >= 2))
+          AND NOT j.egress
+          AND (sh.accept_all OR sh.handles ? u.handle)
+          AND (m.probation_until IS NULL OR m.probation_until <= :now OR sh.accept_new)
+          AND EXISTS (SELECT 1 FROM tasks p WHERE p.job_id = j.id AND p.state = 'pending' AND p.not_before <= :now)
+        ORDER BY sh.prio, coalesce(us.cpu_s, 0), j.created_at
+        LIMIT 10
+        """), params,
+    )).all()
+    # Step 2: lock one runnable task of the best job with SKIP LOCKED, so
+    # concurrent agents never get the same task and never wait for each other
+    # (plan D7). Index order (ix_tasks_job_pending) keeps this O(1) for large
+    # arrays. Tasks that already failed on this device are only taken when
+    # nothing else is left.
+    pick = """
+        SELECT t.id FROM tasks t
+        WHERE t.job_id = :job AND t.state = 'pending' AND t.not_before <= :now
+          AND NOT EXISTS (
+              SELECT 1 FROM attempts a
+              WHERE a.task_id = t.id AND a.device_id = :device
+                AND (a.state = 'failed' OR (a.state = 'declined' AND a.created_at > :decline_since)))
+        ORDER BY t.index
+        LIMIT 1
+        FOR UPDATE OF t SKIP LOCKED
+    """
+    fallback = """
+        SELECT t.id FROM tasks t
+        WHERE t.job_id = :job AND t.state = 'pending' AND t.not_before <= :now
+          AND NOT EXISTS (
+              SELECT 1 FROM attempts a
+              WHERE a.task_id = t.id AND a.device_id = :device
+                AND a.state = 'declined' AND a.created_at > :decline_since)
+        ORDER BY t.index
+        LIMIT 1
+        FOR UPDATE OF t SKIP LOCKED
+    """
+    row = None
+    for job_id, submitter_handle, on_probation in jobs:
+        args = {"job": job_id, "now": now, "device": device.id, "decline_since": params["decline_since"]}
+        task_id = (await session.execute(text(pick), args)).scalar()
+        if task_id is None:
+            task_id = (await session.execute(text(fallback), args)).scalar()
+        if task_id is not None:
+            row = (task_id, submitter_handle, on_probation)
+            break
+    if row is None:
+        return None
+    task_id, submitter_handle, on_probation = row
+    task = await session.get(Task, task_id)
+    group = next(g for g, _ in groups if g.id == task.group_id)
+    return await _assign(session, settings, signer, device, task, submitter_handle, group, on_probation, now)
+
+
+async def _assign(session: AsyncSession, settings: Settings, signer: EnvelopeSigner, device: Device, task: Task,
+                  submitter_handle: str, group: Group, on_probation: bool, now: datetime) -> pm.Offer:
+    epoch = task.epoch + 1
+    attempt = Attempt(id=uuid.uuid4(), task_id=task.id, device_id=device.id, epoch=epoch, state="assigned",
+                      lease_expires_at=now + timedelta(seconds=settings.lease_ttl_s))
+    session.add(attempt)
+    task.epoch = epoch
+    task.state = "assigned"
+    task.current_attempt_id = attempt.id
+    task.attempts_count += 1
+    expires = now + timedelta(seconds=settings.lease_ttl_s)
+    envelope = pm.TaskEnvelope(
+        attempt_id=str(attempt.id), task_id=str(task.id), job_id=str(task.job_id), epoch=epoch, group=group.name,
+        group_id=str(group.id), submitter=submitter_handle, submitter_probation=on_probation,
+        device_id=str(device.id), issued_at=now, expires_at=expires, spec=pm.TaskSpec.model_validate(task.spec),
+    )
+    payload = envelope.model_dump_json().encode()
+    await session.flush()
+    return pm.Offer(
+        attempt_id=str(attempt.id), task_id=str(task.id), epoch=epoch, expires_at=expires,
+        envelope=pm.SignedEnvelope(key_id=signer.key_id, payload_b64=base64.b64encode(payload).decode(),
+                                   signature_b64=signer.sign(payload)),
+    )
+
+
+# --------------------------------------------------------------------------
+# Fencing
+# --------------------------------------------------------------------------
+
+
+async def fence(session: AsyncSession, device_id: uuid.UUID, attempt_id: str, epoch: int,
+                states: tuple[str, ...] = ACTIVE_ATTEMPT_STATES) -> Fenced:
+    try:
+        aid = uuid.UUID(attempt_id)
+    except ValueError:
+        raise FenceError("unknown_attempt") from None
+    attempt = (await session.execute(select(Attempt).where(Attempt.id == aid).with_for_update())).scalar_one_or_none()
+    if attempt is None or attempt.device_id != device_id:
+        raise FenceError("unknown_attempt")
+    task = (await session.execute(select(Task).where(Task.id == attempt.task_id).with_for_update())).scalar_one()
+    if attempt.epoch != epoch or task.epoch != epoch or task.current_attempt_id != attempt.id:
+        raise FenceError("stale_epoch")
+    if attempt.state not in states:
+        raise FenceError(f"attempt_{attempt.state}")
+    return Fenced(attempt, task)
+
+
+def _backoff(settings: Settings, failures: int) -> timedelta:
+    base = min(settings.retry_base_s * (2 ** max(failures - 1, 0)), settings.retry_max_s)
+    return timedelta(seconds=base * random.uniform(0.8, 1.2))  # noqa: S311 (jitter, not security)
+
+
+def _end_attempt(attempt: Attempt, state: str, reason: str, now: datetime) -> None:
+    attempt.state = state
+    attempt.end_reason = reason
+    attempt.ended_at = now
+
+
+async def _record_usage(session: AsyncSession, attempt: Attempt, task: Task, now: datetime) -> None:
+    if not attempt.started_at:
+        return
+    job = await session.get(Job, task.job_id)
+    seconds = max((now - attempt.started_at).total_seconds(), 0.0)
+    session.add(UsageLedger(group_id=task.group_id, user_id=job.submitter_id, device_id=attempt.device_id,
+                            attempt_id=attempt.id, cpu_seconds=seconds * job.cpu, gpu_seconds=seconds * job.gpus))
+
+
+async def _update_reliability(session: AsyncSession, device_id: uuid.UUID, ok: bool) -> None:
+    # Exponentially weighted: lost leases lower it, clean finishes raise it.
+    await session.execute(
+        update(Device).where(Device.id == device_id)
+        .values(reliability=Device.reliability * 0.9 + (0.1 if ok else 0.0))
+    )
+
+
+async def _requeue_or_fail(session: AsyncSession, settings: Settings, task: Task, *, count_failure: bool,
+                           crashed: bool, now: datetime, backoff: bool = True) -> None:
+    """Return a task to the queue after its attempt ended without success."""
+    task.current_attempt_id = None
+    if count_failure:
+        task.failures += 1
+    if crashed:
+        distinct = (await session.execute(
+            select(func.count(func.distinct(Attempt.device_id)))
+            .where(Attempt.task_id == task.id, Attempt.state == "failed")
+        )).scalar_one()
+        if distinct >= settings.always_fail_devices:
+            task.state = "failed"
+            task.finished_at = now
+            task.result = {"reason": f"failed on {distinct} different devices"}
+            return
+    if task.failures > task.max_retries:
+        task.state = "failed"
+        task.finished_at = now
+        task.result = {"reason": "no retries left"}
+        return
+    task.state = "pending"
+    # Backoff only after the job itself failed; a lost device should not delay the retry.
+    task.not_before = now + _backoff(settings, task.failures) if (count_failure and backoff) else now
+
+
+# --------------------------------------------------------------------------
+# Agent message handlers
+# --------------------------------------------------------------------------
+
+
+async def handle_accept(session: AsyncSession, settings: Settings, device_id: uuid.UUID, msg: pm.Accept) -> None:
+    f = await fence(session, device_id, msg.attempt_id, msg.epoch, ("assigned",))
+    f.attempt.tier = msg.tier
+    f.attempt.lease_expires_at = utcnow() + timedelta(seconds=settings.lease_ttl_s)
+
+
+async def handle_decline(session: AsyncSession, device_id: uuid.UUID, msg: pm.Decline) -> None:
+    f = await fence(session, device_id, msg.attempt_id, msg.epoch, ("assigned",))
+    now = utcnow()
+    _end_attempt(f.attempt, "declined", msg.reason, now)
+    f.task.state = "pending"
+    f.task.current_attempt_id = None
+
+
+async def handle_started(session: AsyncSession, settings: Settings, device_id: uuid.UUID, msg: pm.Started) -> Fenced:
+    f = await fence(session, device_id, msg.attempt_id, msg.epoch)
+    now = utcnow()
+    if f.attempt.state == "assigned":
+        f.attempt.state = "running"
+        f.attempt.started_at = now
+        f.task.state = "running"
+        job = await session.get(Job, f.task.job_id)
+        if job.state == "pending":
+            job.state = "running"
+        await audit.record(session, actor_type="device", actor_id=device_id, action="attempt.start",
+                           group_id=f.task.group_id, device_id=device_id, target_type="attempt",
+                           target_id=f.attempt.id, details={"task_id": str(f.task.id), "epoch": f.attempt.epoch,
+                                                            "job_id": str(f.task.job_id)})
+    f.attempt.lease_expires_at = now + timedelta(seconds=settings.lease_ttl_s)
+    return f
+
+
+async def handle_progress(session: AsyncSession, device_id: uuid.UUID, msg: pm.Progress) -> None:
+    f = await fence(session, device_id, msg.attempt_id, msg.epoch)
+    stmt = text("INSERT INTO task_logs (attempt_id, seq, stream, chunk) VALUES (:a, :s, :st, :c) "
+                "ON CONFLICT ON CONSTRAINT uq_task_log_seq DO NOTHING")
+    await session.execute(stmt, {"a": f.attempt.id, "s": msg.seq, "st": msg.stream,
+                                 "c": msg.log_chunk.replace("\x00", "")})
+
+
+async def handle_commit(session: AsyncSession, settings: Settings, device_id: uuid.UUID,
+                        msg: pm.Commit) -> pm.CommitAck:
+    # Idempotent replay: the same attempt already committed with this key.
+    try:
+        aid = uuid.UUID(msg.attempt_id)
+    except ValueError:
+        return pm.CommitAck(attempt_id=msg.attempt_id, accepted=False, reason="unknown_attempt")
+    prior = await session.get(Attempt, aid)
+    if prior is not None and prior.device_id == device_id and prior.commit_key == msg.idempotency_key:
+        return pm.CommitAck(attempt_id=msg.attempt_id, accepted=True, reason="duplicate")
+    try:
+        f = await fence(session, device_id, msg.attempt_id, msg.epoch)
+    except FenceError as exc:
+        log.info("rejected commit attempt=%s epoch=%s reason=%s", msg.attempt_id, msg.epoch, exc.reason)
+        return pm.CommitAck(attempt_id=msg.attempt_id, accepted=False, reason=exc.reason)
+    if str(f.task.id) != msg.task_id:
+        return pm.CommitAck(attempt_id=msg.attempt_id, accepted=False, reason="task_mismatch")
+    now = utcnow()
+    a, t = f.attempt, f.task
+    if a.started_at is None:
+        a.started_at = now
+    a.exit_code = msg.exit_code
+    a.outputs = [o.model_dump() for o in msg.outputs]
+    a.commit_key = msg.idempotency_key
+    await _record_usage(session, a, t, now)
+    if msg.exit_code == 0:
+        _end_attempt(a, "succeeded", "exit_0", now)
+        t.state = "succeeded"
+        t.finished_at = now
+        t.current_attempt_id = a.id  # the winning attempt stays current
+        t.result = {"attempt_id": str(a.id), "epoch": a.epoch, "exit_code": 0, "outputs": a.outputs}
+        await _update_reliability(session, device_id, True)
+    else:
+        _end_attempt(a, "failed", f"exit_{msg.exit_code}", now)
+        await _requeue_or_fail(session, settings, t, count_failure=True, crashed=True, now=now)
+        if t.state == "failed":
+            t.result = {**(t.result or {}), "attempt_id": str(a.id), "exit_code": msg.exit_code,
+                        "error": msg.error}
+    await audit.record(session, actor_type="device", actor_id=device_id, action="attempt.end",
+                       group_id=t.group_id, device_id=device_id, target_type="attempt", target_id=a.id,
+                       details={"task_id": str(t.id), "epoch": a.epoch, "exit_code": msg.exit_code,
+                                "task_state": t.state})
+    return pm.CommitAck(attempt_id=msg.attempt_id, accepted=True)
+
+
+NO_PENALTY_ABORTS = {"owner_returned", "kill_switch", "policy", "agent_shutdown", "disk_full"}
+
+
+async def handle_abort(session: AsyncSession, settings: Settings, device_id: uuid.UUID, msg: pm.Abort) -> None:
+    f = await fence(session, device_id, msg.attempt_id, msg.epoch)
+    now = utcnow()
+    await _record_usage(session, f.attempt, f.task, now)
+    penalty = msg.reason not in NO_PENALTY_ABORTS
+    _end_attempt(f.attempt, "failed" if penalty else "preempted", f"abort_{msg.reason}", now)
+    await _requeue_or_fail(session, settings, f.task, count_failure=penalty, crashed=False, now=now)
+    await audit.record(session, actor_type="device", actor_id=device_id, action="attempt.abort",
+                       group_id=f.task.group_id, device_id=device_id, target_type="attempt",
+                       target_id=f.attempt.id, details={"reason": msg.reason, "detail": msg.detail[:500]})
+
+
+async def renew_leases(session: AsyncSession, settings: Settings, device_id: uuid.UUID,
+                       running: list[pm.RunningAttempt]) -> tuple[list[str], list[str]]:
+    """Heartbeat: renew leases the agent still holds; everything else is stale (agent must stop it)."""
+    renewed: list[str] = []
+    stale: list[str] = []
+    if not running:
+        return renewed, stale
+    ids = []
+    for r in running:
+        try:
+            ids.append(uuid.UUID(r.attempt_id))
+        except ValueError:
+            stale.append(r.attempt_id)
+    rows = {a.id: (a, t) for a, t in (await session.execute(
+        select(Attempt, Task).join(Task, Task.id == Attempt.task_id).where(Attempt.id.in_(ids))
+    )).all()}
+    expires = utcnow() + timedelta(seconds=settings.lease_ttl_s)
+    good = []
+    for r in running:
+        try:
+            aid = uuid.UUID(r.attempt_id)
+        except ValueError:
+            continue
+        pair = rows.get(aid)
+        if pair is None:
+            stale.append(r.attempt_id)
+            continue
+        a, t = pair
+        if (a.device_id == device_id and a.epoch == r.epoch == t.epoch and t.current_attempt_id == a.id
+                and a.state in ACTIVE_ATTEMPT_STATES):
+            good.append(a.id)
+            renewed.append(r.attempt_id)
+        else:
+            stale.append(r.attempt_id)
+    if good:
+        await session.execute(update(Attempt).where(Attempt.id.in_(good), Attempt.state.in_(ACTIVE_ATTEMPT_STATES))
+                              .values(lease_expires_at=expires))
+    return renewed, stale
+
+
+async def reconcile_on_hello(session: AsyncSession, settings: Settings, device_id: uuid.UUID,
+                             running: list[pm.RunningAttempt]) -> list[str]:
+    """New session: attempts the server thinks are active here but the agent no longer runs are lost."""
+    renewed, stale = await renew_leases(session, settings, device_id, running)
+    keep = {uuid.UUID(a) for a in renewed}
+    active = (await session.execute(
+        select(Attempt).where(Attempt.device_id == device_id, Attempt.state.in_(ACTIVE_ATTEMPT_STATES))
+    )).scalars().all()
+    for a in active:
+        if a.id not in keep:
+            await lose_attempt(session, settings, a, reason="agent_restarted")
+    return stale
+
+
+async def lose_attempt(session: AsyncSession, settings: Settings, attempt: Attempt, reason: str) -> None:
+    task = (await session.execute(select(Task).where(Task.id == attempt.task_id).with_for_update())).scalar_one()
+    now = utcnow()
+    was_running = attempt.state == "running"
+    await _record_usage(session, attempt, task, now)
+    _end_attempt(attempt, "lost", reason, now)
+    if task.current_attempt_id == attempt.id and task.state in ("assigned", "running"):
+        await _requeue_or_fail(session, settings, task, count_failure=was_running, crashed=False, now=now,
+                               backoff=False)
+    if was_running:
+        await _update_reliability(session, attempt.device_id, False)
+
+
+async def api_alive(session: AsyncSession, settings: Settings) -> bool:
+    """True if any API process wrote a heartbeat recently (see app._api_heartbeat)."""
+    latest = (await session.execute(text("SELECT max(at) FROM service_heartbeats WHERE service = 'api'"))).scalar()
+    return bool(latest and latest > utcnow() - timedelta(seconds=3 * settings.api_heartbeat_s))
+
+
+async def expire_leases(session: AsyncSession, settings: Settings, limit: int = 500) -> int:
+    """Scheduler loop: attempts whose lease ran out go back to the queue (plan §7.4)."""
+    now = utcnow()
+    rows = (await session.execute(
+        select(Attempt).where(Attempt.state.in_(ACTIVE_ATTEMPT_STATES), Attempt.lease_expires_at < now)
+        .order_by(Attempt.lease_expires_at).limit(limit).with_for_update(skip_locked=True)
+    )).scalars().all()
+    for a in rows:
+        await lose_attempt(session, settings, a, reason="lease_expired")
+    return len(rows)
+
+
+async def cancel_tasks(session: AsyncSession, task_filter, reason: str) -> list[tuple[str, uuid.UUID]]:
+    """Cancel non-terminal tasks. Returns (attempt_id, device_id) of attempts to stop."""
+    now = utcnow()
+    tasks = (await session.execute(
+        select(Task).where(task_filter, Task.state.in_(("pending", "assigned", "running"))).with_for_update()
+    )).scalars().all()
+    to_stop: list[tuple[str, uuid.UUID]] = []
+    for t in tasks:
+        if t.current_attempt_id:
+            a = await session.get(Attempt, t.current_attempt_id)
+            if a and a.state in ACTIVE_ATTEMPT_STATES:
+                _end_attempt(a, "cancelled", reason, now)
+                to_stop.append((str(a.id), a.device_id))
+        t.state = "cancelled"
+        t.finished_at = now
+    return to_stop
+
+
+async def rollup_jobs(session: AsyncSession) -> int:
+    """Set job state from its tasks. Returns the number of jobs that changed."""
+    changed = 0
+    jobs = (await session.execute(select(Job).where(Job.state.in_(("pending", "running"))))).scalars().all()
+    for job in jobs:
+        counts = dict((await session.execute(
+            select(Task.state, func.count()).where(Task.job_id == job.id).group_by(Task.state)
+        )).all())
+        total = sum(counts.values())
+        active = counts.get("pending", 0) + counts.get("assigned", 0) + counts.get("running", 0)
+        new = job.state
+        if total and active == 0:
+            if counts.get("failed"):
+                new = "failed"
+            elif counts.get("cancelled"):
+                new = "cancelled"
+            else:
+                new = "succeeded"
+            job.finished_at = utcnow()
+        elif counts.get("running") or counts.get("assigned") or counts.get("succeeded") or counts.get("failed"):
+            new = "running"
+        if new != job.state:
+            job.state = new
+            changed += 1
+            if new in ("succeeded", "failed", "cancelled"):
+                await audit.record(session, actor_type="system", actor_id=None, action="job.finish",
+                                   group_id=job.group_id, target_type="job", target_id=job.id,
+                                   details={"state": new, "tasks": counts})
+    return changed
+
+
+async def expire_groups(session: AsyncSession) -> list[tuple[str, uuid.UUID]]:
+    """Groups past `expires_at` stop running jobs (plan §6.3 item 5). Data is kept; deletion is separate."""
+    now = utcnow()
+    groups = (await session.execute(
+        select(Group).where(Group.state == "active", Group.expires_at.is_not(None), Group.expires_at < now)
+        .with_for_update(skip_locked=True)
+    )).scalars().all()
+    stops: list[tuple[str, uuid.UUID]] = []
+    for g in groups:
+        g.state = "expired"
+        stops += await cancel_tasks(session, Task.group_id == g.id, "group_expired")
+        await audit.record(session, actor_type="system", actor_id=None, action="group.expire", group_id=g.id,
+                           target_type="group", target_id=g.id, details={"retention_days": g.retention_days})
+    return stops
+
+
+def envelope_payload(offer: pm.Offer) -> dict[str, Any]:
+    return json.loads(base64.b64decode(offer.envelope.payload_b64))
+
+
+async def append_agent_log(session: AsyncSession, attempt_id: uuid.UUID, text_: str) -> None:
+    seq = (await session.execute(
+        select(func.coalesce(func.max(TaskLog.seq), -1) + 1).where(TaskLog.attempt_id == attempt_id,
+                                                                     TaskLog.stream == "system")
+    )).scalar_one()
+    session.add(TaskLog(attempt_id=attempt_id, seq=seq, stream="system", chunk=text_))

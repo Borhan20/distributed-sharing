@@ -1,0 +1,84 @@
+# One-server deployment (plan §9 Phase 1).
+#
+#   cp deploy/.env.example deploy/.env      # then edit it
+#   docker compose -f deploy/compose.yaml up -d --build
+#
+# Default: DEV MODE (built-in dev login, no passwords) for trying pool on one machine.
+# For a shared server use OIDC:  docker compose -f deploy/compose.yaml -f deploy/compose.oidc.yaml up -d
+# Object store (SeaweedFS, S3 API):  add  --profile storage
+
+name: pool
+
+x-cp: &cp
+  image: pool-control-plane:dev
+  build: { context: .., dockerfile: deploy/Dockerfile }
+  restart: unless-stopped
+  environment: &cp-env
+    POOL_DATABASE_URL: postgresql+asyncpg://pool:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/pool
+    POOL_DEV_MODE: ${POOL_DEV_MODE:-true}
+    POOL_PUBLIC_URL: ${POOL_PUBLIC_URL:-http://127.0.0.1:8000}
+    POOL_SERVER_ADMINS: ${POOL_SERVER_ADMINS:-[]}
+    POOL_S3_ENDPOINT: ${POOL_S3_ENDPOINT:-}
+    POOL_S3_ACCESS_KEY: ${POOL_S3_ACCESS_KEY:-}
+    POOL_S3_SECRET_KEY: ${POOL_S3_SECRET_KEY:-}
+  volumes:
+    - pool-keys:/var/lib/pool
+  read_only: true
+  tmpfs: [/tmp]
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pool
+      POSTGRES_USER: pool
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+    volumes: [pg-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pool -d pool"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    <<: *cp
+    restart: "no"
+    command: ["python", "-m", "pool_cp.migrate"]
+    depends_on: { postgres: { condition: service_healthy } }
+
+  api:
+    <<: *cp
+    # Keys (CA, envelope signing) live in the pool-keys volume. In dev mode they are created on first start.
+    environment:
+      <<: *cp-env
+      POOL_AUTOCREATE_KEYS: ${POOL_AUTOCREATE_KEYS:-true}
+    ports: ["${POOL_BIND:-127.0.0.1}:8000:8000"]
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  scheduler:
+    <<: *cp
+    command: ["python", "-m", "pool_cp.scheduler"]
+    depends_on: { api: { condition: service_healthy } }
+
+  seaweedfs:
+    profiles: [storage]
+    image: chrislusf/seaweedfs:${SEAWEEDFS_TAG:-latest}
+    restart: unless-stopped
+    command: ["server", "-dir=/data", "-s3", "-s3.config=/etc/seaweedfs/s3.json"]
+    volumes:
+      - seaweed-data:/data
+      - ./seaweedfs-s3.json:/etc/seaweedfs/s3.json:ro
+    ports: ["${POOL_BIND:-127.0.0.1}:8333:8333"]
+
+volumes:
+  pg-data:
+  pool-keys:
+  seaweed-data:

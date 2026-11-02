@@ -1,0 +1,14 @@
+{
+  "free": {
+    "cpu": 8,
+    "disk_mb": 102400,
+    "gpus": 1,
+    "memory_mb": 16384
+  },
+  "msg_id": "m-6",
+  "tiers": [
+    "T1",
+    "T2"
+  ],
+  "type": "ready"
+}

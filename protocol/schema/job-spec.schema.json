@@ -1,0 +1,407 @@
+{
+  "$defs": {
+    "CheckpointReq": {
+      "additionalProperties": false,
+      "properties": {
+        "every": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "default": "10m",
+          "title": "Every"
+        },
+        "path": {
+          "default": "/ckpt",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "title": "CheckpointReq",
+      "type": "object"
+    },
+    "DataReq": {
+      "additionalProperties": false,
+      "properties": {
+        "inputs": {
+          "items": {
+            "$ref": "#/$defs/InputReq"
+          },
+          "title": "Inputs",
+          "type": "array"
+        },
+        "outputs": {
+          "$ref": "#/$defs/OutputsReq"
+        }
+      },
+      "title": "DataReq",
+      "type": "object"
+    },
+    "GPUReq": {
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Count",
+          "type": "integer"
+        },
+        "min_memory": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Memory"
+        },
+        "vendor": {
+          "anyOf": [
+            {
+              "const": "nvidia",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Vendor"
+        }
+      },
+      "title": "GPUReq",
+      "type": "object"
+    },
+    "InputReq": {
+      "additionalProperties": false,
+      "properties": {
+        "mount": {
+          "title": "Mount",
+          "type": "string"
+        },
+        "ref": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref",
+        "mount"
+      ],
+      "title": "InputReq",
+      "type": "object"
+    },
+    "IsolationReq": {
+      "additionalProperties": false,
+      "properties": {
+        "min_tier": {
+          "default": "T1",
+          "enum": [
+            "T0",
+            "T1",
+            "T2",
+            "T3"
+          ],
+          "title": "Min Tier",
+          "type": "string"
+        }
+      },
+      "title": "IsolationReq",
+      "type": "object"
+    },
+    "Metadata": {
+      "additionalProperties": false,
+      "properties": {
+        "group": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Group"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Metadata",
+      "type": "object"
+    },
+    "NetworkReq": {
+      "additionalProperties": false,
+      "properties": {
+        "allow": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allow",
+          "type": "array"
+        },
+        "egress": {
+          "default": "none",
+          "enum": [
+            "none",
+            "allowlist"
+          ],
+          "title": "Egress",
+          "type": "string"
+        }
+      },
+      "title": "NetworkReq",
+      "type": "object"
+    },
+    "OutputsReq": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "default": "/out",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "title": "OutputsReq",
+      "type": "object"
+    },
+    "ResourcesReq": {
+      "additionalProperties": false,
+      "properties": {
+        "cpu": {
+          "default": 1,
+          "exclusiveMinimum": 0,
+          "title": "Cpu",
+          "type": "number"
+        },
+        "disk": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "default": "1Gi",
+          "title": "Disk"
+        },
+        "gpu": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GPUReq"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "memory": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "default": "1Gi",
+          "title": "Memory"
+        }
+      },
+      "title": "ResourcesReq",
+      "type": "object"
+    },
+    "Spec": {
+      "additionalProperties": false,
+      "properties": {
+        "checkpoint": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CheckpointReq"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "command": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Command",
+          "type": "array"
+        },
+        "data": {
+          "$ref": "#/$defs/DataReq"
+        },
+        "data_class": {
+          "default": "internal",
+          "enum": [
+            "public",
+            "internal",
+            "confidential"
+          ],
+          "title": "Data Class",
+          "type": "string"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Env",
+          "type": "object"
+        },
+        "image": {
+          "title": "Image",
+          "type": "string"
+        },
+        "isolation": {
+          "$ref": "#/$defs/IsolationReq"
+        },
+        "matrix": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Matrix"
+        },
+        "max_runtime": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "default": "1h",
+          "title": "Max Runtime"
+        },
+        "network": {
+          "$ref": "#/$defs/NetworkReq"
+        },
+        "os": {
+          "anyOf": [
+            {
+              "enum": [
+                "linux",
+                "windows"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Os"
+        },
+        "resources": {
+          "$ref": "#/$defs/ResourcesReq"
+        },
+        "retries": {
+          "default": 3,
+          "maximum": 20,
+          "minimum": 0,
+          "title": "Retries",
+          "type": "integer"
+        },
+        "secrets": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Secrets",
+          "type": "array"
+        },
+        "shape": {
+          "default": "single",
+          "enum": [
+            "single",
+            "array",
+            "service",
+            "gang"
+          ],
+          "title": "Shape",
+          "type": "string"
+        }
+      },
+      "required": [
+        "image",
+        "command"
+      ],
+      "title": "Spec",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "const": "pool/v1alpha1",
+      "default": "pool/v1alpha1",
+      "title": "Apiversion",
+      "type": "string"
+    },
+    "kind": {
+      "const": "Job",
+      "default": "Job",
+      "title": "Kind",
+      "type": "string"
+    },
+    "metadata": {
+      "$ref": "#/$defs/Metadata"
+    },
+    "spec": {
+      "$ref": "#/$defs/Spec"
+    }
+  },
+  "required": [
+    "metadata",
+    "spec"
+  ],
+  "title": "JobSpec",
+  "type": "object"
+}

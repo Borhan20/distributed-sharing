@@ -1,0 +1,63 @@
+{
+  "$defs": {
+    "DeviceFacts": {
+      "properties": {
+        "agent_version": {
+          "maxLength": 32,
+          "title": "Agent Version",
+          "type": "string"
+        },
+        "arch": {
+          "maxLength": 32,
+          "title": "Arch",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "os": {
+          "enum": [
+            "linux",
+            "windows"
+          ],
+          "title": "Os",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "os",
+        "arch",
+        "agent_version"
+      ],
+      "title": "DeviceFacts",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "csr_pem": {
+      "maxLength": 8192,
+      "title": "Csr Pem",
+      "type": "string"
+    },
+    "device_facts": {
+      "$ref": "#/$defs/DeviceFacts"
+    },
+    "one_time_code": {
+      "maxLength": 32,
+      "minLength": 6,
+      "title": "One Time Code",
+      "type": "string"
+    }
+  },
+  "required": [
+    "one_time_code",
+    "csr_pem",
+    "device_facts"
+  ],
+  "title": "EnrollRequest",
+  "type": "object"
+}

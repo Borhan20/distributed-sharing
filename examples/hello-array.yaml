@@ -1,0 +1,19 @@
+# A 6-task array job (plan §6.5) that runs on any shared Linux device.
+# The image is pinned by digest, as the platform requires.
+apiVersion: pool/v1alpha1
+kind: Job
+metadata:
+  name: hello-array
+spec:
+  shape: array
+  image: docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+  command: ["sh", "-c", "echo seed={{seed}} dataset={{dataset}}; echo '{\"seed\": {{seed}}}' > /out/result.json"]
+  matrix:
+    seed: [0, 1, 2]
+    dataset: [small, large]
+  resources: { cpu: 1, memory: 128Mi, disk: 64Mi }
+  isolation: { min_tier: T1 }
+  network: { egress: none }
+  retries: 2
+  max_runtime: 5m
+  data_class: internal

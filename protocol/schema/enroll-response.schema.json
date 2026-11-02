@@ -1,0 +1,62 @@
+{
+  "$defs": {
+    "SigningKey": {
+      "properties": {
+        "key_id": {
+          "title": "Key Id",
+          "type": "string"
+        },
+        "public_key_b64": {
+          "title": "Public Key B64",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key_id",
+        "public_key_b64"
+      ],
+      "title": "SigningKey",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "ca_cert_pem": {
+      "title": "Ca Cert Pem",
+      "type": "string"
+    },
+    "cert_not_after": {
+      "format": "date-time",
+      "title": "Cert Not After",
+      "type": "string"
+    },
+    "cert_pem": {
+      "title": "Cert Pem",
+      "type": "string"
+    },
+    "device_id": {
+      "title": "Device Id",
+      "type": "string"
+    },
+    "signing_keys": {
+      "items": {
+        "$ref": "#/$defs/SigningKey"
+      },
+      "title": "Signing Keys",
+      "type": "array"
+    },
+    "ws_path": {
+      "default": "/api/v1/agent/ws",
+      "title": "Ws Path",
+      "type": "string"
+    }
+  },
+  "required": [
+    "device_id",
+    "cert_pem",
+    "ca_cert_pem",
+    "cert_not_after",
+    "signing_keys"
+  ],
+  "title": "EnrollResponse",
+  "type": "object"
+}

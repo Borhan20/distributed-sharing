@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "pool",
+      "credentials": [{ "accessKey": "REPLACE_ME", "secretKey": "REPLACE_ME" }],
+      "actions": ["Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

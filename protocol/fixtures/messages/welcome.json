@@ -1,0 +1,9 @@
+{
+  "device_id": "2b1d8a63-5c0e-4a51-9f1e-7f8a3a1c2d44",
+  "heartbeat_interval_s": 15,
+  "lease_ttl_s": 60,
+  "msg_id": "m-3",
+  "server_time": "2026-11-02T12:00:00Z",
+  "stale": [],
+  "type": "welcome"
+}

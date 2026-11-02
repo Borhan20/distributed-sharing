@@ -1,0 +1,284 @@
+{
+  "$defs": {
+    "TaskCheckpoint": {
+      "properties": {
+        "every_s": {
+          "default": 600,
+          "exclusiveMinimum": 0,
+          "title": "Every S",
+          "type": "integer"
+        },
+        "path": {
+          "default": "/ckpt",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "title": "TaskCheckpoint",
+      "type": "object"
+    },
+    "TaskInput": {
+      "properties": {
+        "mount": {
+          "title": "Mount",
+          "type": "string"
+        },
+        "ref": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Ref",
+          "type": "string"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        }
+      },
+      "required": [
+        "ref",
+        "mount"
+      ],
+      "title": "TaskInput",
+      "type": "object"
+    },
+    "TaskNetwork": {
+      "properties": {
+        "allow": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allow",
+          "type": "array"
+        },
+        "egress": {
+          "default": "none",
+          "enum": [
+            "none",
+            "allowlist"
+          ],
+          "title": "Egress",
+          "type": "string"
+        }
+      },
+      "title": "TaskNetwork",
+      "type": "object"
+    },
+    "TaskResources": {
+      "properties": {
+        "cpu": {
+          "exclusiveMinimum": 0,
+          "title": "Cpu",
+          "type": "number"
+        },
+        "disk_mb": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Disk Mb",
+          "type": "integer"
+        },
+        "gpu_memory_mb": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Gpu Memory Mb",
+          "type": "integer"
+        },
+        "gpu_vendor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Gpu Vendor"
+        },
+        "gpus": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Gpus",
+          "type": "integer"
+        },
+        "memory_mb": {
+          "exclusiveMinimum": 0,
+          "title": "Memory Mb",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cpu",
+        "memory_mb"
+      ],
+      "title": "TaskResources",
+      "type": "object"
+    },
+    "TaskSpec": {
+      "properties": {
+        "checkpoint": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskCheckpoint"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "command": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Command",
+          "type": "array"
+        },
+        "data_class": {
+          "default": "internal",
+          "enum": [
+            "public",
+            "internal",
+            "confidential"
+          ],
+          "title": "Data Class",
+          "type": "string"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Env",
+          "type": "object"
+        },
+        "image": {
+          "title": "Image",
+          "type": "string"
+        },
+        "inputs": {
+          "items": {
+            "$ref": "#/$defs/TaskInput"
+          },
+          "title": "Inputs",
+          "type": "array"
+        },
+        "max_runtime_s": {
+          "exclusiveMinimum": 0,
+          "title": "Max Runtime S",
+          "type": "integer"
+        },
+        "min_tier": {
+          "default": "T1",
+          "enum": [
+            "T0",
+            "T1",
+            "T2",
+            "T3"
+          ],
+          "title": "Min Tier",
+          "type": "string"
+        },
+        "network": {
+          "$ref": "#/$defs/TaskNetwork"
+        },
+        "outputs_path": {
+          "default": "/out",
+          "title": "Outputs Path",
+          "type": "string"
+        },
+        "resources": {
+          "$ref": "#/$defs/TaskResources"
+        }
+      },
+      "required": [
+        "image",
+        "command",
+        "resources",
+        "max_runtime_s"
+      ],
+      "title": "TaskSpec",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "attempt_id": {
+      "title": "Attempt Id",
+      "type": "string"
+    },
+    "device_id": {
+      "title": "Device Id",
+      "type": "string"
+    },
+    "epoch": {
+      "minimum": 1,
+      "title": "Epoch",
+      "type": "integer"
+    },
+    "expires_at": {
+      "format": "date-time",
+      "title": "Expires At",
+      "type": "string"
+    },
+    "group": {
+      "title": "Group",
+      "type": "string"
+    },
+    "group_id": {
+      "title": "Group Id",
+      "type": "string"
+    },
+    "issued_at": {
+      "format": "date-time",
+      "title": "Issued At",
+      "type": "string"
+    },
+    "job_id": {
+      "title": "Job Id",
+      "type": "string"
+    },
+    "spec": {
+      "$ref": "#/$defs/TaskSpec"
+    },
+    "submitter": {
+      "title": "Submitter",
+      "type": "string"
+    },
+    "submitter_probation": {
+      "default": false,
+      "title": "Submitter Probation",
+      "type": "boolean"
+    },
+    "task_id": {
+      "title": "Task Id",
+      "type": "string"
+    },
+    "v": {
+      "const": "v1alpha1",
+      "default": "v1alpha1",
+      "title": "V",
+      "type": "string"
+    }
+  },
+  "required": [
+    "attempt_id",
+    "task_id",
+    "job_id",
+    "epoch",
+    "group",
+    "group_id",
+    "submitter",
+    "device_id",
+    "issued_at",
+    "expires_at",
+    "spec"
+  ],
+  "title": "TaskEnvelope",
+  "type": "object"
+}

@@ -1,0 +1,451 @@
+"""Jobs, tasks, logs, usage and the audit log API."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timedelta
+from typing import Any
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from sqlalchemy import func, insert, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from pool_protocol.jobspec import JobSpecError, load_job_spec
+from pool_protocol.messages import TIER_RANK
+
+from .. import audit
+from ..auth import Principal, current_principal, get_session
+from ..authz import ANY_MEMBER, MANAGERS, SUBMITTERS, load_group, membership, not_found, require_role
+from ..models import Attempt, AuditEvent, Group, Job, Task, TaskLog, UsageLedger, User
+from ..scheduler.core import cancel_tasks
+from ..timeutil import utcnow
+from .notify import notify_stops
+
+router = APIRouter(prefix="/api/v1", tags=["jobs"])
+
+
+class JobOut(BaseModel):
+    id: uuid.UUID
+    group: str
+    name: str
+    shape: str
+    submitter: str
+    image: str
+    state: str
+    created_at: datetime
+    finished_at: datetime | None
+    tasks: dict[str, int]
+    spec: dict[str, Any] | None = None
+
+
+async def _job_out(s: AsyncSession, job: Job, with_spec: bool = False) -> JobOut:
+    counts = dict(
+        (await s.execute(select(Task.state, func.count()).where(Task.job_id == job.id).group_by(Task.state))).all()
+    )
+    g = await s.get(Group, job.group_id)
+    u = await s.get(User, job.submitter_id)
+    counts["total"] = sum(counts.values())
+    return JobOut(
+        id=job.id,
+        group=g.name,
+        name=job.name,
+        shape=job.shape,
+        submitter=u.handle,
+        image=job.image,
+        state=job.state,
+        created_at=job.created_at,
+        finished_at=job.finished_at,
+        tasks=counts,
+        spec=job.spec if with_spec else None,
+    )
+
+
+@router.post("/groups/{name}/jobs", response_model=JobOut, status_code=201)
+async def submit_job(
+    name: str,
+    request: Request,
+    spec: dict[str, Any] = Body(...),
+    p: Principal = Depends(current_principal),
+    s: AsyncSession = Depends(get_session),
+):
+    g = await load_group(s, name)
+    await require_role(s, g, p, SUBMITTERS)
+    settings = request.app.state.settings
+    try:
+        js = load_job_spec(spec)
+    except JobSpecError as exc:
+        raise HTTPException(422, str(exc)) from None
+    if js.metadata.group and js.metadata.group != g.name:
+        raise HTTPException(422, "metadata.group does not match the URL")
+    if g.registry_allowlist and not any(js.spec.image.startswith(prefix) for prefix in g.registry_allowlist):
+        raise HTTPException(422, "image registry is not on this group's allowlist")
+    recent = (
+        await s.execute(
+            select(func.count())
+            .select_from(Job)
+            .where(
+                Job.group_id == g.id, Job.submitter_id == p.user.id, Job.created_at > utcnow() - timedelta(minutes=1)
+            )
+        )
+    ).scalar_one()
+    if recent >= settings.submit_rate_per_minute:  # plan §7.7: stop accidental floods
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "submission rate limit reached; try again shortly")
+    res = js.resources()
+    job = Job(
+        group_id=g.id,
+        submitter_id=p.user.id,
+        name=js.metadata.name,
+        shape=js.spec.shape,
+        spec=js.model_dump(mode="json"),
+        image=js.spec.image,
+        cpu=res.cpu,
+        memory_mb=res.memory_mb,
+        disk_mb=res.disk_mb,
+        gpus=res.gpus,
+        gpu_memory_mb=res.gpu_memory_mb,
+        min_tier_rank=TIER_RANK[js.spec.isolation.min_tier],
+        os=js.spec.os,
+        data_class=js.spec.data_class,
+        egress=js.spec.network.egress != "none",
+        max_retries=js.spec.retries,
+    )
+    s.add(job)
+    await s.flush()
+    params = js.task_params()
+    rows = [
+        {
+            "id": uuid.uuid4(),
+            "job_id": job.id,
+            "group_id": g.id,
+            "index": i,
+            "params": prm,
+            "spec": js.render_task(prm).model_dump(mode="json"),
+            "state": "pending",
+            "epoch": 0,
+            "attempts_count": 0,
+            "failures": 0,
+            "max_retries": js.spec.retries,
+        }
+        for i, prm in enumerate(params)
+    ]
+    for i in range(0, len(rows), 1000):
+        await s.execute(insert(Task), rows[i : i + 1000])
+    await audit.record(
+        s,
+        actor_type="user",
+        actor_id=p.user.id,
+        action="job.submit",
+        group_id=g.id,
+        target_type="job",
+        target_id=job.id,
+        details={
+            "name": job.name,
+            "shape": job.shape,
+            "tasks": len(rows),
+            "image": job.image,
+            "data_class": job.data_class,
+        },
+    )
+    await s.commit()
+    return await _job_out(s, job)
+
+
+@router.get("/groups/{name}/jobs", response_model=list[JobOut])
+async def list_jobs(
+    name: str,
+    limit: int = 100,
+    state: str | None = None,
+    p: Principal = Depends(current_principal),
+    s: AsyncSession = Depends(get_session),
+):
+    g = await load_group(s, name)
+    await require_role(s, g, p, ANY_MEMBER, require_active=False)
+    q = select(Job).where(Job.group_id == g.id)
+    if state:
+        q = q.where(Job.state == state)
+    rows = (await s.execute(q.order_by(Job.created_at.desc()).limit(min(limit, 500)))).scalars().all()
+    return [await _job_out(s, j) for j in rows]
+
+
+async def _load_job(s: AsyncSession, job_id: uuid.UUID, p: Principal) -> tuple[Job, Group, str]:
+    job = await s.get(Job, job_id)
+    if job is None:
+        raise not_found("job")
+    g = await s.get(Group, job.group_id)
+    m = await membership(s, g, p)
+    if m is None:
+        raise not_found("job")
+    return job, g, m.role
+
+
+@router.get("/jobs/{job_id}", response_model=JobOut)
+async def get_job(job_id: uuid.UUID, p: Principal = Depends(current_principal), s: AsyncSession = Depends(get_session)):
+    job, _, _ = await _load_job(s, job_id, p)
+    return await _job_out(s, job, with_spec=True)
+
+
+class TaskOut(BaseModel):
+    id: uuid.UUID
+    index: int
+    params: dict[str, Any]
+    state: str
+    epoch: int
+    attempts: int
+    failures: int
+    result: dict[str, Any] | None
+    current_attempt_id: uuid.UUID | None
+    device: str | None
+    updated_at: datetime
+
+
+@router.get("/jobs/{job_id}/tasks", response_model=list[TaskOut])
+async def list_tasks(
+    job_id: uuid.UUID, p: Principal = Depends(current_principal), s: AsyncSession = Depends(get_session)
+):
+    job, _, _ = await _load_job(s, job_id, p)
+    from ..models import Device
+
+    rows = (
+        await s.execute(
+            select(Task, Device.name)
+            .outerjoin(Attempt, Attempt.id == Task.current_attempt_id)
+            .outerjoin(Device, Device.id == Attempt.device_id)
+            .where(Task.job_id == job.id)
+            .order_by(Task.index)
+        )
+    ).all()
+    return [
+        TaskOut(
+            id=t.id,
+            index=t.index,
+            params=t.params,
+            state=t.state,
+            epoch=t.epoch,
+            attempts=t.attempts_count,
+            failures=t.failures,
+            result=t.result,
+            current_attempt_id=t.current_attempt_id,
+            device=dname,
+            updated_at=t.updated_at,
+        )
+        for t, dname in rows
+    ]
+
+
+@router.post("/jobs/{job_id}/cancel", response_model=JobOut)
+async def cancel_job(
+    job_id: uuid.UUID,
+    request: Request,
+    p: Principal = Depends(current_principal),
+    s: AsyncSession = Depends(get_session),
+):
+    job, g, role = await _load_job(s, job_id, p)
+    if job.submitter_id != p.user.id and role not in MANAGERS:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "only the submitter or a group manager can cancel")
+    stops = await cancel_tasks(s, Task.job_id == job.id, "user_cancelled")
+    if job.state in ("pending", "running"):
+        job.state = "cancelled"
+        job.finished_at = utcnow()
+    await audit.record(
+        s,
+        actor_type="user",
+        actor_id=p.user.id,
+        action="job.cancel",
+        group_id=g.id,
+        target_type="job",
+        target_id=job.id,
+        details={"stopped_attempts": len(stops)},
+    )
+    await s.commit()
+    await notify_stops(request.app, stops, "user_cancelled")
+    return await _job_out(s, job)
+
+
+class LogLine(BaseModel):
+    id: int
+    attempt_id: uuid.UUID
+    seq: int
+    stream: str
+    chunk: str
+    created_at: datetime
+
+
+@router.get("/jobs/{job_id}/tasks/{index}/logs", response_model=list[LogLine])
+async def task_logs(
+    job_id: uuid.UUID,
+    index: int,
+    attempt_id: uuid.UUID | None = None,
+    after_id: int = 0,
+    limit: int = 1000,
+    p: Principal = Depends(current_principal),
+    s: AsyncSession = Depends(get_session),
+):
+    job, _, _ = await _load_job(s, job_id, p)
+    task = (await s.execute(select(Task).where(Task.job_id == job.id, Task.index == index))).scalar_one_or_none()
+    if task is None:
+        raise not_found("task")
+    if attempt_id is None:
+        attempt_id = (
+            await s.execute(
+                select(Attempt.id)
+                .where(Attempt.task_id == task.id, Attempt.started_at.is_not(None))
+                .order_by(Attempt.epoch.desc())
+                .limit(1)
+            )
+        ).scalar()
+        if attempt_id is None:
+            return []
+    else:
+        a = await s.get(Attempt, attempt_id)
+        if a is None or a.task_id != task.id:
+            raise not_found("attempt")
+    rows = (
+        (
+            await s.execute(
+                select(TaskLog)
+                .where(TaskLog.attempt_id == attempt_id, TaskLog.id > after_id)
+                .order_by(TaskLog.id)
+                .limit(min(limit, 5000))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        LogLine(id=r.id, attempt_id=r.attempt_id, seq=r.seq, stream=r.stream, chunk=r.chunk, created_at=r.created_at)
+        for r in rows
+    ]
+
+
+# ---------------------------------------------------------------- usage
+
+
+@router.get("/groups/{name}/usage")
+async def group_usage(
+    name: str, days: int = 7, p: Principal = Depends(current_principal), s: AsyncSession = Depends(get_session)
+) -> list[dict[str, Any]]:
+    """Usage ledger, visible to every member (plan §12: owners pay the electricity)."""
+    g = await load_group(s, name)
+    await require_role(s, g, p, ANY_MEMBER, require_active=False)
+    rows = (
+        await s.execute(
+            select(User.handle, func.sum(UsageLedger.cpu_seconds), func.sum(UsageLedger.gpu_seconds), func.count())
+            .join(User, User.id == UsageLedger.user_id)
+            .where(UsageLedger.group_id == g.id, UsageLedger.created_at > utcnow() - timedelta(days=min(days, 365)))
+            .group_by(User.handle)
+            .order_by(User.handle)
+        )
+    ).all()
+    return [
+        {"member": h, "cpu_hours": round((c or 0) / 3600, 4), "gpu_hours": round((gpu or 0) / 3600, 4), "attempts": n}
+        for h, c, gpu, n in rows
+    ]
+
+
+# ---------------------------------------------------------------- audit
+
+
+class AuditOut(BaseModel):
+    id: int
+    ts: datetime
+    actor_type: str
+    actor: str | None
+    action: str
+    device_id: uuid.UUID | None
+    target_type: str | None
+    target_id: str | None
+    details: dict[str, Any]
+    hash: str
+
+
+async def _audit_rows(s: AsyncSession, cond, after_id: int, limit: int) -> list[AuditOut]:
+    rows = (
+        (
+            await s.execute(
+                select(AuditEvent).where(cond, AuditEvent.id > after_id).order_by(AuditEvent.id).limit(min(limit, 5000))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    user_ids = {r.actor_id for r in rows if r.actor_type == "user" and r.actor_id}
+    handles = {}
+    if user_ids:
+        handles = dict(
+            (await s.execute(select(User.id, User.handle).where(User.id.in_([uuid.UUID(x) for x in user_ids])))).all()
+        )
+    return [
+        AuditOut(
+            id=r.id,
+            ts=r.ts,
+            actor_type=r.actor_type,
+            actor=handles.get(uuid.UUID(r.actor_id), r.actor_id)
+            if r.actor_type == "user" and r.actor_id
+            else r.actor_id,
+            action=r.action,
+            device_id=r.device_id,
+            target_type=r.target_type,
+            target_id=r.target_id,
+            details=r.details,
+            hash=r.hash,
+        )
+        for r in rows
+    ]
+
+
+@router.get("/groups/{name}/audit", response_model=list[AuditOut])
+async def group_audit(
+    name: str,
+    after_id: int = 0,
+    limit: int = 500,
+    p: Principal = Depends(current_principal),
+    s: AsyncSession = Depends(get_session),
+):
+    g = await load_group(s, name)
+    await require_role(s, g, p, MANAGERS, require_active=False)
+    return await _audit_rows(s, AuditEvent.group_id == g.id, after_id, limit)
+
+
+@router.get("/groups/{name}/audit/export")
+async def group_audit_export(
+    name: str, p: Principal = Depends(current_principal), s: AsyncSession = Depends(get_session)
+):
+    g = await load_group(s, name)
+    await require_role(s, g, p, MANAGERS, require_active=False)
+    rows = await _audit_rows(s, AuditEvent.group_id == g.id, 0, 5000)
+    await audit.record(
+        s, actor_type="user", actor_id=p.user.id, action="audit.export", group_id=g.id, details={"rows": len(rows)}
+    )
+    await s.commit()
+    return JSONResponse(
+        [r.model_dump(mode="json") for r in rows],
+        headers={"Content-Disposition": f'attachment; filename="audit-{g.name}.json"'},
+    )
+
+
+@router.get("/devices/{device_id}/audit", response_model=list[AuditOut])
+async def device_audit(
+    device_id: uuid.UUID,
+    after_id: int = 0,
+    limit: int = 500,
+    p: Principal = Depends(current_principal),
+    s: AsyncSession = Depends(get_session),
+):
+    from ..models import Device
+
+    d = await s.get(Device, device_id)
+    if d is None or d.owner_id != p.user.id:
+        raise not_found("device")
+    return await _audit_rows(s, AuditEvent.device_id == d.id, after_id, limit)
+
+
+@router.get("/audit/verify")
+async def audit_verify(
+    request: Request, p: Principal = Depends(current_principal), s: AsyncSession = Depends(get_session)
+) -> dict[str, Any]:
+    if p.user.handle not in request.app.state.settings.server_admins:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "server admins only")
+    ok, bad, n = await audit.verify_chain(s)
+    return {"ok": ok, "first_bad_id": bad, "rows_checked": n}

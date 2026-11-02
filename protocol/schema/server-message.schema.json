@@ -1,0 +1,524 @@
+{
+  "$defs": {
+    "Cancel": {
+      "properties": {
+        "attempt_id": {
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "type": {
+          "const": "cancel",
+          "default": "cancel",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt_id"
+      ],
+      "title": "Cancel",
+      "type": "object"
+    },
+    "CertRenewed": {
+      "properties": {
+        "cert_not_after": {
+          "format": "date-time",
+          "title": "Cert Not After",
+          "type": "string"
+        },
+        "cert_pem": {
+          "title": "Cert Pem",
+          "type": "string"
+        },
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "cert_renewed",
+          "default": "cert_renewed",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cert_pem",
+        "cert_not_after"
+      ],
+      "title": "CertRenewed",
+      "type": "object"
+    },
+    "Challenge": {
+      "properties": {
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "nonce_b64": {
+          "title": "Nonce B64",
+          "type": "string"
+        },
+        "server_time": {
+          "format": "date-time",
+          "title": "Server Time",
+          "type": "string"
+        },
+        "type": {
+          "const": "challenge",
+          "default": "challenge",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "nonce_b64",
+        "server_time"
+      ],
+      "title": "Challenge",
+      "type": "object"
+    },
+    "CommitAck": {
+      "properties": {
+        "accepted": {
+          "title": "Accepted",
+          "type": "boolean"
+        },
+        "attempt_id": {
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "type": {
+          "const": "commit_ack",
+          "default": "commit_ack",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt_id",
+        "accepted"
+      ],
+      "title": "CommitAck",
+      "type": "object"
+    },
+    "Error": {
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "ref_msg_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ref Msg Id"
+        },
+        "type": {
+          "const": "error",
+          "default": "error",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "Error",
+      "type": "object"
+    },
+    "HeartbeatAck": {
+      "properties": {
+        "lease_expires_at": {
+          "format": "date-time",
+          "title": "Lease Expires At",
+          "type": "string"
+        },
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "renewed": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Renewed",
+          "type": "array"
+        },
+        "stale": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Stale",
+          "type": "array"
+        },
+        "type": {
+          "const": "heartbeat_ack",
+          "default": "heartbeat_ack",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "lease_expires_at"
+      ],
+      "title": "HeartbeatAck",
+      "type": "object"
+    },
+    "NoWork": {
+      "properties": {
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "retry_after_s": {
+          "default": 5,
+          "title": "Retry After S",
+          "type": "integer"
+        },
+        "type": {
+          "const": "no_work",
+          "default": "no_work",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "title": "NoWork",
+      "type": "object"
+    },
+    "Offer": {
+      "properties": {
+        "attempt_id": {
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "envelope": {
+          "$ref": "#/$defs/SignedEnvelope"
+        },
+        "epoch": {
+          "title": "Epoch",
+          "type": "integer"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "task_id": {
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "offer",
+          "default": "offer",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt_id",
+        "task_id",
+        "epoch",
+        "expires_at",
+        "envelope"
+      ],
+      "title": "Offer",
+      "type": "object"
+    },
+    "Preempt": {
+      "properties": {
+        "attempt_id": {
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "type": {
+          "const": "preempt",
+          "default": "preempt",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt_id"
+      ],
+      "title": "Preempt",
+      "type": "object"
+    },
+    "Revoke": {
+      "properties": {
+        "group": {
+          "title": "Group",
+          "type": "string"
+        },
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "type": {
+          "const": "revoke",
+          "default": "revoke",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "group"
+      ],
+      "title": "Revoke",
+      "type": "object"
+    },
+    "SignedEnvelope": {
+      "properties": {
+        "key_id": {
+          "title": "Key Id",
+          "type": "string"
+        },
+        "payload_b64": {
+          "title": "Payload B64",
+          "type": "string"
+        },
+        "signature_b64": {
+          "title": "Signature B64",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key_id",
+        "payload_b64",
+        "signature_b64"
+      ],
+      "title": "SignedEnvelope",
+      "type": "object"
+    },
+    "UploadURL": {
+      "properties": {
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "url",
+        "expires_at"
+      ],
+      "title": "UploadURL",
+      "type": "object"
+    },
+    "UploadURLs": {
+      "properties": {
+        "attempt_id": {
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "type": {
+          "const": "upload_urls",
+          "default": "upload_urls",
+          "title": "Type",
+          "type": "string"
+        },
+        "urls": {
+          "items": {
+            "$ref": "#/$defs/UploadURL"
+          },
+          "title": "Urls",
+          "type": "array"
+        }
+      },
+      "required": [
+        "attempt_id"
+      ],
+      "title": "UploadURLs",
+      "type": "object"
+    },
+    "Welcome": {
+      "properties": {
+        "device_id": {
+          "title": "Device Id",
+          "type": "string"
+        },
+        "heartbeat_interval_s": {
+          "title": "Heartbeat Interval S",
+          "type": "integer"
+        },
+        "lease_ttl_s": {
+          "title": "Lease Ttl S",
+          "type": "integer"
+        },
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "server_time": {
+          "format": "date-time",
+          "title": "Server Time",
+          "type": "string"
+        },
+        "stale": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Stale",
+          "type": "array"
+        },
+        "type": {
+          "const": "welcome",
+          "default": "welcome",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "device_id",
+        "heartbeat_interval_s",
+        "lease_ttl_s",
+        "server_time"
+      ],
+      "title": "Welcome",
+      "type": "object"
+    }
+  },
+  "discriminator": {
+    "mapping": {
+      "cancel": "#/$defs/Cancel",
+      "cert_renewed": "#/$defs/CertRenewed",
+      "challenge": "#/$defs/Challenge",
+      "commit_ack": "#/$defs/CommitAck",
+      "error": "#/$defs/Error",
+      "heartbeat_ack": "#/$defs/HeartbeatAck",
+      "no_work": "#/$defs/NoWork",
+      "offer": "#/$defs/Offer",
+      "preempt": "#/$defs/Preempt",
+      "revoke": "#/$defs/Revoke",
+      "upload_urls": "#/$defs/UploadURLs",
+      "welcome": "#/$defs/Welcome"
+    },
+    "propertyName": "type"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/Challenge"
+    },
+    {
+      "$ref": "#/$defs/Welcome"
+    },
+    {
+      "$ref": "#/$defs/HeartbeatAck"
+    },
+    {
+      "$ref": "#/$defs/Offer"
+    },
+    {
+      "$ref": "#/$defs/NoWork"
+    },
+    {
+      "$ref": "#/$defs/UploadURLs"
+    },
+    {
+      "$ref": "#/$defs/CommitAck"
+    },
+    {
+      "$ref": "#/$defs/CertRenewed"
+    },
+    {
+      "$ref": "#/$defs/Cancel"
+    },
+    {
+      "$ref": "#/$defs/Preempt"
+    },
+    {
+      "$ref": "#/$defs/Revoke"
+    },
+    {
+      "$ref": "#/$defs/Error"
+    }
+  ]
+}

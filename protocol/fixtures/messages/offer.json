@@ -1,0 +1,13 @@
+{
+  "attempt_id": "6f9e2c71-0d3b-4c8e-a1f5-3b2e9d7c6a10",
+  "envelope": {
+    "key_id": "k1",
+    "payload_b64": "e30=",
+    "signature_b64": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw=="
+  },
+  "epoch": 2,
+  "expires_at": "2026-11-02T12:01:00Z",
+  "msg_id": "m-7",
+  "task_id": "c3a7e5d2-8b14-4f69-9e0a-1d2c3b4a5f60",
+  "type": "offer"
+}

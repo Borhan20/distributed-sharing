@@ -1,0 +1,2 @@
+machine_id,machine_type,os,cpu_cores,ram_gb,gpu_model,gpu_memory_gb,usual_idle_hours,always_on,owner_role
+ws-001,desktop,linux,16,64,example-gpu,24,"weekdays 19:00-08:00; weekends",no,researcher

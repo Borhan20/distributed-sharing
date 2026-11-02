@@ -1,0 +1,17 @@
+{
+  "attempt_id": "6f9e2c71-0d3b-4c8e-a1f5-3b2e9d7c6a10",
+  "epoch": 2,
+  "error": null,
+  "exit_code": 0,
+  "idempotency_key": "c3a7e5d2-8b14-4f69-9e0a-1d2c3b4a5f60:6f9e2c71-0d3b-4c8e-a1f5-3b2e9d7c6a10",
+  "msg_id": "m-15",
+  "outputs": [
+    {
+      "path": "result.json",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "size": 123
+    }
+  ],
+  "task_id": "c3a7e5d2-8b14-4f69-9e0a-1d2c3b4a5f60",
+  "type": "commit"
+}

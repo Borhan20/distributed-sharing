@@ -1,0 +1,113 @@
+# CI (plan §10): nothing is "done" until these pass.
+# Hardening: pin third-party actions by commit SHA once the repository is set up.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: pool
+        ports: ["55432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      POOL_TEST_ADMIN_DSN: postgresql://postgres@127.0.0.1:55432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --all-packages --extra s3 --frozen
+      - name: Lint
+        run: uv run ruff check protocol control-plane cli scripts tests
+      - name: Protocol schema is up to date
+        run: uv run python -m pool_protocol.export --check
+      - name: Migrations match the models
+        env:
+          POOL_DEV_MODE: "true"
+          POOL_DATABASE_URL: postgresql+asyncpg://postgres@127.0.0.1:55432/pool
+        run: |
+          cd control-plane
+          uv run python -m pool_cp.migrate
+          uv run alembic check
+          uv run alembic downgrade base
+          uv run python -m pool_cp.migrate
+      - name: Unit, contract and API tests
+        run: uv run pytest -q protocol cli control-plane
+      - name: License check (plan §14)
+        run: uv run python scripts/check_licenses.py
+
+  go:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+      - run: go vet ./...
+      - name: Unit and contract tests
+        run: go test ./...
+      - name: Sandbox escape suite (Docker)
+        run: go test -tags docker ./sandbox/...
+      - name: Windows build (WSL2 runtime is untested in CI)
+        run: GOOS=windows GOARCH=amd64 go build ./...
+      - name: Fuzz the protocol parser briefly
+        run: |
+          for f in $(grep -ho 'func Fuzz[A-Za-z0-9_]*' -r --include='*_test.go' protocol | sed 's/func //'); do
+            go test ./protocol -run '^$' -fuzz "^$f\$" -fuzztime 20s
+          done
+
+  web:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test -- --run
+      - run: npm run build
+      - run: npm run licenses
+
+  e2e:
+    needs: [python, go]
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["55432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      POOL_TEST_ADMIN_DSN: postgresql://postgres@127.0.0.1:55432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+      - run: uv sync --all-packages --extra s3 --frozen
+      - run: cd agent && go build -o bin/pool-agent ./cmd/pool-agent
+      - name: Agent end-to-end and chaos tests (invariants checked after each run)
+        run: uv run pytest -m e2e -q -s tests/e2e

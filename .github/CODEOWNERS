@@ -1,0 +1,25 @@
+# CODEOWNERS (plan §8.10)
+#
+# PLACEHOLDERS: replace "ORG" with your GitHub organization, and create the
+# teams "maintainers" and "security-reviewers" before enabling branch
+# protection with "Require review from Code Owners".
+#
+# Later rules override earlier ones, so the security paths list both teams.
+
+# Default owners for everything
+*                               @ORG/maintainers
+
+# Security-sensitive paths: a security reviewer must approve.
+/control-plane/pool_cp/auth/    @ORG/security-reviewers @ORG/maintainers
+/control-plane/pool_cp/authz/   @ORG/security-reviewers @ORG/maintainers
+/control-plane/pool_cp/audit/   @ORG/security-reviewers @ORG/maintainers
+/control-plane/pool_cp/ca/      @ORG/security-reviewers @ORG/maintainers
+/control-plane/pool_cp/secrets/ @ORG/security-reviewers @ORG/maintainers
+/agent/sandbox/                 @ORG/security-reviewers @ORG/maintainers
+/agent/policy/                  @ORG/security-reviewers @ORG/maintainers
+/agent/enroll/                  @ORG/security-reviewers @ORG/maintainers
+/protocol/                      @ORG/security-reviewers @ORG/maintainers
+
+# Security documents and this file
+/security/                      @ORG/security-reviewers
+/.github/CODEOWNERS             @ORG/security-reviewers @ORG/maintainers

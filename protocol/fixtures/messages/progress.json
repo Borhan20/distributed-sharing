@@ -1,0 +1,10 @@
+{
+  "attempt_id": "6f9e2c71-0d3b-4c8e-a1f5-3b2e9d7c6a10",
+  "checkpoint_ref": null,
+  "epoch": 2,
+  "log_chunk": "epoch 1/10 loss=0.42\n",
+  "msg_id": "m-12",
+  "seq": 0,
+  "stream": "stdout",
+  "type": "progress"
+}

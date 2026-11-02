@@ -1,0 +1,6 @@
+pool
+Copyright 2026 The pool authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+Third-party components keep their own licenses; see the license notes in
+plan.md §14 and the license check in CI.

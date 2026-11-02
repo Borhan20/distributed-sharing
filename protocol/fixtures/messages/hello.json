@@ -1,0 +1,69 @@
+{
+  "agent_version": "0.1.0",
+  "capabilities": {
+    "always_on": false,
+    "arch": "amd64",
+    "cpu_cores": 16,
+    "disk_mb": 512000,
+    "gpu_tiers": [
+      "T1"
+    ],
+    "gpus": [
+      {
+        "memory_mb": 24576,
+        "model": "example-gpu",
+        "vendor": "nvidia"
+      }
+    ],
+    "memory_mb": 65536,
+    "os": "linux",
+    "tiers": [
+      "T1",
+      "T2"
+    ]
+  },
+  "cert_pem": "-----BEGIN CERTIFICATE-----\nMIIB...example...\n-----END CERTIFICATE-----\n",
+  "device_id": "2b1d8a63-5c0e-4a51-9f1e-7f8a3a1c2d44",
+  "msg_id": "m-2",
+  "nonce_signature_b64": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg==",
+  "policy_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "profile": "default",
+  "protocol": "v1alpha1",
+  "running": [
+    {
+      "attempt_id": "6f9e2c71-0d3b-4c8e-a1f5-3b2e9d7c6a10",
+      "epoch": 2,
+      "state": "running"
+    }
+  ],
+  "shares": [
+    {
+      "accept_from": "all-members",
+      "accept_new_members": false,
+      "active_now": true,
+      "group": "research-team",
+      "limits": {
+        "cpu_percent": 75,
+        "disk_mb": 102400,
+        "gpu": true,
+        "memory_mb": 24576
+      }
+    },
+    {
+      "accept_from": [
+        "alice",
+        "bob"
+      ],
+      "accept_new_members": false,
+      "active_now": true,
+      "group": "uni-ml-lab",
+      "limits": {
+        "cpu_percent": 75,
+        "disk_mb": 102400,
+        "gpu": true,
+        "memory_mb": 24576
+      }
+    }
+  ],
+  "type": "hello"
+}

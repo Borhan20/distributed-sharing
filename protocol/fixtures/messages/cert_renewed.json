@@ -1,0 +1,6 @@
+{
+  "cert_not_after": "2026-11-02T12:01:00Z",
+  "cert_pem": "-----BEGIN CERTIFICATE-----\nMIIB...example...\n-----END CERTIFICATE-----\n",
+  "msg_id": "m-19",
+  "type": "cert_renewed"
+}

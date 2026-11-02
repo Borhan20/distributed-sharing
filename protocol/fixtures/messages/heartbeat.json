@@ -1,0 +1,30 @@
+{
+  "msg_id": "m-4",
+  "owner_active": false,
+  "running": [
+    {
+      "attempt_id": "6f9e2c71-0d3b-4c8e-a1f5-3b2e9d7c6a10",
+      "epoch": 2,
+      "state": "running"
+    }
+  ],
+  "shares": [
+    {
+      "accept_from": "all-members",
+      "accept_new_members": false,
+      "active_now": true,
+      "group": "research-team",
+      "limits": {
+        "cpu_percent": 75,
+        "disk_mb": 102400,
+        "gpu": true,
+        "memory_mb": 24576
+      }
+    }
+  ],
+  "type": "heartbeat",
+  "usage": {
+    "cpu_percent": 37.5,
+    "memory_mb": 2048
+  }
+}

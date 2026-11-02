@@ -1,0 +1,851 @@
+{
+  "$defs": {
+    "Abort": {
+      "properties": {
+        "attempt_id": {
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "detail": {
+          "default": "",
+          "title": "Detail",
+          "type": "string"
+        },
+        "epoch": {
+          "title": "Epoch",
+          "type": "integer"
+        },
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "owner_returned",
+            "kill_switch",
+            "policy",
+            "agent_shutdown",
+            "disk_full",
+            "runtime_error"
+          ],
+          "title": "Reason",
+          "type": "string"
+        },
+        "type": {
+          "const": "abort",
+          "default": "abort",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt_id",
+        "epoch",
+        "reason"
+      ],
+      "title": "Abort",
+      "type": "object"
+    },
+    "Accept": {
+      "properties": {
+        "attempt_id": {
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "epoch": {
+          "title": "Epoch",
+          "type": "integer"
+        },
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "tier": {
+          "enum": [
+            "T0",
+            "T1",
+            "T2",
+            "T3"
+          ],
+          "title": "Tier",
+          "type": "string"
+        },
+        "type": {
+          "const": "accept",
+          "default": "accept",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt_id",
+        "epoch",
+        "tier"
+      ],
+      "title": "Accept",
+      "type": "object"
+    },
+    "ArtifactRef": {
+      "properties": {
+        "path": {
+          "description": "Path relative to the outputs directory",
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size": {
+          "minimum": 0,
+          "title": "Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "size"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "Capabilities": {
+      "properties": {
+        "always_on": {
+          "default": false,
+          "title": "Always On",
+          "type": "boolean"
+        },
+        "arch": {
+          "title": "Arch",
+          "type": "string"
+        },
+        "cpu_cores": {
+          "minimum": 1,
+          "title": "Cpu Cores",
+          "type": "integer"
+        },
+        "disk_mb": {
+          "minimum": 0,
+          "title": "Disk Mb",
+          "type": "integer"
+        },
+        "gpu_tiers": {
+          "description": "Tiers that can also expose a GPU",
+          "items": {
+            "enum": [
+              "T0",
+              "T1",
+              "T2",
+              "T3"
+            ],
+            "type": "string"
+          },
+          "title": "Gpu Tiers",
+          "type": "array"
+        },
+        "gpus": {
+          "items": {
+            "$ref": "#/$defs/GPUInfo"
+          },
+          "title": "Gpus",
+          "type": "array"
+        },
+        "memory_mb": {
+          "minimum": 0,
+          "title": "Memory Mb",
+          "type": "integer"
+        },
+        "os": {
+          "enum": [
+            "linux",
+            "windows"
+          ],
+          "title": "Os",
+          "type": "string"
+        },
+        "tiers": {
+          "description": "Isolation tiers available and allowed by local policy",
+          "items": {
+            "enum": [
+              "T0",
+              "T1",
+              "T2",
+              "T3"
+            ],
+            "type": "string"
+          },
+          "title": "Tiers",
+          "type": "array"
+        }
+      },
+      "required": [
+        "os",
+        "arch",
+        "cpu_cores",
+        "memory_mb",
+        "disk_mb",
+        "tiers"
+      ],
+      "title": "Capabilities",
+      "type": "object"
+    },
+    "Commit": {
+      "properties": {
+        "attempt_id": {
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "epoch": {
+          "title": "Epoch",
+          "type": "integer"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "exit_code": {
+          "title": "Exit Code",
+          "type": "integer"
+        },
+        "idempotency_key": {
+          "title": "Idempotency Key",
+          "type": "string"
+        },
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "outputs": {
+          "items": {
+            "$ref": "#/$defs/ArtifactRef"
+          },
+          "maxItems": 1000,
+          "title": "Outputs",
+          "type": "array"
+        },
+        "task_id": {
+          "title": "Task Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "commit",
+          "default": "commit",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "idempotency_key",
+        "task_id",
+        "attempt_id",
+        "epoch",
+        "exit_code"
+      ],
+      "title": "Commit",
+      "type": "object"
+    },
+    "Decline": {
+      "properties": {
+        "attempt_id": {
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "detail": {
+          "default": "",
+          "title": "Detail",
+          "type": "string"
+        },
+        "epoch": {
+          "title": "Epoch",
+          "type": "integer"
+        },
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "signature_invalid",
+            "envelope_expired",
+            "wrong_device",
+            "group_not_shared",
+            "outside_window",
+            "owner_active",
+            "submitter_not_accepted",
+            "probation_not_accepted",
+            "tier_not_allowed",
+            "resources_exceed_limits",
+            "egress_not_allowed",
+            "image_not_allowed",
+            "kill_switch",
+            "busy",
+            "other"
+          ],
+          "title": "Reason",
+          "type": "string"
+        },
+        "type": {
+          "const": "decline",
+          "default": "decline",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt_id",
+        "epoch",
+        "reason"
+      ],
+      "title": "Decline",
+      "type": "object"
+    },
+    "GPUInfo": {
+      "properties": {
+        "memory_mb": {
+          "minimum": 0,
+          "title": "Memory Mb",
+          "type": "integer"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "vendor": {
+          "title": "Vendor",
+          "type": "string"
+        }
+      },
+      "required": [
+        "vendor",
+        "model",
+        "memory_mb"
+      ],
+      "title": "GPUInfo",
+      "type": "object"
+    },
+    "Heartbeat": {
+      "properties": {
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "owner_active": {
+          "default": false,
+          "title": "Owner Active",
+          "type": "boolean"
+        },
+        "running": {
+          "items": {
+            "$ref": "#/$defs/RunningAttempt"
+          },
+          "title": "Running",
+          "type": "array"
+        },
+        "shares": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ShareInfo"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Shares"
+        },
+        "type": {
+          "const": "heartbeat",
+          "default": "heartbeat",
+          "title": "Type",
+          "type": "string"
+        },
+        "usage": {
+          "$ref": "#/$defs/Usage"
+        }
+      },
+      "title": "Heartbeat",
+      "type": "object"
+    },
+    "Hello": {
+      "properties": {
+        "agent_version": {
+          "title": "Agent Version",
+          "type": "string"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/Capabilities"
+        },
+        "cert_pem": {
+          "title": "Cert Pem",
+          "type": "string"
+        },
+        "device_id": {
+          "title": "Device Id",
+          "type": "string"
+        },
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "nonce_signature_b64": {
+          "title": "Nonce Signature B64",
+          "type": "string"
+        },
+        "policy_digest": {
+          "title": "Policy Digest",
+          "type": "string"
+        },
+        "profile": {
+          "title": "Profile",
+          "type": "string"
+        },
+        "protocol": {
+          "const": "v1alpha1",
+          "default": "v1alpha1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "running": {
+          "items": {
+            "$ref": "#/$defs/RunningAttempt"
+          },
+          "title": "Running",
+          "type": "array"
+        },
+        "shares": {
+          "items": {
+            "$ref": "#/$defs/ShareInfo"
+          },
+          "title": "Shares",
+          "type": "array"
+        },
+        "type": {
+          "const": "hello",
+          "default": "hello",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent_version",
+        "device_id",
+        "profile",
+        "cert_pem",
+        "nonce_signature_b64",
+        "capabilities",
+        "policy_digest"
+      ],
+      "title": "Hello",
+      "type": "object"
+    },
+    "Progress": {
+      "properties": {
+        "attempt_id": {
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "checkpoint_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Checkpoint Ref"
+        },
+        "epoch": {
+          "title": "Epoch",
+          "type": "integer"
+        },
+        "log_chunk": {
+          "maxLength": 65536,
+          "title": "Log Chunk",
+          "type": "string"
+        },
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "stream": {
+          "default": "stdout",
+          "enum": [
+            "stdout",
+            "stderr",
+            "agent"
+          ],
+          "title": "Stream",
+          "type": "string"
+        },
+        "type": {
+          "const": "progress",
+          "default": "progress",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt_id",
+        "epoch",
+        "seq",
+        "log_chunk"
+      ],
+      "title": "Progress",
+      "type": "object"
+    },
+    "Ready": {
+      "properties": {
+        "free": {
+          "$ref": "#/$defs/Resources"
+        },
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "tiers": {
+          "items": {
+            "enum": [
+              "T0",
+              "T1",
+              "T2",
+              "T3"
+            ],
+            "type": "string"
+          },
+          "title": "Tiers",
+          "type": "array"
+        },
+        "type": {
+          "const": "ready",
+          "default": "ready",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "free",
+        "tiers"
+      ],
+      "title": "Ready",
+      "type": "object"
+    },
+    "RenewCert": {
+      "properties": {
+        "csr_pem": {
+          "maxLength": 8192,
+          "title": "Csr Pem",
+          "type": "string"
+        },
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "renew_cert",
+          "default": "renew_cert",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "csr_pem"
+      ],
+      "title": "RenewCert",
+      "type": "object"
+    },
+    "Resources": {
+      "properties": {
+        "cpu": {
+          "description": "CPU cores",
+          "minimum": 0,
+          "title": "Cpu",
+          "type": "number"
+        },
+        "disk_mb": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Disk Mb",
+          "type": "integer"
+        },
+        "gpus": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Gpus",
+          "type": "integer"
+        },
+        "memory_mb": {
+          "minimum": 0,
+          "title": "Memory Mb",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cpu",
+        "memory_mb"
+      ],
+      "title": "Resources",
+      "type": "object"
+    },
+    "RunningAttempt": {
+      "properties": {
+        "attempt_id": {
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "epoch": {
+          "minimum": 1,
+          "title": "Epoch",
+          "type": "integer"
+        },
+        "state": {
+          "enum": [
+            "assigned",
+            "running"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt_id",
+        "epoch",
+        "state"
+      ],
+      "title": "RunningAttempt",
+      "type": "object"
+    },
+    "ShareInfo": {
+      "description": "What the agent's local policy allows for one group (reported, not trusted).",
+      "properties": {
+        "accept_from": {
+          "anyOf": [
+            {
+              "const": "all-members",
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ],
+          "default": "all-members",
+          "title": "Accept From"
+        },
+        "accept_new_members": {
+          "default": false,
+          "title": "Accept New Members",
+          "type": "boolean"
+        },
+        "active_now": {
+          "description": "Time window active and idle requirement met right now",
+          "title": "Active Now",
+          "type": "boolean"
+        },
+        "group": {
+          "title": "Group",
+          "type": "string"
+        },
+        "limits": {
+          "$ref": "#/$defs/ShareLimits"
+        }
+      },
+      "required": [
+        "group",
+        "limits",
+        "active_now"
+      ],
+      "title": "ShareInfo",
+      "type": "object"
+    },
+    "ShareLimits": {
+      "properties": {
+        "cpu_percent": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Cpu Percent",
+          "type": "integer"
+        },
+        "disk_mb": {
+          "minimum": 0,
+          "title": "Disk Mb",
+          "type": "integer"
+        },
+        "gpu": {
+          "default": false,
+          "title": "Gpu",
+          "type": "boolean"
+        },
+        "memory_mb": {
+          "minimum": 0,
+          "title": "Memory Mb",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cpu_percent",
+        "memory_mb",
+        "disk_mb"
+      ],
+      "title": "ShareLimits",
+      "type": "object"
+    },
+    "Started": {
+      "properties": {
+        "attempt_id": {
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "epoch": {
+          "title": "Epoch",
+          "type": "integer"
+        },
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "started",
+          "default": "started",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt_id",
+        "epoch"
+      ],
+      "title": "Started",
+      "type": "object"
+    },
+    "UploadRequest": {
+      "properties": {
+        "artifacts": {
+          "items": {
+            "$ref": "#/$defs/ArtifactRef"
+          },
+          "maxItems": 1000,
+          "title": "Artifacts",
+          "type": "array"
+        },
+        "attempt_id": {
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "epoch": {
+          "title": "Epoch",
+          "type": "integer"
+        },
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "upload_request",
+          "default": "upload_request",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt_id",
+        "epoch",
+        "artifacts"
+      ],
+      "title": "UploadRequest",
+      "type": "object"
+    },
+    "Usage": {
+      "properties": {
+        "cpu_percent": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Cpu Percent",
+          "type": "number"
+        },
+        "memory_mb": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Memory Mb",
+          "type": "integer"
+        }
+      },
+      "title": "Usage",
+      "type": "object"
+    }
+  },
+  "discriminator": {
+    "mapping": {
+      "abort": "#/$defs/Abort",
+      "accept": "#/$defs/Accept",
+      "commit": "#/$defs/Commit",
+      "decline": "#/$defs/Decline",
+      "heartbeat": "#/$defs/Heartbeat",
+      "hello": "#/$defs/Hello",
+      "progress": "#/$defs/Progress",
+      "ready": "#/$defs/Ready",
+      "renew_cert": "#/$defs/RenewCert",
+      "started": "#/$defs/Started",
+      "upload_request": "#/$defs/UploadRequest"
+    },
+    "propertyName": "type"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/Hello"
+    },
+    {
+      "$ref": "#/$defs/Heartbeat"
+    },
+    {
+      "$ref": "#/$defs/Ready"
+    },
+    {
+      "$ref": "#/$defs/Accept"
+    },
+    {
+      "$ref": "#/$defs/Decline"
+    },
+    {
+      "$ref": "#/$defs/Started"
+    },
+    {
+      "$ref": "#/$defs/Progress"
+    },
+    {
+      "$ref": "#/$defs/UploadRequest"
+    },
+    {
+      "$ref": "#/$defs/Commit"
+    },
+    {
+      "$ref": "#/$defs/Abort"
+    },
+    {
+      "$ref": "#/$defs/RenewCert"
+    }
+  ]
+}
