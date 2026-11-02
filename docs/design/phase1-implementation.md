@@ -110,7 +110,7 @@ replacement (see [§9](#9-deviations-from-the-plan)).
 | A→S | `started` | `attempt_id, epoch` | Container started (Assigned → Running) |
 | A→S | `progress` | `attempt_id, epoch, seq, stream, log_chunk, checkpoint_ref?` | stdout/stderr, ≤ 64 KiB per chunk |
 | A→S | `upload_request` | `attempt_id, epoch, artifacts[{path, sha256, size}]` | |
-| S→A | `upload_urls` | `attempt_id, urls[{path, sha256, url, expires_at}], reason?` | Empty + `reason` when no object store is configured |
+| S→A | `upload_urls` | `attempt_id, urls[{path, sha256, url, expires_at}], reason?` | Empty + `reason` (`no_object_store`, `object_store_not_ready`) when there is no usable store. URLs are signed for `POOL_S3_PUBLIC_ENDPOINT` and cover size and `x-amz-checksum-sha256` |
 | A→S | `commit` | `idempotency_key, task_id, attempt_id, epoch, exit_code, outputs[{path, sha256, size}], error?` | Fenced |
 | S→A | `commit_ack` | `attempt_id, accepted, reason?` | |
 | A→S | `abort` | `attempt_id, epoch, reason, detail` | Owner returned, kill switch, disk full, ... |

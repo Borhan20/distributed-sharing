@@ -2,6 +2,9 @@ package session
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -223,6 +226,15 @@ func (a *Agent) put(client *http.Client, raw string, o sandbox.Output) error {
 	if o.Size == 0 {
 		req.Body = http.NoBody
 	}
+	// When the server signed the object's SHA-256 into the URL, the store
+	// requires the header and rejects a body that does not match it.
+	if signsHeader(u, checksumHeader) {
+		sum, err := hex.DecodeString(o.SHA256)
+		if err != nil || len(sum) != sha256.Size {
+			return fmt.Errorf("bad sha256 for %s", o.Path)
+		}
+		req.Header.Set(checksumHeader, base64.StdEncoding.EncodeToString(sum))
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
@@ -232,6 +244,19 @@ func (a *Agent) put(client *http.Client, raw string, o sandbox.Output) error {
 		return fmt.Errorf("HTTP %s", resp.Status)
 	}
 	return nil
+}
+
+const checksumHeader = "x-amz-checksum-sha256"
+
+// signsHeader reports whether a SigV4 presigned URL lists header among its
+// signed headers (X-Amz-SignedHeaders=content-length;host;...).
+func signsHeader(u *url.URL, header string) bool {
+	for _, h := range strings.Split(u.Query().Get("X-Amz-SignedHeaders"), ";") {
+		if strings.EqualFold(h, header) {
+			return true
+		}
+	}
+	return false
 }
 
 func truncate(s string, n int) string {

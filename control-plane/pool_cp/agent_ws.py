@@ -19,7 +19,7 @@ from sqlalchemy import select
 
 from pool_protocol import messages as pm
 
-from . import audit
+from . import audit, storage
 from .ca import CAError, LocalCA
 from .models import Device, RevokedCert
 from .scheduler import core
@@ -203,6 +203,10 @@ async def _dispatch(app, device_id: uuid.UUID, msg) -> pm._Msg | list | None:  #
                 await core.handle_progress(s, device_id, msg)
             case pm.UploadRequest():
                 f = await core.fence(s, device_id, msg.attempt_id, msg.epoch)
+                if storage.enabled(settings) and app.state.status.get("object_store") != "ready":
+                    # The bucket is not there yet; URLs would only fail. Outputs stay on the device.
+                    await s.commit()
+                    return pm.UploadURLs(attempt_id=msg.attempt_id, urls=[], reason="object_store_not_ready")
                 urls = []
                 for art in msg.artifacts:
                     url, expires = presign_put(settings, f.task.group_id, art.sha256, art.size)

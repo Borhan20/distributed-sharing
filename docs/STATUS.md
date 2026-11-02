@@ -20,13 +20,14 @@ that were not available.
 |---|---|---|
 | Python lint | `uv run ruff check protocol control-plane cli scripts tests` | clean |
 | Protocol schema drift | `uv run python -m pool_protocol.export --check` | up to date |
-| Python unit, contract, API, security, CLI | `uv run pytest -q protocol cli control-plane` | 85 passed |
+| Python unit, contract, API, security, CLI | `uv run pytest -q protocol cli control-plane` | 96 passed |
 | Migrations | upgrade → `alembic check` → downgrade → upgrade on a fresh DB | clean |
 | Go agent | `go vet`, `go test ./...`, `go test -tags docker ./sandbox/... ./session/...`, `GOOS=windows go build` | all pass |
 | Go fuzzing | `FuzzDecode` 20 s, `FuzzVerifyEnvelope` 15 s | no failures |
 | Web UI | `npm run typecheck`, `npm test -- --run` (16), `npm run build`, `npm run licenses` | all pass |
-| End to end | `uv run pytest -m e2e tests/e2e` | 7 passed (chaos, 4 real-agent tests, 2 Keycloak OIDC tests) |
+| End to end | `uv run pytest -m e2e tests/e2e` | 10 passed (chaos, 4 real-agent tests, 3 object-store tests with SeaweedFS, 2 Keycloak OIDC tests) |
 | Compose | `docker compose -f deploy/compose.yaml up --build` + the README walk-through with a real agent | 6/6 tasks succeeded |
+| Compose with object store | `--profile storage`, bucket created by the API, real agent job (3 November 2026) | output uploaded, stored bytes match the hash |
 | License check | `scripts/check_licenses.py`, `npm run licenses` | no copyleft or source-available deps |
 
 ## Phase 0: Foundations and spikes
@@ -62,7 +63,7 @@ that were not available.
 | T2 gVisor | Partial | Flag path built; **untested** (no `runsc` here) |
 | GPU (CDI) | Partial | Flag path built; **untested** (no GPU) |
 | Log streaming | Done (polling) | Logs stored in PostgreSQL (X3) |
-| Outputs through the object store | Partial | Presigned upload built on both sides; not tested against SeaweedFS. Without a store, hashes are reported and files stay on the device |
+| Outputs through the object store | Done | Tested against SeaweedFS 4.50 (e2e and compose `--profile storage` with a real agent). The API creates the bucket; upload URLs use a separate public address and sign size and SHA-256. Without a store, hashes are reported and files stay on the device |
 | Inputs through the object store | Not started | Jobs with `data.inputs` are rejected at submit time so they never run without their data |
 | Leases, retries | Done | Plus fencing epochs from Phase 2 |
 | Audit log (hash-chained, append-only) and "what ran here" | Done | DB trigger blocks UPDATE/DELETE; tamper test |

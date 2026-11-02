@@ -3,7 +3,13 @@
     {
       "name": "pool",
       "credentials": [{ "accessKey": "REPLACE_ME", "secretKey": "REPLACE_ME" }],
-      "actions": ["Read", "Write", "List", "Tagging"]
+      "actions": [
+        "Admin:pool-artifacts",
+        "Read:pool-artifacts",
+        "Write:pool-artifacts",
+        "List:pool-artifacts",
+        "Tagging:pool-artifacts"
+      ]
     }
   ]
 }
