@@ -179,7 +179,7 @@ Each step is its own branch and pull request.
 
 | Step | Scope | Done when (measured, not estimated) |
 |---|---|---|
-| 0. Quick fixes | Runnable default job in the form; working enroll command and full steps on the Devices page; pending reasons on the job page; one-step share | On a fresh dev stack, a new user's default job runs, and a pending job explains itself |
+| 0. Quick fixes (**done**, plus output downloads, a user guide and `scripts/dev-up.sh`) | Runnable default job in the form; working enroll command and full steps on the Devices page; pending reasons on the job page; one-step share | On a fresh dev stack, a new user's default job runs, and a pending job explains itself |
 | 1. Easy server install | Installer, Caddy, generated secrets, one public address, setup link, self-registration; the no-domain spike | On a fresh cloud VM: one command, ≤ 3 questions, no file edited by hand, HTTPS login in < 15 minutes |
 | 2. Share my computer | Release builds from CI, `.deb`/`.rpm`/install script, Windows installer, services, pairing page | A Linux member goes from invite link to "computer shown in group" in < 10 minutes without editing a file; same check on Windows |
 | 3. Tray app | Pause, resume, kill switch, limits, groups, what ran here | Every policy setting can be changed without opening a file; the kill switch stops containers within seconds (test) |
