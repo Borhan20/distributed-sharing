@@ -143,7 +143,9 @@ D = denial of service, E = elevation of privilege.
 | | Threat | Mitigation | Status |
 |---|---|---|---|
 | S/E | Agent writes outside its attempt | Presigned URL per object, issued only for a fenced attempt | Implemented in slice 1 when a store is configured |
-| T | Swapped input or output | Content addressing by SHA-256 | Implemented in slice 1 (hashes in commit) |
+| T | Swapped input or output | Content addressing by SHA-256; upload URLs sign the SHA-256 (`x-amz-checksum-sha256`), so the store rejects a body that does not match | Implemented: hashes in commit, store-side check tested against SeaweedFS 4.50 |
+| T | Device overwrites another task's output by claiming its hash | Same signed checksum: a device can only store the exact bytes for a hash | Implemented; tested in `tests/e2e/test_object_store.py` |
+| E | Control-plane store credentials too broad | Example identity limited to the `pool-artifacts` bucket (`Admin:`, `Read:`, `Write:`, `List:`, `Tagging:` scoped to it); agents never see the keys | Implemented in `deploy/seaweedfs-s3.json.example` |
 | I | Leaked presigned URL | 15 min expiry; bucket per group | Expiry in slice 1; bucket per group planned |
 | I | Data at rest on store host | Encryption at rest | Deployment config; open |
 

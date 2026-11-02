@@ -157,7 +157,9 @@ Decline reasons are the ones listed in the design doc §3.3.
 - **Uploading:** the agent sends `upload_request` and uploads to the presigned
   URLs. Only https URLs are used, or http when the profile itself is a
   localhost dev profile, so the server cannot point the agent at arbitrary
-  LAN addresses. Then it commits.
+  LAN addresses. When the URL signs `x-amz-checksum-sha256`, the agent sends
+  the file's SHA-256 in that header, and the store rejects a body that does
+  not match. Then it commits.
 - **Cleaning up:** the agent user cannot delete files that uid 65534 created
   inside nested directories. If deletion fails, a short-lived container runs
   as that same uid, with the same pinned image, no network and no

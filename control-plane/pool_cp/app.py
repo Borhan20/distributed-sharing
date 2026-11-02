@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
-from . import agent_ws
+from . import agent_ws, storage
 from .api import devices, groups, jobs
 from .auth import TokenVerifier
 from .auth.dev_idp import DEV_AUDIENCE, DEV_ISSUER, DevIdP
@@ -50,9 +50,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        task = asyncio.create_task(_api_heartbeat(app))
+        tasks = [asyncio.create_task(_api_heartbeat(app))]
+        if storage.enabled(settings):
+            tasks.append(asyncio.create_task(storage.keep_ensuring_bucket(settings, app.state.status)))
         yield
-        task.cancel()
+        for task in tasks:
+            task.cancel()
         await engine.dispose()
 
     app = FastAPI(title="pool control plane", version="0.1.0", lifespan=lifespan,
@@ -64,6 +67,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                            create=bool(settings.autocreate_keys))
     app.state.signer = EnvelopeSigner(settings.signing_key_file, create=bool(settings.autocreate_keys))
     app.state.agent_conns = {}
+    # Dependencies that do not gate readiness. The object store is optional: jobs run
+    # without it and outputs stay on the devices.
+    app.state.status = {"object_store": "not ready" if storage.enabled(settings) else "disabled"}
 
     if settings.dev_mode:
         log.warning("POOL_DEV_MODE is on: /dev/token issues tokens without a password. Never use this on a "
@@ -89,7 +95,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def readyz() -> dict:
         async with app.state.sessionmaker() as s:
             await s.execute(text("SELECT 1"))
-        return {"ok": True}
+        return {"ok": True, **app.state.status}
 
     web_dist = Path(__file__).resolve().parents[2] / "web" / "dist"
     if web_dist.is_dir():

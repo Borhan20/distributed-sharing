@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ipaddress
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -49,12 +51,19 @@ class Settings(BaseSettings):
     enroll_rate_per_minute: int = 10  # per client address, unauthenticated endpoint
     max_ws_messages_per_s: int = 200
 
-    # Object store (S3 API, e.g. SeaweedFS). Optional.
+    # Object store (S3 API, e.g. SeaweedFS). Optional: set endpoint, access key and
+    # secret key together, or none of them.
+    # s3_endpoint is the address the control plane itself uses (e.g. http://seaweedfs:8333
+    # inside compose). s3_public_endpoint is the address written into the presigned URLs
+    # that agents use; the signature covers the host, so it must be the name agents reach
+    # the store by. It defaults to s3_endpoint.
     s3_endpoint: str | None = None
+    s3_public_endpoint: str | None = None
     s3_region: str = "us-east-1"
     s3_access_key: str | None = None
     s3_secret_key: str | None = None
     s3_bucket: str = "pool-artifacts"
+    s3_create_bucket: bool = True  # create the bucket at startup if it is missing
     presign_ttl_s: int = 900
 
     @model_validator(mode="after")
@@ -68,7 +77,47 @@ class Settings(BaseSettings):
         self.signing_key_file = self.signing_key_file or self.data_dir / "signing.key"
         if not self.dev_mode and not (self.oidc_issuer and self.oidc_audience):
             raise ValueError("POOL_OIDC_ISSUER and POOL_OIDC_AUDIENCE are required unless POOL_DEV_MODE=true")
+        self._check_object_store()
         return self
+
+    def _check_object_store(self) -> None:
+        # Empty strings come from compose (`${POOL_S3_ENDPOINT:-}`); treat them as unset.
+        for name in ("s3_endpoint", "s3_public_endpoint", "s3_access_key", "s3_secret_key"):
+            if getattr(self, name) == "":
+                setattr(self, name, None)
+        required = {"POOL_S3_ENDPOINT": self.s3_endpoint, "POOL_S3_ACCESS_KEY": self.s3_access_key,
+                    "POOL_S3_SECRET_KEY": self.s3_secret_key}
+        if not any(required.values()):
+            if self.s3_public_endpoint:
+                raise ValueError("POOL_S3_PUBLIC_ENDPOINT is set but POOL_S3_ENDPOINT is not")
+            return
+        missing = [k for k, v in required.items() if not v]
+        if missing:
+            # A half-configured store would silently keep every output on the devices.
+            raise ValueError(f"object store is partly configured; also set {', '.join(missing)}")
+        self.s3_public_endpoint = self.s3_public_endpoint or self.s3_endpoint
+        for name, value in (("POOL_S3_ENDPOINT", self.s3_endpoint),
+                            ("POOL_S3_PUBLIC_ENDPOINT", self.s3_public_endpoint)):
+            u = urlsplit(value)
+            if u.username or u.password:  # checked first so the error never echoes a password
+                raise ValueError(f"{name} must not contain credentials; use POOL_S3_ACCESS_KEY/SECRET_KEY")
+            if u.scheme not in ("http", "https") or not u.hostname or u.query or u.fragment:
+                raise ValueError(f"{name} must be an http(s) URL like https://s3.example.org, not {value!r}")
+        # Agents refuse plain-http upload URLs unless they were enrolled against a
+        # localhost dev server, so a shared server must hand out https URLs.
+        public = urlsplit(self.s3_public_endpoint)
+        if not self.dev_mode and public.scheme != "https" and not _is_loopback(public.hostname):
+            raise ValueError("POOL_S3_PUBLIC_ENDPOINT must use https: agents refuse plain-http upload URLs "
+                             "(put a TLS reverse proxy in front of the object store)")
+
+
+def _is_loopback(host: str | None) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host or "").is_loopback
+    except ValueError:
+        return False
 
 
 @lru_cache

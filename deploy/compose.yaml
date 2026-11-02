@@ -5,7 +5,7 @@
 #
 # Default: DEV MODE (built-in dev login, no passwords) for trying pool on one machine.
 # For a shared server use OIDC:  docker compose -f deploy/compose.yaml -f deploy/compose.oidc.yaml up -d
-# Object store (SeaweedFS, S3 API):  add  --profile storage
+# Object store (SeaweedFS, S3 API):  add  --profile storage  and set POOL_S3_* in deploy/.env
 
 name: pool
 
@@ -19,6 +19,7 @@ x-cp: &cp
     POOL_PUBLIC_URL: ${POOL_PUBLIC_URL:-http://127.0.0.1:8000}
     POOL_SERVER_ADMINS: ${POOL_SERVER_ADMINS:-[]}
     POOL_S3_ENDPOINT: ${POOL_S3_ENDPOINT:-}
+    POOL_S3_PUBLIC_ENDPOINT: ${POOL_S3_PUBLIC_ENDPOINT:-}
     POOL_S3_ACCESS_KEY: ${POOL_S3_ACCESS_KEY:-}
     POOL_S3_SECRET_KEY: ${POOL_S3_SECRET_KEY:-}
   volumes:
@@ -70,7 +71,8 @@ services:
 
   seaweedfs:
     profiles: [storage]
-    image: chrislusf/seaweedfs:${SEAWEEDFS_TAG:-latest}
+    # Apache-2.0. Pinned to the version the object-store tests ran against (tests/e2e/test_object_store.py).
+    image: chrislusf/seaweedfs:4.50@sha256:c2658820e763294a9e9de7b36c81e59b879e3459148351aee4e31a126ca64860
     restart: unless-stopped
     command: ["server", "-dir=/data", "-s3", "-s3.config=/etc/seaweedfs/s3.json"]
     volumes:
