@@ -94,6 +94,34 @@ func TestCreateArgsTiersAndGPU(t *testing.T) {
 	}
 }
 
+func TestCreateArgsTaskNumberAndDefaultCommand(t *testing.T) {
+	s := spec()
+	s.TaskIndex, s.TaskCount = 2, 5
+	args, err := CreateArgs(s, "/o")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !has(args, "--env", "POOL_TASK_INDEX=2") || !has(args, "--env", "POOL_TASK_COUNT=5") {
+		t.Errorf("task number missing: %v", args)
+	}
+	// A job without a command runs the image's own ENTRYPOINT/CMD, still with every hardening flag.
+	s = spec()
+	s.Command = nil
+	args, err = CreateArgs(s, "/o")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if has(args, "--entrypoint") || args[len(args)-1] != s.Image {
+		t.Errorf("default command: image must come last with no --entrypoint: %v", args)
+	}
+	if !has(args, "--user", "65534:65534") || !has(args, "--network", "none") || !has(args, "--read-only") {
+		t.Errorf("default command lost hardening: %v", args)
+	}
+	if !has(args, "--env", "POOL_TASK_INDEX=0") || !has(args, "--env", "POOL_TASK_COUNT=1") {
+		t.Errorf("a single task is number 0 of 1: %v", args)
+	}
+}
+
 func TestCreateArgsRejects(t *testing.T) {
 	cases := map[string]func(*Spec){
 		"reserved env":      func(s *Spec) { s.Env = map[string]string{"POOL_EPOCH": "9"} },
@@ -103,7 +131,9 @@ func TestCreateArgsRejects(t *testing.T) {
 		"dotdot out path":   func(s *Spec) { s.OutputsPath = "/out/../etc" },
 		"comma out path":    func(s *Spec) { s.OutputsPath = "/out,dst=/etc" },
 		"no memory":         func(s *Spec) { s.MemoryMB = 0 },
-		"no command":        func(s *Spec) { s.Command = nil },
+		"no image":          func(s *Spec) { s.Image = "" },
+		"index past count":  func(s *Spec) { s.TaskIndex, s.TaskCount = 4, 4 },
+		"negative index":    func(s *Spec) { s.TaskIndex = -1 },
 	}
 	for name, mutate := range cases {
 		s := spec()

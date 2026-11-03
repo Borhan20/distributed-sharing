@@ -38,8 +38,10 @@ type Spec struct {
 	Profile     string
 	Tier        protocol.Tier
 	Image       string
-	Command     []string
+	Command     []string // empty: the image's own ENTRYPOINT and CMD
 	Env         map[string]string
+	TaskIndex   int // this task's number in its job, 0..TaskCount-1 (POOL_TASK_INDEX)
+	TaskCount   int // tasks in the job (POOL_TASK_COUNT)
 	CPU         float64
 	MemoryMB    int64
 	DiskMB      int64
@@ -125,8 +127,11 @@ const (
 // path of the attempt's output directory as seen by the Docker daemon.
 // Flags follow design doc §8; see sandbox_docker_test.go for the escape tests.
 func CreateArgs(s Spec, outMount string) ([]string, error) {
-	if s.AttemptID == "" || s.Image == "" || len(s.Command) == 0 {
-		return nil, errors.New("spec needs attempt id, image and command")
+	if s.AttemptID == "" || s.Image == "" {
+		return nil, errors.New("spec needs attempt id and image")
+	}
+	if s.TaskIndex < 0 || (s.TaskCount > 0 && s.TaskIndex >= s.TaskCount) {
+		return nil, fmt.Errorf("task index %d is outside 0..%d", s.TaskIndex, s.TaskCount-1)
 	}
 	if s.CPU <= 0 || s.MemoryMB <= 0 {
 		return nil, errors.New("spec needs cpu and memory limits")
@@ -191,6 +196,12 @@ func CreateArgs(s Spec, outMount string) ([]string, error) {
 	env["POOL_TASK_ID"] = s.TaskID
 	env["POOL_EPOCH"] = strconv.FormatInt(s.Epoch, 10)
 	env["POOL_OUTPUT_DIR"] = outPath
+	count := s.TaskCount
+	if count < 1 {
+		count = 1
+	}
+	env["POOL_TASK_INDEX"] = strconv.Itoa(s.TaskIndex)
+	env["POOL_TASK_COUNT"] = strconv.Itoa(count)
 	keys := make([]string, 0, len(env))
 	for k := range env {
 		keys = append(keys, k)
@@ -201,6 +212,10 @@ func CreateArgs(s Spec, outMount string) ([]string, error) {
 			return nil, fmt.Errorf("env %s contains a NUL byte", k)
 		}
 		args = append(args, "--env", k+"="+env[k])
+	}
+	if len(s.Command) == 0 {
+		// No command in the job: run what the image runs by default.
+		return append(args, s.Image), nil
 	}
 	// The job's command replaces the image ENTRYPOINT (like Kubernetes "command").
 	args = append(args, "--entrypoint", s.Command[0], s.Image)

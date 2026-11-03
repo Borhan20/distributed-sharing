@@ -355,3 +355,15 @@ func TestPauseUnpauseThrottle(t *testing.T) {
 	}
 	_ = rt.Cleanup(id)
 }
+
+func TestTaskNumberAndImageDefaultCommand(t *testing.T) {
+	r := runScript(t, `echo "part=$POOL_TASK_INDEX of=$POOL_TASK_COUNT"`, func(s *Spec) { s.TaskIndex, s.TaskCount = 3, 8 })
+	if r.err != nil || r.res.ExitCode != 0 || strings.TrimSpace(r.stdout) != "part=3 of=8" {
+		t.Fatalf("task number inside the container: err=%v exit=%d out=%q", r.err, r.res.ExitCode, r.stdout)
+	}
+	// busybox's default CMD is "sh", which exits 0 at once without a terminal.
+	r = runScript(t, "", func(s *Spec) { s.Command = nil })
+	if r.err != nil || r.res.ExitCode != 0 {
+		t.Fatalf("image default command: err=%v exit=%d stderr=%s", r.err, r.res.ExitCode, r.stderr)
+	}
+}

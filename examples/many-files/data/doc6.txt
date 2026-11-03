@@ -1,0 +1,2 @@
+document 6
+line two of 6

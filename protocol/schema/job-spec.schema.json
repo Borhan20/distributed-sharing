@@ -244,12 +244,18 @@
           "default": null
         },
         "command": {
-          "items": {
-            "type": "string"
-          },
-          "minItems": 1,
-          "title": "Command",
-          "type": "array"
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Command"
         },
         "data": {
           "$ref": "#/$defs/DataReq"
@@ -282,23 +288,39 @@
           "anyOf": [
             {
               "additionalProperties": {
-                "items": {
-                  "anyOf": [
-                    {
-                      "type": "string"
+                "anyOf": [
+                  {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        }
+                      ]
                     },
-                    {
-                      "type": "integer"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "boolean"
-                    }
-                  ]
-                },
-                "type": "array"
+                    "type": "array"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  }
+                ]
               },
               "type": "object"
             },
@@ -340,6 +362,22 @@
           "default": null,
           "title": "Os"
         },
+        "parts": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "const": "auto",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parts"
+        },
         "resources": {
           "$ref": "#/$defs/ResourcesReq"
         },
@@ -358,20 +396,26 @@
           "type": "array"
         },
         "shape": {
-          "default": "single",
-          "enum": [
-            "single",
-            "array",
-            "service",
-            "gang"
+          "anyOf": [
+            {
+              "enum": [
+                "single",
+                "array",
+                "service",
+                "gang"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ],
-          "title": "Shape",
-          "type": "string"
+          "default": null,
+          "title": "Shape"
         }
       },
       "required": [
-        "image",
-        "command"
+        "image"
       ],
       "title": "Spec",
       "type": "object"

@@ -2,11 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { client, unwrap, type LogLine, type Task } from "../api/client";
-import { errorMessage } from "../api/errors";
+import { ApiError, errorMessage } from "../api/errors";
 import { useAuth } from "../auth/AuthContext";
 import { ConfirmDialog, ErrorBox, Loading, RichText, StateBadge } from "../components/ui";
 import { TERMINAL, fmtTime } from "../lib/format";
+import { downloadFile } from "../lib/download";
+import { commandText, splitImage } from "../lib/jobspec";
 import { TaskCounts } from "./group/JobsTab";
+import type { RerunState } from "./group/SubmitJob";
 
 export function JobPage() {
   const { id = "" } = useParams();
@@ -51,6 +54,8 @@ export function JobPage() {
   if (!job.data) return <ErrorBox error={job.error ?? new Error("job not found")} />;
   const j = job.data;
   const spec = (j.spec?.spec ?? {}) as Record<string, unknown>;
+  const asSubmitted = (j.spec?.as_submitted ?? {}) as { note?: string };
+  const image = splitImage(j.image);
   const selectedTask = tasks.data?.find((t) => t.index === selected) ?? null;
   return (
     <>
@@ -72,6 +77,15 @@ export function JobPage() {
           {!done && j.submitter === me?.handle && (
             <button type="button" className="secondary" disabled={cancel.isPending} onClick={() => cancel.mutate()}>
               Cancel job
+            </button>
+          )}
+          {group.data?.state === "active" && ["coordinator", "admin", "member", "submitter"].includes(group.data?.my_role ?? "") && (
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => navigate(`/groups/${j.group}?tab=jobs`, { state: { rerun: j.spec ?? undefined } satisfies RerunState })}
+            >
+              Run again with changes
             </button>
           )}
           {(j.submitter === me?.handle || ["coordinator", "admin"].includes(group.data?.my_role ?? "")) && (
@@ -105,22 +119,37 @@ export function JobPage() {
         <dl className="kv">
           <dt>Image</dt>
           <dd>
-            <code className="break">{j.image}</code>
+            <code className="break">{image.name}</code>
+            {image.digest && (
+              <span className="muted small-text" title={image.digest}>
+                {" "}
+                · fixed to {image.digest.slice(0, 19)}… when submitted
+              </span>
+            )}
           </dd>
           <dt>Command</dt>
           <dd>
-            <code className="break">{JSON.stringify(spec.command ?? [])}</code>
+            {Array.isArray(spec.command) && spec.command.length > 0 ? (
+              <code className="break">{commandText(spec.command)}</code>
+            ) : (
+              <span className="muted">the image's own command</span>
+            )}
           </dd>
-          <dt>Resources</dt>
-          <dd>
-            <code>{JSON.stringify(spec.resources ?? {})}</code>
-          </dd>
+          {asSubmitted.note && (
+            <>
+              <dt>Parts</dt>
+              <dd>{asSubmitted.note}</dd>
+            </>
+          )}
+          <dt>Each task</dt>
+          <dd>{resourcesText(spec.resources)}</dd>
           <dt>Isolation</dt>
           <dd>{(spec.isolation as { min_tier?: string } | undefined)?.min_tier ?? "T1"} or stronger</dd>
           <dt>Data class</dt>
           <dd>{String(spec.data_class ?? "internal")}</dd>
         </dl>
       </section>
+      <JobResults jobId={j.id} name={j.name} tasks={tasks.data ?? []} done={done} />
       <section className="card">
         <h2>Tasks</h2>
         <ErrorBox error={tasks.error} />
@@ -171,6 +200,119 @@ export function JobPage() {
       {selectedTask && <TaskLogs jobId={j.id} task={selectedTask} />}
     </>
   );
+}
+
+/**
+ * All results in one place: one zip with every task's files and log, and the tasks' result.json files as one
+ * table (docs/user-guide.md §7, "Collect the results").
+ */
+function JobResults({ jobId, name, tasks, done }: { jobId: string; name: string; tasks: Task[]; done: boolean }) {
+  const [error, setError] = useState<unknown>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [soFar, setSoFar] = useState(0);
+  const finished = tasks.filter((t) => t.state === "succeeded").length;
+  const ran = tasks.some((t) => t.attempts > 0);
+  // The table reads every task's result.json from the file store: load it once the job is done, or when asked.
+  const table = useQuery({
+    queryKey: ["results", jobId, done ? "done" : soFar],
+    queryFn: () => unwrap(client.GET("/api/v1/jobs/{job_id}/results", { params: { path: { job_id: jobId } } })),
+    enabled: finished > 0 && (done || soFar > 0),
+    retry: false,
+  });
+  const noStore = table.error instanceof ApiError && table.error.status === 409;
+  const save = (path: string, file: string) => {
+    setError(null);
+    setBusy(path);
+    downloadFile(`/api/v1/jobs/${jobId}/${path}`, file)
+      .catch(setError)
+      .finally(() => setBusy(null));
+  };
+  if (!ran) return null;
+  const rows = table.data?.rows ?? [];
+  const shown = rows.slice(0, 200);
+  return (
+    <section className="card">
+      <h2>Results</h2>
+      <p className="muted">
+        {done ? "The job has finished." : `${finished} of ${tasks.length} task(s) finished so far.`} Download all gives
+        one zip: a folder per task with its files and log, <code>tasks.csv</code> (one line per task),{" "}
+        <code>results.csv</code> (every <code>result.json</code> in one table) and CSV files of the same name merged.
+      </p>
+      {noStore && (
+        <p className="notice">
+          This server has no file store, so the files a task writes stay on the computer that ran it. Each task's log
+          is still here: open it below.
+        </p>
+      )}
+      {!noStore && (
+        <div className="row wrap">
+          <button type="button" disabled={busy !== null} onClick={() => save("results.zip", `${name}-results.zip`)}>
+            {busy === "results.zip" ? "Preparing the zip…" : "Download all (zip)"}
+          </button>
+          {rows.length > 0 && (
+            <button
+              type="button"
+              className="secondary"
+              disabled={busy !== null}
+              onClick={() => save("results.csv", `${name}-results.csv`)}
+            >
+              Download results table (CSV)
+            </button>
+          )}
+          {!done && finished > 0 && (
+            <button type="button" className="secondary" disabled={table.isFetching} onClick={() => setSoFar((n) => n + 1)}>
+              {soFar ? "Refresh the results table" : "Show the results so far"}
+            </button>
+          )}
+        </div>
+      )}
+      <ErrorBox error={error} />
+      {table.error && !noStore ? <ErrorBox error={table.error} /> : null}
+      {rows.length > 0 && table.data && (
+        <>
+          <h3>Results table</h3>
+          <p className="muted small-text">
+            From each task's <code>/out/result.json</code>.
+            {table.data.missing > 0 && ` ${table.data.missing} task(s) have no result.json yet (not finished, failed, or none written).`}
+            {rows.length > shown.length && ` Showing the first ${shown.length} of ${rows.length}; the CSV has all.`}
+          </p>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  {table.data.columns.map((c) => (
+                    <th key={c}>{c}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map((r) => (
+                  <tr key={String(r.task)}>
+                    {table.data.columns.map((c) => (
+                      <td key={c}>{r[c] === undefined || r[c] === null ? "" : String(r[c])}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+      {finished > 0 && table.data && rows.length === 0 && (
+        <p className="muted small-text">
+          No task wrote <code>/out/result.json</code>. Write one (a JSON object, e.g.{" "}
+          <code>{'{"seed": 3, "score": 0.91}'}</code>) and the results show up here as one table.
+        </p>
+      )}
+    </section>
+  );
+}
+
+function resourcesText(r: unknown): string {
+  const res = (r ?? {}) as { cpu?: number; memory?: string; disk?: string; gpu?: { count?: number } | null };
+  const parts = [`${res.cpu ?? 1} CPU`, `${res.memory ?? "1Gi"} memory`, `${res.disk ?? "1Gi"} disk`];
+  if (res.gpu?.count) parts.push(`${res.gpu.count} GPU`);
+  return parts.join(", ");
 }
 
 function resultText(t: Task): string {
@@ -230,9 +372,22 @@ function TaskLogs({ jobId, task }: { jobId: string; task: Task }) {
   let lastAttempt = "";
   return (
     <section className="card">
-      <h2>
-        Logs — task {task.index} {live && <span className="muted">(live)</span>}
-      </h2>
+      <div className="row between">
+        <h2>
+          Logs — task {task.index} {live && <span className="muted">(live)</span>}
+        </h2>
+        <button
+          type="button"
+          className="secondary small"
+          onClick={() =>
+            downloadFile(`/api/v1/jobs/${jobId}/tasks/${task.index}/log.txt`, `task-${task.index}-log.txt`).catch((e) =>
+              setError(errorMessage(e)),
+            )
+          }
+        >
+          Download log
+        </button>
+      </div>
       {error && <div className="error">{error}</div>}
       <pre className="logs" aria-live="polite">
         {lines.length === 0 && <span className="muted">No output yet.</span>}

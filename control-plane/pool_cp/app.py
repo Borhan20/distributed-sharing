@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from . import agent_ws, storage
-from .api import devices, groups, jobs, registries
+from .api import devices, groups, jobs, registries, results
 from .auth import TokenVerifier
 from .auth.dev_idp import DEV_AUDIENCE, DEV_ISSUER, DevIdP
 from .auth.dev_idp import router as dev_router
@@ -88,6 +88,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(devices.router)
     app.include_router(jobs.router)
     app.include_router(registries.router)
+    app.include_router(results.router)
     app.include_router(agent_ws.router)
 
     @app.get("/api/v1/config", tags=["ops"])

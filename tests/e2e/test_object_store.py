@@ -259,3 +259,58 @@ async def test_deleting_jobs_and_groups_removes_their_files(seaweedfs, control_p
     while time.monotonic() < deadline and stored(unique):
         await asyncio.sleep(0.5)
     assert not stored(unique), "the purged group's files are gone"
+
+
+async def test_short_job_split_automatically_with_results_in_one_zip(seaweedfs, control_plane_factory, tmp_path,
+                                                                      cleanup):
+    """The member journey of 3 November 2026: a short job file with parts: auto, each part told its number,
+    and every result collected in one zip, one table and one merged CSV."""
+    import csv
+    import io
+    import os
+    import zipfile
+
+    from .test_agent_e2e import busybox_image
+
+    cp, http, agent, _ = await make_platform(control_plane_factory, tmp_path, **seaweedfs.env())
+    cleanup.append((agent, http))
+    await wait_object_store(cp.url, "ready")
+    agent.start()
+    deadline = time.monotonic() + 60
+    while not any(d["online"] and d["reported_shares"] for d in (await http.get("/api/v1/devices")).json()):
+        assert time.monotonic() < deadline, "the agent did not come online"
+        await asyncio.sleep(0.5)
+
+    image = busybox_image().replace("docker.io/library/busybox@", "busybox:1.36@")
+    script = ('echo "part $POOL_TASK_INDEX of $POOL_TASK_COUNT"; '
+              'echo "{\\"part\\": {{index}}, \\"of\\": {{count}}}" > /out/result.json; '
+              'printf "part,double\\n%s,%s\\n" {{index}} $(({{index}} * 2)) > /out/data.csv')
+    short = {"name": "parts", "image": image, "command": ["sh", "-c", script], "parts": "auto",
+             "cpu": 1, "memory": "512Mi", "disk": "64Mi", "time_limit": "5m"}
+    j = (await http.post("/api/v1/groups/e2e/jobs", json=short)).json()
+    expected = min(os.cpu_count() or 1, 4)  # the agent offers every core and 2 GiB: 4 parts of 512 MiB at most
+    assert j["tasks"]["total"] == expected, j
+    done = await wait_job(http, j["id"], 180)
+    assert done["state"] == "succeeded", done
+    assert "part 0 of" in await logs(http, j["id"], 0)
+
+    r = await http.get(f"/api/v1/jobs/{j['id']}/results.zip")
+    assert r.status_code == 200, r.text
+    z = zipfile.ZipFile(io.BytesIO(r.content))
+    width = 3
+    assert f"task-{0:0{width}d}/result.json" in z.namelist()
+    table = list(csv.DictReader(io.StringIO(z.read("results.csv").decode())))
+    assert [(row["task"], row["part"], row["of"]) for row in table] == [
+        (str(i), str(i), str(expected)) for i in range(expected)]
+    merged = list(csv.reader(io.StringIO(z.read("combined/data.csv").decode())))
+    assert merged[0] == ["task", "part", "double"] and merged[1:] == [[str(i), str(i), str(i * 2)]
+                                                                      for i in range(expected)]
+    assert f"part {expected - 1} of {expected}" in z.read(f"task-{expected - 1:03d}/log.txt").decode()
+
+    runner = CliRunner(env={"POOL_CONFIG_DIR": str(tmp_path / "cli"), "POOL_TOKEN": None, "POOL_SERVER": None})
+    assert runner.invoke(cli_app, ["login", "--server", cp.url, "--dev-user", "e2e-researcher"]).exit_code == 0
+    res = runner.invoke(cli_app, ["download", j["id"], "--all", "-o", str(tmp_path / "all")])
+    assert res.exit_code == 0, (res.output, res.exception)
+    assert json.loads((tmp_path / "all" / "task-000" / "result.json").read_text()) == {"part": 0, "of": expected}
+    res = runner.invoke(cli_app, ["results", j["id"]])
+    assert res.output.splitlines()[0] == "task,part,of", res.output

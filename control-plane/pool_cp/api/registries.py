@@ -1,15 +1,16 @@
-"""A group's registry credentials for private images (docs/user-guide.md §4).
+"""Registry credentials for private images (docs/user-guide.md §6): a group's, and each member's own.
 
 SECURITY-SENSITIVE: stores credentials. Needs security review (plan §8.10).
 
-Members see which registries are set up (so they know where to push); coordinators and admins add or
-remove credentials. The secret is write-only: it is encrypted at rest and never returned.
+Group credentials: members see which registries are set up (so they know where to push); coordinators
+and admins add or remove them. Personal credentials (/me/registries): each person manages their own, and
+they are used only for jobs that person submits. Which one a job uses: image_access.credential_for. Secrets are
+write-only: encrypted at rest and never returned.
 """
 
 from __future__ import annotations
 
 import asyncio
-import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -20,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .. import audit
 from ..auth import Principal, current_principal, get_session
 from ..authz import ANY_MEMBER, MANAGERS, load_group, not_found, require_role
-from ..models import GroupRegistryCredential, User
+from ..models import GroupRegistryCredential, User, UserRegistryCredential
 from ..registry import RegistryError, check_credentials, normalize_registry
 from ..timeutil import utcnow
 
@@ -63,7 +64,8 @@ async def set_registry(name: str, body: RegistryCredentialIn, request: Request,
     await require_role(s, g, p, MANAGERS, mfa_required=settings.require_mfa_for_admins)
     try:
         registry = normalize_registry(body.registry)
-        await asyncio.to_thread(check_credentials, registry, body.username, body.token)
+        await asyncio.to_thread(check_credentials, registry, body.username, body.token,
+                                allow_private=settings.registry_private_networks)
     except RegistryError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
     sealed = request.app.state.secretbox.seal(body.token)
@@ -98,5 +100,55 @@ async def remove_registry(name: str, registry: str, request: Request, p: Princip
     await s.commit()
 
 
-async def group_has_registry(s: AsyncSession, group_id: uuid.UUID, registry: str) -> bool:
-    return await s.get(GroupRegistryCredential, (group_id, registry)) is not None
+# --------------------------------------------------------------------------- my own tokens
+
+
+class MyRegistryOut(BaseModel):
+    registry: str
+    username: str
+    updated_at: datetime
+
+
+@router.get("/me/registries", response_model=list[MyRegistryOut])
+async def list_my_registries(p: Principal = Depends(current_principal), s: AsyncSession = Depends(get_session)):
+    rows = (await s.execute(select(UserRegistryCredential).where(UserRegistryCredential.user_id == p.user.id)
+                            .order_by(UserRegistryCredential.registry_host))).scalars().all()
+    return [MyRegistryOut(registry=c.registry_host, username=c.username, updated_at=c.updated_at) for c in rows]
+
+
+@router.put("/me/registries", response_model=MyRegistryOut)
+async def set_my_registry(body: RegistryCredentialIn, request: Request, p: Principal = Depends(current_principal),
+                          s: AsyncSession = Depends(get_session)):
+    """Store my own read-only token. It is used only for jobs I submit, in any of my groups."""
+    settings = request.app.state.settings
+    try:
+        registry = normalize_registry(body.registry)
+        await asyncio.to_thread(check_credentials, registry, body.username, body.token,
+                                allow_private=settings.registry_private_networks)
+    except RegistryError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    c = await s.get(UserRegistryCredential, (p.user.id, registry))
+    if c is None:
+        c = UserRegistryCredential(user_id=p.user.id, registry_host=registry)
+        s.add(c)
+    c.username, c.secret, c.updated_at = body.username, request.app.state.secretbox.seal(body.token), utcnow()
+    await audit.record(s, actor_type="user", actor_id=p.user.id, action="registry.set_mine", target_type="registry",
+                       target_id=registry, details={"registry": registry, "username": body.username})
+    await s.commit()
+    return MyRegistryOut(registry=c.registry_host, username=c.username, updated_at=c.updated_at)
+
+
+@router.delete("/me/registries/{registry}", status_code=204)
+async def remove_my_registry(registry: str, p: Principal = Depends(current_principal),
+                             s: AsyncSession = Depends(get_session)):
+    try:
+        key = normalize_registry(registry)
+    except RegistryError:
+        raise not_found("registry") from None
+    c = await s.get(UserRegistryCredential, (p.user.id, key))
+    if c is None:
+        raise not_found("registry")
+    await s.delete(c)
+    await audit.record(s, actor_type="user", actor_id=p.user.id, action="registry.remove_mine",
+                       target_type="registry", target_id=key, details={"registry": key})
+    await s.commit()

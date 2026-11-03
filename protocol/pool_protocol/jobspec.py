@@ -2,21 +2,31 @@
 
 Shared by the control plane (authoritative validation at submit time) and the
 CLI (early feedback before upload).
+
+Two ways to write a job, both accepted everywhere:
+
+- the full form (apiVersion, kind, metadata, spec), and
+- the short form, one flat mapping: name, image, command, parts or sweep, cpu, memory, ...
+  (`SHORT_KEYS`). It is turned into the full form by `expand_short_form`.
 """
 
 from __future__ import annotations
 
 import itertools
 import re
+import shlex
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from .messages import TaskCheckpoint, TaskInput, TaskNetwork, TaskResources, TaskSpec, Tier
 
 MAX_TASKS_PER_JOB = 10_000
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 DIGEST_RE = re.compile(r"^[^\s@]+@sha256:[0-9a-f]{64}$")
+# registry/path/name, an optional :tag, an optional @sha256 digest. The server parses it again (registry.py).
+IMAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:-]*(@sha256:[0-9a-f]{64})?$")
+BUILTIN_PLACEHOLDERS = {"index", "count"}  # {{index}}: 0..count-1, the task's number; {{count}}: tasks in the job
 PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
 ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -38,6 +48,48 @@ _DURATION_FACTOR = {"d": 86400, "h": 3600, "m": 60, "s": 1}
 
 class JobSpecError(ValueError):
     pass
+
+
+def is_pinned(image: str) -> bool:
+    """Whether the image names one exact version (a digest) rather than a tag that can move."""
+    return bool(DIGEST_RE.match(image))
+
+
+def parse_values(value: Any) -> Any:
+    """Sweep values: a list stays a list; '0..9' -> [0, ..., 9]; 'a,b' -> ['a', 'b']; one value -> [value].
+
+    Numbers in strings become ints or floats, as on the command line (`pool sweep --set seed=0..9`).
+    Anything else is returned unchanged for the model to reject.
+    """
+    if isinstance(value, list):
+        return value
+    if isinstance(value, bool | int | float):
+        return [value]
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    m = re.fullmatch(r"(-?\d+)\s*\.\.\s*(-?\d+)", text)
+    if m:
+        lo, hi = int(m.group(1)), int(m.group(2))
+        if hi < lo:
+            raise JobSpecError(f"range {text!r} is empty: write it low..high")
+        if hi - lo >= MAX_TASKS_PER_JOB:
+            raise JobSpecError(f"range {text!r} has more than {MAX_TASKS_PER_JOB} values")
+        return list(range(lo, hi + 1))
+    out: list[Any] = []
+    for part in text.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        for kind in (int, float):
+            try:
+                out.append(kind(part))
+                break
+            except ValueError:
+                pass
+        else:
+            out.append(part)
+    return out
 
 
 def parse_quantity_mb(value: str | int | float) -> int:
@@ -117,16 +169,24 @@ class Metadata(_Strict):
     @classmethod
     def _name(cls, v: str) -> str:
         if not NAME_RE.match(v):
-            raise ValueError("name must match ^[a-z0-9][a-z0-9-]{0,62}$")
+            raise ValueError("use lowercase letters, digits and dashes, at most 63 characters, e.g. pi-sweep")
         return v
 
 
 class Spec(_Strict):
-    shape: Literal["single", "array", "service", "gang"] = "single"
+    # Inferred when left out: "array" with a matrix or parts, otherwise "single".
+    shape: Literal["single", "array", "service", "gang"] | None = None
+    # A tag (ghcr.io/lab/app:1) or a digest (...@sha256:...). The server pins tags to a digest at submit time,
+    # so every task runs the same image and computers only ever see digests.
     image: str
-    command: list[str] = Field(min_length=1)
+    # A list, or one string split like a shell would (no pipes or &&: use ["sh", "-c", "..."]). Empty: the
+    # image's own default command.
+    command: list[str] | str = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
-    matrix: dict[str, list[str | int | float | bool]] | None = None
+    matrix: dict[str, list[str | int | float | bool] | str | int | float | bool] | None = None
+    # Split the work into this many copies of the same task; each copy gets {{index}} and POOL_TASK_INDEX.
+    # "auto": the server picks as many as the group's computers can run at once.
+    parts: int | Literal["auto"] | None = None
     resources: ResourcesReq = Field(default_factory=ResourcesReq)
     isolation: IsolationReq = Field(default_factory=IsolationReq)
     network: NetworkReq = Field(default_factory=NetworkReq)
@@ -140,9 +200,34 @@ class Spec(_Strict):
 
     @field_validator("image")
     @classmethod
-    def _image_pinned(cls, v: str) -> str:
-        if not DIGEST_RE.match(v):
-            raise ValueError("image must be pinned by digest: <repo>@sha256:<64 hex>")
+    def _image_reference(cls, v: str) -> str:
+        v = v.strip()
+        if not IMAGE_RE.match(v):
+            raise ValueError("must be an image name like ghcr.io/lab/app:1 or busybox@sha256:<64 hex>")
+        return v
+
+    @field_validator("command", mode="before")
+    @classmethod
+    def _command_words(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            try:
+                return shlex.split(v)
+            except ValueError as exc:
+                raise ValueError(f"{exc} (check the quotes)") from None
+        return v
+
+    @field_validator("matrix", mode="before")
+    @classmethod
+    def _matrix_values(cls, v: Any) -> Any:
+        if isinstance(v, dict):
+            return {k: parse_values(x) for k, x in v.items()}
+        return v
+
+    @field_validator("parts")
+    @classmethod
+    def _parts_range(cls, v: int | str | None) -> int | str | None:
+        if isinstance(v, int) and not 1 <= v <= MAX_TASKS_PER_JOB:
+            raise ValueError(f"parts must be between 1 and {MAX_TASKS_PER_JOB}, or auto")
         return v
 
     @field_validator("env")
@@ -155,12 +240,16 @@ class Spec(_Strict):
 
     @model_validator(mode="after")
     def _shape_rules(self) -> Spec:
+        if self.shape is None:
+            self.shape = "array" if (self.matrix or self.parts) else "single"
         if self.shape in ("service", "gang"):
             raise ValueError(f"shape {self.shape!r} is not available yet (plan phases 3 and 4)")
-        if self.shape == "array" and not self.matrix:
-            raise ValueError("shape 'array' needs a non-empty matrix")
-        if self.shape == "single" and self.matrix:
-            raise ValueError("shape 'single' cannot have a matrix; use shape: array")
+        if self.matrix and self.parts:
+            raise ValueError("use either parts (copies of one task) or a sweep/matrix (one task per value), not both")
+        if self.shape == "array" and not (self.matrix or self.parts):
+            raise ValueError("shape 'array' needs a non-empty matrix, or parts")
+        if self.shape == "single" and (self.matrix or self.parts):
+            raise ValueError("shape 'single' runs one task: remove the matrix or parts, or use shape: array")
         if self.secrets:
             raise ValueError("secrets are not available yet (plan phase 3)")
         if self.data.inputs:
@@ -171,6 +260,8 @@ class Spec(_Strict):
             for key, values in self.matrix.items():
                 if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", key):
                     raise ValueError(f"invalid matrix key {key!r}")
+                if key in BUILTIN_PLACEHOLDERS:
+                    raise ValueError(f"{key!r} is a built-in placeholder ({{{{{key}}}}}); give the values another name")
                 if not values:
                     raise ValueError(f"matrix key {key!r} has no values")
             count = 1
@@ -181,9 +272,11 @@ class Spec(_Strict):
         used = set()
         for text in [*self.command, *self.env.values()]:
             used.update(PLACEHOLDER_RE.findall(text))
-        unknown = used - set(self.matrix or {})
+        unknown = used - set(self.matrix or {}) - BUILTIN_PLACEHOLDERS
         if unknown:
-            raise ValueError(f"unknown placeholders: {sorted(unknown)}")
+            names = ", ".join("{{" + u + "}}" for u in sorted(unknown))
+            raise ValueError(f"unknown placeholders: {names} (built in: {{{{index}}}}, {{{{count}}}}; others need "
+                             "values in the sweep/matrix)")
         for path in [self.data.outputs.path] + [i.mount for i in self.data.inputs]:
             if not path.startswith("/") or ".." in path.split("/"):
                 raise ValueError(f"mount path must be absolute without '..': {path!r}")
@@ -199,7 +292,12 @@ class JobSpec(_Strict):
     # ---- derived values ---------------------------------------------------
 
     def task_params(self) -> list[dict[str, Any]]:
-        """Cartesian product of the matrix, in a stable order. [{}] for single."""
+        """One dict of values per task, in a stable order: the matrix's Cartesian product, `parts` empty
+        dicts, or [{}] for single. `parts: auto` must be replaced by a number first (the server does)."""
+        if self.spec.parts == "auto":
+            raise JobSpecError("parts: auto is decided by the server when the job is submitted")
+        if self.spec.parts:
+            return [{} for _ in range(self.spec.parts)]
         if not self.spec.matrix:
             return [{}]
         keys = list(self.spec.matrix)
@@ -217,15 +315,19 @@ class JobSpec(_Strict):
             gpu_memory_mb=parse_quantity_mb(gpu.min_memory) if (gpu.count and gpu.min_memory) else 0,
         )
 
-    def render_task(self, params: dict[str, Any]) -> TaskSpec:
+    def render_task(self, params: dict[str, Any], index: int = 0, count: int = 1) -> TaskSpec:
+        values = {**params, "index": index, "count": count}
+
         def sub(text: str) -> str:
-            return PLACEHOLDER_RE.sub(lambda m: str(params[m.group(1)]), text)
+            return PLACEHOLDER_RE.sub(lambda m: str(values[m.group(1)]), text)
 
         s = self.spec
         return TaskSpec(
             image=s.image,
             command=[sub(c) for c in s.command],
             env={k: sub(v) for k, v in s.env.items()},
+            task_index=index,
+            task_count=count,
             resources=self.resources(),
             min_tier=s.isolation.min_tier,
             network=TaskNetwork(egress=s.network.egress, allow=s.network.allow),
@@ -241,8 +343,110 @@ class JobSpec(_Strict):
         )
 
 
+def result_folder(index: int, count: int, params: dict[str, Any]) -> str:
+    """Folder for one task's results, the same in the web download and `pool download --all`:
+    task-003, or task-003_seed=3_size=large for a sweep. Sorted by name, folders keep task order."""
+    width = max(3, len(str(max(count - 1, 0))))
+    name = f"task-{index:0{width}d}"
+    tail = "_".join(f"{k}={v}" for k, v in params.items())
+    tail = re.sub(r"[^A-Za-z0-9._=+-]+", "-", tail)[:80].strip("-.")
+    return f"{name}_{tail}" if tail else name
+
+
+# ---- the short form ------------------------------------------------------------
+
+SHORT_KEYS = {
+    "name": "a short name (default: from the image)",
+    "group": "the group to submit to",
+    "image": "container image, e.g. ghcr.io/lab/app:1",
+    "command": "what to run (default: the image's own command)",
+    "env": "environment variables",
+    "parts": "split into this many copies, or auto",
+    "sweep": "one task per combination of values",
+    "cpu": "cores per task",
+    "memory": "memory per task, e.g. 512Mi",
+    "disk": "disk per task, e.g. 1Gi",
+    "gpu": "GPUs per task",
+    "time_limit": "time limit per task, e.g. 30m",
+    "retries": "retries after a failure",
+    "isolation": "minimum isolation tier, e.g. T2",
+    "data_class": "public, internal or confidential",
+    "os": "linux or windows",
+}
+_SHORT_ALIASES = {"max_runtime": "time_limit", "matrix": "sweep"}
+
+
+def is_short_form(data: dict[str, Any]) -> bool:
+    return "spec" not in data and "metadata" not in data
+
+
+def default_name(image: str) -> str:
+    """'ghcr.io/lab/pi-sweep:1@sha256:...' -> 'pi-sweep'."""
+    last = image.split("@", 1)[0].rsplit("/", 1)[-1].split(":", 1)[0].lower()
+    name = re.sub(r"[^a-z0-9-]+", "-", last).strip("-")[:63].strip("-")
+    return name or "job"
+
+
+def expand_short_form(data: dict[str, Any]) -> dict[str, Any]:
+    """The short form as the full form. Unknown keys are an error, so typos do not pass silently."""
+    data = {_SHORT_ALIASES.get(k, k): v for k, v in data.items()}
+    unknown = sorted(set(data) - set(SHORT_KEYS) - {"apiVersion", "kind"})
+    if unknown:
+        raise JobSpecError(f"unknown field(s) {', '.join(unknown)}; a short job file may use: {', '.join(SHORT_KEYS)}")
+    image = data.get("image")
+    if not isinstance(image, str):
+        raise JobSpecError("image is required, e.g. image: ghcr.io/lab/app:1")
+    spec: dict[str, Any] = {"image": image}
+    for key in ("command", "env", "parts", "retries", "data_class", "os"):
+        if key in data:
+            spec[key] = data[key]
+    if "sweep" in data:
+        spec["matrix"] = data["sweep"]
+    if "time_limit" in data:
+        spec["max_runtime"] = data["time_limit"]
+    if "isolation" in data:
+        spec["isolation"] = {"min_tier": data["isolation"]} if isinstance(data["isolation"], str) else data["isolation"]
+    resources = {k: data[k] for k in ("cpu", "memory", "disk") if k in data}
+    if "gpu" in data:
+        resources["gpu"] = {"count": data["gpu"]} if isinstance(data["gpu"], int) else data["gpu"]
+    if resources:
+        spec["resources"] = resources
+    metadata = {"name": data.get("name") or default_name(image)}
+    if data.get("group"):
+        metadata["group"] = data["group"]
+    return {"apiVersion": data.get("apiVersion", "pool/v1alpha1"), "kind": data.get("kind", "Job"),
+            "metadata": metadata, "spec": spec}
+
+
+_SHORT_FIELD_NAMES = {"spec.matrix": "sweep", "spec.max_runtime": "time_limit", "spec.resources.cpu": "cpu",
+                      "spec.resources.memory": "memory", "spec.resources.disk": "disk", "spec.resources.gpu": "gpu",
+                      "spec.isolation.min_tier": "isolation", "metadata.name": "name"}
+
+
+def _readable(exc: ValidationError, short: bool) -> str:
+    """Pydantic's report as one line per problem: 'field: what is wrong'."""
+    lines = []
+    for err in exc.errors():
+        loc = ".".join(str(x) for x in err["loc"] if not str(x).startswith(("list[", "int", "str", "float", "bool",
+                                                                              "literal[")))
+        if short:
+            loc = next((v + loc[len(k):] for k, v in _SHORT_FIELD_NAMES.items() if loc.startswith(k)),
+                       "" if loc == "spec" else loc.removeprefix("spec."))
+        msg = err["msg"].removeprefix("Value error, ")
+        line = f"{loc}: {msg}" if loc else msg
+        if line not in lines:
+            lines.append(line)
+    return "; ".join(lines)
+
+
 def load_job_spec(data: dict[str, Any]) -> JobSpec:
+    """Validate a job in either form. Tags are allowed here; the server pins them before creating tasks."""
+    if not isinstance(data, dict):
+        raise JobSpecError("a job file is a mapping, e.g. image: ..., command: ...")
+    short = is_short_form(data)
     try:
+        if short:
+            data = expand_short_form(data)
         spec = JobSpec.model_validate(data)
         # Force evaluation of derived values so bad quantities fail at submit time.
         spec.resources()
@@ -251,6 +455,8 @@ def load_job_spec(data: dict[str, Any]) -> JobSpec:
             parse_duration_s(spec.spec.checkpoint.every)
     except JobSpecError:
         raise
-    except ValueError as exc:  # pydantic.ValidationError is a ValueError
+    except ValidationError as exc:
+        raise JobSpecError(_readable(exc, short)) from None
+    except ValueError as exc:
         raise JobSpecError(str(exc)) from exc
     return spec

@@ -169,8 +169,10 @@ class TaskInput(_Model):
 
 class TaskSpec(_Model):
     image: str
-    command: list[str] = Field(min_length=1)
+    command: list[str] = Field(default_factory=list, description="Empty: run the image's own default command")
     env: dict[str, str] = Field(default_factory=dict)
+    task_index: int = Field(default=0, ge=0, description="This task's number in its job (POOL_TASK_INDEX)")
+    task_count: int = Field(default=1, ge=1, description="Tasks in the job (POOL_TASK_COUNT)")
     resources: TaskResources
     min_tier: Tier = "T1"
     network: TaskNetwork = Field(default_factory=TaskNetwork)

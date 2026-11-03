@@ -21,7 +21,8 @@ from pool_protocol import messages as pm
 
 from . import audit, registry, storage
 from .ca import CAError, LocalCA
-from .models import Device, GroupRegistryCredential, RevokedCert
+from .image_access import credential_for
+from .models import Device, Job, RevokedCert
 from .scheduler import core
 from .secretbox import SecretBoxError
 from .storage import presign_put
@@ -177,22 +178,38 @@ class _Revoked(Exception):
 
 
 async def _pull_auth(app, s, device_id: uuid.UUID, task, attempt_id: str) -> pm.PullAuth:
-    """A token that can pull this task's image only, from the group's stored registry credential."""
+    """A token that can pull this task's image only: from the submitter's own stored credential, else the
+    group's. The server checks that the token really reads the image before handing it out."""
+    settings = app.state.settings
+    image = task.spec["image"]
     try:
-        ref = registry.parse_image(task.spec["image"])
+        ref = registry.parse_image(image)
     except registry.RegistryError as exc:
         return pm.PullAuth(attempt_id=attempt_id, reason=str(exc))
-    cred = await s.get(GroupRegistryCredential, (task.group_id, ref.registry))
-    if cred is None:
-        return pm.PullAuth(attempt_id=attempt_id, reason=f"this group has no credentials for {ref.registry}")
+    submitter_id = (await s.execute(select(Job.submitter_id).where(Job.id == task.job_id))).scalar_one()
     try:
-        secret = app.state.secretbox.open(cred.secret)
-        token, expires = await asyncio.to_thread(registry.pull_token, ref, cred.username, secret)
-    except (registry.RegistryError, SecretBoxError) as exc:
+        cred = await credential_for(s, app.state.secretbox, user_id=submitter_id, group_id=task.group_id,
+                                    registry=ref.registry)
+    except SecretBoxError as exc:
         return pm.PullAuth(attempt_id=attempt_id, reason=str(exc))
+    if cred is None:
+        return pm.PullAuth(attempt_id=attempt_id,
+                           reason=f"neither the submitter nor this group has a token for {ref.registry}")
+    username, secret, whose = cred
+    digest = image.rsplit("@", 1)[1] if "@" in image else ""
+    try:
+        token, expires = await asyncio.to_thread(registry.pull_token, ref, username, secret,
+                                                 allow_private=settings.registry_private_networks)
+        readable = await asyncio.to_thread(registry.can_read, ref, digest, token,
+                                           allow_private=settings.registry_private_networks)
+    except registry.RegistryError as exc:
+        return pm.PullAuth(attempt_id=attempt_id, reason=str(exc))
+    if not readable:
+        owner = "the submitter's" if whose == "submitter" else "the group's"
+        return pm.PullAuth(attempt_id=attempt_id, reason=f"{owner} token for {ref.registry} cannot read this image")
     await audit.record(s, actor_type="device", actor_id=device_id, action="image.pull_token", group_id=task.group_id,
                        device_id=device_id, target_type="attempt", target_id=attempt_id,
-                       details={"registry": ref.registry, "repository": ref.repository})
+                       details={"registry": ref.registry, "repository": ref.repository, "credential": whose})
     await s.commit()
     return pm.PullAuth(attempt_id=attempt_id, registry=ref.auth_key, token=token, expires_at=expires)
 

@@ -1,0 +1,9 @@
+# Split a folder of files over the group's computers. The program picks its share with
+# POOL_TASK_INDEX and POOL_TASK_COUNT (see process.py).
+name: count-words
+image: ghcr.io/your-org/count-words:1
+command: python /app/process.py
+parts: auto
+cpu: 1
+memory: 512Mi
+time_limit: 1h

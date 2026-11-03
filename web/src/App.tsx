@@ -5,6 +5,7 @@ import { MfaBanner } from "./components/MfaBanner";
 import { ErrorBox, Loading } from "./components/ui";
 import { AcceptInvitePage } from "./pages/AcceptInvite";
 import { DevicePage } from "./pages/DevicePage";
+import { MyImagesPage } from "./pages/MyImages";
 import { DevicesPage } from "./pages/Devices";
 import { GuidePage } from "./pages/Guide";
 import { GroupPage } from "./pages/GroupPage";
@@ -43,6 +44,7 @@ export function App() {
         <Route path="/jobs/:id" element={<JobPage />} />
         <Route path="/devices" element={<DevicesPage />} />
         <Route path="/devices/:id" element={<DevicePage />} />
+        <Route path="/images" element={<MyImagesPage />} />
         <Route path="*" element={<p>Page not found.</p>} />
       </Routes>
     );
@@ -64,6 +66,7 @@ export function App() {
               Groups
             </NavLink>
             <NavLink to="/devices">My computers</NavLink>
+            <NavLink to="/images">My images</NavLink>
           </nav>
         )}
         <div className="spacer" />

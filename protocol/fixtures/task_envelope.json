@@ -46,7 +46,9 @@
       "gpu_vendor": "nvidia",
       "gpus": 1,
       "memory_mb": 16384
-    }
+    },
+    "task_count": 30,
+    "task_index": 3
   },
   "submitter": "alice",
   "submitter_probation": false,

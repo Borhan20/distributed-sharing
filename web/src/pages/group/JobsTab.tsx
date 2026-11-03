@@ -1,11 +1,10 @@
-import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { client, unwrap, type Group, type Job } from "../../api/client";
 import { useAuth } from "../../auth/AuthContext";
 import { Empty, ErrorBox, Loading, StateBadge } from "../../components/ui";
-import { EXAMPLE_JOB, JobParseError, parseJobText, taskCount } from "../../lib/jobspec";
 import { fmtTime } from "../../lib/format";
+import { SubmitJob } from "./SubmitJob";
 
 const SUBMITTERS = new Set(["coordinator", "admin", "member", "submitter"]);
 const MANAGERS = new Set(["coordinator", "admin"]);
@@ -100,51 +99,5 @@ export function TaskCounts({ counts }: { counts: Record<string, number> }) {
         ))}
       <span className="muted"> / {counts.total ?? 0}</span>
     </span>
-  );
-}
-
-function SubmitJob({ group }: { group: Group }) {
-  const qc = useQueryClient();
-  const [text, setText] = useState(EXAMPLE_JOB);
-  const parsed = useMemo(() => {
-    try {
-      return { doc: parseJobText(text, group.name), error: null };
-    } catch (e) {
-      return { doc: null, error: e instanceof JobParseError ? e : new JobParseError(String(e)) };
-    }
-  }, [text, group.name]);
-  const submit = useMutation({
-    mutationFn: () =>
-      unwrap(
-        client.POST("/api/v1/groups/{name}/jobs", {
-          params: { path: { name: group.name } },
-          body: parsed.doc as unknown as Record<string, unknown>,
-        }),
-      ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["jobs", group.name] }),
-  });
-  return (
-    <section className="card">
-      <h2>Submit a job</h2>
-      <p className="muted">
-        Paste a job file (YAML or JSON, see plan §6.5). Images must be pinned by digest. The server checks the
-        file again.
-      </p>
-      <label>
-        Job file
-        <textarea className="code" rows={14} value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} />
-      </label>
-      {parsed.error && <div className="warn">{parsed.error.message}</div>}
-      {parsed.doc && <p className="muted">{taskCount(parsed.doc)} task(s) will be created.</p>}
-      <ErrorBox error={submit.error} />
-      {submit.isSuccess && (
-        <p className="ok">
-          Submitted <Link to={`/jobs/${submit.data.id}`}>{submit.data.name}</Link> with {submit.data.tasks.total} task(s).
-        </p>
-      )}
-      <button type="button" disabled={!parsed.doc || submit.isPending} onClick={() => submit.mutate()}>
-        Submit job
-      </button>
-    </section>
   );
 }

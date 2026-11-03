@@ -75,12 +75,20 @@ class Settings(BaseSettings):
     s3_create_bucket: bool = True  # create the bucket at startup if it is missing
     presign_ttl_s: int = 900
 
+    # Registries on private networks (10.x, 192.168.x, localhost, ...). Submitters choose the registry, so
+    # the server only contacts public addresses unless this is on. Default: on in dev mode.
+    registry_private_networks: bool | None = None
+    auto_parts_max: int = 1000  # upper bound for `parts: auto`
+    results_zip_max_mb: int = 2048  # largest "Download all" zip; bigger jobs use `pool download --all`
+
     @model_validator(mode="after")
     def _defaults(self) -> Settings:
         if self.require_mfa_for_admins is None:
             self.require_mfa_for_admins = not self.dev_mode
         if self.autocreate_keys is None:
             self.autocreate_keys = self.dev_mode
+        if self.registry_private_networks is None:
+            self.registry_private_networks = self.dev_mode
         self.ca_key_file = self.ca_key_file or self.data_dir / "ca.key"
         self.ca_cert_file = self.ca_cert_file or self.data_dir / "ca.crt"
         self.signing_key_file = self.signing_key_file or self.data_dir / "signing.key"

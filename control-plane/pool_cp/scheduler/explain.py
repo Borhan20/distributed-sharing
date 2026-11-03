@@ -140,6 +140,47 @@ async def _last_failure(s: AsyncSession, job: Job) -> Reason | None:
     return Reason("last_failure", message, "The task log on this page has the full output.")
 
 
+async def _group_devices(s: AsyncSession, group_id) -> list:  # noqa: ANN001
+    """(device, share enabled, share removed) for every active device shared with the group by a member."""
+    return (await s.execute(
+        select(Device, DeviceShare.enabled, DeviceShare.removed)
+        .join(DeviceShare, DeviceShare.device_id == Device.id)
+        .join(Membership, (Membership.group_id == group_id) & (Membership.user_id == Device.owner_id))
+        .where(DeviceShare.group_id == group_id, Device.state == "active", Membership.role.in_(SHARE_ROLES))
+    )).all()
+
+
+def _places(job: Job, d: Device, share: dict[str, Any]) -> int:
+    """How many tasks of this job's size the share fits at once (the agent's limit arithmetic)."""
+    cpu, mem, disk = _offer(d, share)
+    n = min(int(cpu / job.cpu + 1e-9), int(mem // job.memory_mb), int(disk // max(job.disk_mb, 1)))
+    if job.gpus:
+        n = min(n, len((d.capabilities or {}).get("gpus") or []) // job.gpus)
+    return max(n, 0)
+
+
+async def auto_parts(s: AsyncSession, settings: Settings, job: Job, submitter: str,
+                     on_probation: bool) -> tuple[int, str]:
+    """`parts: auto`: as many parts as the group's computers can run at the same time, and why.
+
+    Counts the computers that could run this job and are available now; if none is, the ones that are
+    shared and could run it when they come back. Never fewer than 1 or more than settings.auto_parts_max.
+    """
+    group = await s.get(Group, job.group_id)
+    shared = [(d, sh) for d, enabled, _ in await _group_devices(s, job.group_id)
+              if enabled and (sh := _reported(d, group.name))]
+    fit = [(d, sh) for d, sh in shared if _blocker(job, d, sh, submitter, on_probation) is None]
+    now = [(d, sh) for d, sh in fit
+           if _online(d, settings.heartbeat_interval_s) and sh.get("active_now") and d.owner_active is not None]
+    pool, when = (now, "available now") if now else (fit, "shared with the group")
+    places = sum(_places(job, d, sh) for d, sh in pool)
+    if places == 0:
+        return 1, "No shared computer can run this job yet, so it runs as 1 part."
+    n = min(places, settings.auto_parts_max)
+    computers = "1 computer" if len(pool) == 1 else f"{len(pool)} computers"
+    return n, f"Split into {n} part(s): room for {places} at once on {computers} {when}."
+
+
 async def explain_waiting(s: AsyncSession, settings: Settings, job: Job) -> tuple[int, list[Reason]]:
     """Return (pending task count, reasons). No reasons when nothing is waiting."""
     now = utcnow()
@@ -162,12 +203,7 @@ async def explain_waiting(s: AsyncSession, settings: Settings, job: Job) -> tupl
         return pending, [Reason("egress", "Jobs that need internet access cannot run yet.",
                                 "Remove network.egress from the job.")]
 
-    rows = (await s.execute(
-        select(Device, DeviceShare.enabled, DeviceShare.removed)
-        .join(DeviceShare, DeviceShare.device_id == Device.id)
-        .join(Membership, (Membership.group_id == job.group_id) & (Membership.user_id == Device.owner_id))
-        .where(DeviceShare.group_id == job.group_id, Device.state == "active", Membership.role.in_(SHARE_ROLES))
-    )).all()
+    rows = await _group_devices(s, job.group_id)
     shared = [d for d, enabled, _ in rows if enabled]
     share_cmd = f"`pool-agent share {group.name}`"
     if not shared:

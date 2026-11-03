@@ -134,10 +134,10 @@
           "default": null
         },
         "command": {
+          "description": "Empty: run the image's own default command",
           "items": {
             "type": "string"
           },
-          "minItems": 1,
           "title": "Command",
           "type": "array"
         },
@@ -195,11 +195,24 @@
         },
         "resources": {
           "$ref": "#/$defs/TaskResources"
+        },
+        "task_count": {
+          "default": 1,
+          "description": "Tasks in the job (POOL_TASK_COUNT)",
+          "minimum": 1,
+          "title": "Task Count",
+          "type": "integer"
+        },
+        "task_index": {
+          "default": 0,
+          "description": "This task's number in its job (POOL_TASK_INDEX)",
+          "minimum": 0,
+          "title": "Task Index",
+          "type": "integer"
         }
       },
       "required": [
         "image",
-        "command",
         "resources",
         "max_runtime_s"
       ],

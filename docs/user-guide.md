@@ -2,41 +2,44 @@
 
 pool lets a group of people (a lab, a class, a team) run jobs on each other's
 computers. This guide goes from joining a group to running your own code on
-the group's computers, with examples. The web UI has a shorter version of this
-guide, organised by role, under **Guide**.
+the group's computers and collecting the results, with an example for each
+kind of work. The web UI has a shorter version of this guide, organised by
+role, under **Guide**.
 
 **Contents**
 
 1. [The ideas in two minutes](#1-the-ideas-in-two-minutes)
 2. [Join a group](#2-join-a-group)
 3. [Your first job, in the browser](#3-your-first-job-in-the-browser)
-4. [Example: run your own code as a parameter sweep](#4-example-run-your-own-code-as-a-parameter-sweep)
-5. [Example: borrow a bigger machine for one job](#5-example-borrow-a-bigger-machine-for-one-job)
-6. [The command line](#6-the-command-line)
-7. [Share your computer](#7-share-your-computer)
-8. [Run a group (coordinators and admins)](#8-run-a-group-coordinators-and-admins)
-9. [When something goes wrong](#9-when-something-goes-wrong)
-10. [What is not possible yet](#10-what-is-not-possible-yet)
+4. [Write a job](#4-write-a-job)
+5. [Examples for every kind of work](#5-examples-for-every-kind-of-work)
+6. [Private images](#6-private-images)
+7. [Collect the results](#7-collect-the-results)
+8. [The command line](#8-the-command-line)
+9. [Share your computer](#9-share-your-computer)
+10. [Run a group (coordinators and admins)](#10-run-a-group-coordinators-and-admins)
+11. [When something goes wrong](#11-when-something-goes-wrong)
+12. [What is not possible yet](#12-what-is-not-possible-yet)
 
 ## 1. The ideas in two minutes
 
 | Word | Meaning |
 |---|---|
 | **Group** | The people who share computers with each other. Invite-only. |
-| **Role** | What you may do in a group: coordinator, admin, member, contributor or submitter ([§8](#roles)). |
+| **Role** | What you may do in a group: coordinator, admin, member, contributor or submitter ([§10](#roles)). |
 | **Computer** (device) | A machine a member shares with the group. It runs the **agent**, a small program that takes work from the server. |
-| **Job** | Work you send to the group: a container image, a command, and how much CPU, memory and disk it needs. |
-| **Task** | One run of a job's command. A job with a **matrix** (e.g. 10 seeds) becomes many tasks that run in parallel on different computers. |
-| **Image** | A container image (Docker) with your code and its dependencies, **pinned by digest** (`...@sha256:...`) so every task runs exactly the same software. |
-| **`/out`** | The folder where a task writes result files. You download them afterwards. |
+| **Image** | A container image (Docker) with your code and what it needs, named like `ghcr.io/your-org/app:1`. When you submit, the server fixes the exact version the tag names at that moment, so every task runs the same software. |
+| **Job** | Work you send to the group: an image, a command, how to run it, and how much CPU, memory and disk each task needs. |
+| **Task** | One run of the command. A job runs **once**, **split into parts**, or **for each value** of a sweep; each part or value is one task, and tasks run in parallel on different computers. |
+| **`/out`** | The folder where a task writes result files. A `result.json` there becomes one row of the job's results table. |
 
 How a job runs:
 
 1. You submit it, in the browser or with the `pool` command.
-2. The server splits it into tasks.
-3. A shared computer that has room and matches the requirements takes a task and runs it in a locked-down container: no network, no access to the owner's files.
-4. The task's log and result files come back to you.
-5. If a computer goes away mid-task, the task moves to another computer by itself.
+2. The server splits it into tasks. **You never choose computers**: each task goes to a shared computer that has room and matches what the task needs.
+3. The task runs there in a locked-down container: no network, no access to the owner's files.
+4. If a computer goes away mid-task, the task moves to another computer by itself.
+5. You download everything at once: every task's files and log in one zip, and all `result.json` files as one table.
 
 ## 2. Join a group
 
@@ -63,55 +66,153 @@ During **probation**, a new member's jobs run only on computers whose owners
 accept work from new members.
 
 A new group has no computers. Jobs wait until at least one member
-[shares a computer](#7-share-your-computer).
+[shares a computer](#9-share-your-computer).
 
 ## 3. Your first job, in the browser
 
-1. Open your group and go to **Jobs → Submit a job**. The form already contains a small example job that runs as-is.
-2. Press **Submit**. The job page opens.
-3. Watch the tasks: *pending* → *running* → *succeeded*. Click a task to see its log (`running seed 0` …) and its output file `result.txt`, with a **Download** button.
-4. If tasks stay *pending*, the box **"tasks waiting: why"** tells you why and what would fix it, for example *"No computer is shared with this group yet"*.
+1. Open your group and go to **Jobs → Submit a job**. The form already holds a small example that runs as-is.
+2. Press **Submit job**. The job page opens.
+3. Watch the tasks: *pending* → *running* → *succeeded*. Click **Logs** on a task to see its output (`part 0 of 4` …).
+4. Under **Results**, press **Download all (zip)** to get every task's files and log at once ([§7](#7-collect-the-results)).
+5. If tasks stay *pending*, the box **"tasks waiting: why"** tells you why and what would fix it, for example *"No computer is shared with this group yet"*.
 
-This is the example job, in YAML:
+The form:
+
+| Field | What to put there |
+|---|---|
+| **Image** | The image with your code, as you push it: `ghcr.io/your-org/app:1`, `yourname/app:v2` (Docker Hub) or `python:3.12-slim`. Private? See [§6](#6-private-images). |
+| **Command** | What to run, as you would type it in a terminal: `python /app/main.py --part {{index}}`. Leave it empty to run the image's own command. |
+| **How to run** | **Once**: one task. **Split into parts**: copies of the same command, **Auto** picks as many as the group's computers can run at once. **For each value**: one task per value, e.g. `seed` = `0..4`. |
+| **Size of each task** | Small, Medium, Large or Custom (CPU, memory, disk). Ask only for what you need: smaller tasks fit on more computers. |
+| **Time limit per task** | e.g. `30m` or `2h`. A task that runs longer is stopped. |
+| **More options** | Name (default: from the image), retries after a failure, GPUs per task. |
+
+**Show as job file** turns the form into the same job as a short YAML file,
+which you can save, send to a colleague, or submit with `pool submit`. The
+**Job file (YAML)** tab takes such a file. On any job page, **Run again with
+changes** opens the form filled with that job, so you or a colleague can change
+one value and submit it again.
+
+## 4. Write a job
+
+A job file is a short YAML file. This one splits a Python program into parts:
 
 ```yaml
-apiVersion: pool/v1alpha1
-kind: Job
-metadata:
-  name: seed-sweep
-spec:
-  shape: array
-  # A tiny public image, pinned by digest. Replace it with your own image.
-  image: docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
-  # {{seed}} is replaced by each value below, so this job runs 3 tasks.
-  command: ["sh", "-c", "echo running seed {{seed}}; echo 'result for seed {{seed}}' > /out/result.txt"]
-  matrix:
-    seed: [0, 1, 2]
-  resources: { cpu: 0.5, memory: 256Mi, disk: 64Mi }
-  retries: 2
-  max_runtime: 10m
+name: my-sweep                       # optional; default: from the image name
+image: ghcr.io/your-org/app:1        # name and tag, as you push it
+command: python /app/main.py --part {{index}} --of {{count}}
+parts: auto                          # or a number; or use sweep: instead
+cpu: 1
+memory: 1Gi
+time_limit: 30m
 ```
 
-| Field | What it does |
+| Field | What it does | Default |
+|---|---|---|
+| `image` | The container image. A tag (`:1`, `:latest`) is fixed to its exact version (digest) when you submit; a name with `@sha256:...` is used as is. | required |
+| `command` | One string, split like a terminal does (quotes work; pipes and `&&` need `sh -c '...'`), or a list `["python", "main.py"]`. | the image's own command |
+| `parts` | Split into this many copies of the command, or `auto`. | run once |
+| `sweep` | One task per combination of values: `seed: 0..9`, `size: [small, large]` or `size: small, large`. Several keys multiply: 10 × 2 = 20 tasks. Up to 10,000. | – |
+| `cpu`, `memory`, `disk` | Per task: cores (may be fractional), and sizes like `512Mi` or `4Gi`. | `1`, `1Gi`, `1Gi` |
+| `gpu` | GPUs per task. | `0` |
+| `time_limit` | Per task, e.g. `30m`, `2h`. | `1h` |
+| `retries` | How often a failed task is tried again (0–20). A task that fails on 2 different computers is marked failed. | `3` |
+| `name`, `group` | The job's name; the group (or pass `--group`). | from the image |
+| `isolation`, `data_class`, `os` | Optional: minimum isolation `T1` (default), `T2` or `T3`; `public`, `internal` (default) or `confidential` (only on dedicated organisation computers); `linux` or `windows`. | – |
+
+**Each task knows its number.** In the command, `{{index}}` is the task's
+number (0, 1, 2, …) and `{{count}}` the number of tasks. Inside the container
+the same values are in the environment variables `POOL_TASK_INDEX` and
+`POOL_TASK_COUNT`, so a program can pick its share of the work itself:
+
+```python
+import os
+part, parts = int(os.environ["POOL_TASK_INDEX"]), int(os.environ["POOL_TASK_COUNT"])
+random.seed(part)                # Monte Carlo: every part its own seed
+my_files = all_files[part::parts]  # a list of work: every part takes every n-th item
+```
+
+With `sweep`, each name is also a placeholder: `--seed {{seed}}`.
+
+**`parts: auto`** counts the shared computers that can run a task of this size
+and are available now (or, if none is, the ones that are shared), and makes as
+many parts as fit on them at once. The job page says what it chose, for example
+*"Split into 8 part(s): room for 8 at once on 2 computers available now."*
+
+**Which way to run?**
+
+| Your work | Use |
 |---|---|
-| `metadata.name` | A short name: lowercase letters, digits and dashes. |
-| `shape` | `single` for one task, `array` for one task per combination of `matrix` values. |
-| `image` | Container image, pinned by digest. |
-| `command` | What runs inside the container. `{{name}}` is replaced by a `matrix` value. |
-| `matrix` | Values to sweep. Several keys multiply: 3 seeds × 2 datasets = 6 tasks. Up to 10,000 tasks. |
-| `resources` | Per task: `cpu` (cores, may be fractional), `memory` and `disk` (e.g. `512Mi`, `4Gi`). Optional `gpu: { count: 1 }`. |
-| `retries` | How often a failed task is retried (0–20). A task that fails on 2 different computers is marked failed. |
-| `max_runtime` | Time limit per task, e.g. `30m` or `2h`. |
-| `isolation.min_tier` | Optional: the minimum isolation level, `T1` (hardened container, default), `T2` or `T3`. |
-| `data_class` | Optional: `public`, `internal` (default) or `confidential` (runs only on dedicated organisation computers). |
+| One program, one result (a simulation, a training run, a build) | run once (no `parts`, no `sweep`) |
+| The same program many times with different random seeds | `parts` (seed = `POOL_TASK_INDEX`) |
+| A list of files, items or tests to work through | `parts` (each part takes every n-th item) |
+| Try combinations of settings (seeds × learning rates) | `sweep` |
 
-## 4. Example: run your own code as a parameter sweep
+Splitting only works when the program can do part of the work. A program that
+cannot (one big training run, for example) runs **once**, on a computer that
+is big enough ([§5.5](#55-borrow-a-bigger-machine)).
 
-Goal: estimate π with a Monte Carlo simulation for 5 random seeds and 2
-sample sizes, which is 10 tasks running in parallel on the group's computers,
-then combine the results.
+**YAML tip.** A command that contains `: ` or ` #` must go on the next line
+after `>-`, or YAML misreads it:
 
-**Step 1. Write the program.** Save it as `pi.py`:
+```yaml
+command: >-
+  sh -c 'echo "{\"part\": {{index}}}" > /out/result.json'
+```
+
+The full form of a job file (`apiVersion`, `kind`, `metadata`, `spec`, as in
+[`examples/hello-array.yaml`](../examples/hello-array.yaml)) is accepted too.
+
+## 5. Examples for every kind of work
+
+Every example is in [`examples/`](../examples), ready to run. Replace
+`your-org` with your organization or Docker Hub name.
+
+| Example | Kind of work | Typical groups |
+|---|---|---|
+| [5.1](#51-many-random-runs-without-building-an-image) Many random runs | `parts`, no image to build | anyone, first try |
+| [5.2](#52-your-own-code-as-a-parameter-sweep) Your own code as a parameter sweep | `sweep` | research teams, students |
+| [5.3](#53-process-many-files) Process many files | `parts` over a list | research, courses (grading submissions) |
+| [5.4](#54-split-a-test-suite) Split a test suite | `parts` over test files | dev teams, hackathons |
+| [5.5](#55-borrow-a-bigger-machine) Borrow a bigger machine | once | anyone |
+
+### 5.1 Many random runs, without building an image
+
+Estimate π with a Monte Carlo simulation, using a public Python image. Each
+part uses its number as the random seed and writes one `result.json`.
+Save as `monte-carlo-pi.yaml` ([`examples/monte-carlo-pi.yaml`](../examples/monte-carlo-pi.yaml)):
+
+```yaml
+name: monte-carlo-pi
+image: python:3.12-slim
+command: |
+  python -c "
+  import json, os, random
+  part = int(os.environ['POOL_TASK_INDEX'])
+  random.seed(part)
+  n = 2_000_000
+  inside = sum(random.random() ** 2 + random.random() ** 2 <= 1 for _ in range(n))
+  json.dump({'part': part, 'samples': n, 'pi': 4 * inside / n}, open('/out/result.json', 'w'))
+  print('part', part, 'done')
+  "
+parts: auto
+cpu: 1
+memory: 256Mi
+time_limit: 15m
+```
+
+Paste it into **Job file (YAML)** and submit, or run `pool submit
+monte-carlo-pi.yaml --group my-lab`. When it is done, the job page shows one
+table row per part (`part`, `samples`, `pi`); **Download results table (CSV)**
+gives the same table as a file.
+
+### 5.2 Your own code as a parameter sweep
+
+Run your program for 5 seeds and 2 sample sizes: 10 tasks
+([`examples/pi-sweep/`](../examples/pi-sweep)).
+
+**Step 1. Write the program**, `pi.py`. It prints its result to the log and
+writes it to `/out/result.json`:
 
 ```python
 import argparse, json, pathlib, random, time
@@ -124,166 +225,148 @@ args = parser.parse_args()
 random.seed(args.seed)
 start = time.time()
 inside = sum(1 for _ in range(args.samples) if random.random() ** 2 + random.random() ** 2 <= 1)
-estimate = 4 * inside / args.samples
-result = {"seed": args.seed, "samples": args.samples, "pi": estimate, "seconds": round(time.time() - start, 2)}
+result = {"seed": args.seed, "samples": args.samples, "pi": 4 * inside / args.samples,
+          "seconds": round(time.time() - start, 2)}
 
-print(json.dumps(result))  # visible in the task's log
-out = pathlib.Path("/out")
-out.mkdir(exist_ok=True)
-(out / "result.json").write_text(json.dumps(result))
+print(json.dumps(result))                                   # visible in the task's log
+pathlib.Path("/out/result.json").write_text(json.dumps(result))  # one row of the results table
 ```
 
-**Step 2. Put it in an image.** Save this as `Dockerfile` next to `pi.py`:
+**Step 2. Put it in an image.** `Dockerfile` next to `pi.py`:
 
 ```dockerfile
 FROM python:3.12-slim
 COPY pi.py /app/pi.py
 ```
 
-**Step 3. Build it and push it** to your group's organization on the GitHub
-container registry (ghcr.io) or Docker Hub. The image can stay **private**:
-you push with your own account, and the group's computers get access to it
-only for the tasks that need it. Replace `YOUR-ORG`:
+**Step 3. Build it and push it**, to ghcr.io or Docker Hub, with your own
+account. The image can stay **private** ([§6](#6-private-images)):
 
 ```bash
-docker login ghcr.io                      # your own account; it needs write access to the organization
-docker build -t ghcr.io/YOUR-ORG/pi-sweep:1 .
-docker push ghcr.io/YOUR-ORG/pi-sweep:1
-docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/YOUR-ORG/pi-sweep:1
-# prints ghcr.io/YOUR-ORG/pi-sweep@sha256:...   <- use this as the image
+docker login ghcr.io                 # once, with your own account (Docker Hub: docker login)
+docker build -t ghcr.io/your-org/pi-sweep:1 .
+docker push ghcr.io/your-org/pi-sweep:1
 ```
 
-> **Private image? The group needs a read-only token first.** The job file
-> never contains a password. Instead, a coordinator or admin stores one
-> read-only token for the registry on the group's **Images** tab. They do
-> this once per group, not once per job. Without that token, the tasks fail
-> with `pull access denied`. The steps, and how to check that the token can
-> read your image, are under [Private images](#private-images).
-
-**Step 4. Describe the job.** Save as `pi-sweep.yaml`:
+**Step 4. Describe the job**, `pi-sweep.yaml`:
 
 ```yaml
-apiVersion: pool/v1alpha1
-kind: Job
-metadata:
-  name: pi-sweep
-spec:
-  shape: array
-  image: ghcr.io/YOUR-ORG/pi-sweep@sha256:PASTE-THE-DIGEST
-  command: ["python", "/app/pi.py", "--seed", "{{seed}}", "--samples", "{{samples}}"]
-  matrix:
-    seed: [0, 1, 2, 3, 4]
-    samples: [1000000, 10000000]
-  resources: { cpu: 1, memory: 512Mi, disk: 256Mi }
-  retries: 2
-  max_runtime: 30m
+name: pi-sweep
+image: ghcr.io/your-org/pi-sweep:1
+command: python /app/pi.py --seed {{seed}} --samples {{samples}}
+sweep:
+  seed: 0..4
+  samples: [1000000, 10000000]
+cpu: 1
+memory: 512Mi
+time_limit: 30m
+retries: 2
 ```
 
-**Step 5. Submit it.** Either paste the YAML into **Jobs → Submit a job** in
-the browser, or use the [command line](#6-the-command-line):
+In the browser, the same job is **How to run: For each value** with two rows,
+`seed` = `0..4` and `samples` = `1000000, 10000000`.
 
-```bash
-pool submit pi-sweep.yaml --group my-lab
+**Step 5. Submit it** in the browser or with `pool submit pi-sweep.yaml --group
+my-lab`. Pushed a new `:1` later? The next job you submit uses it; running jobs
+keep the version they started with.
+
+**Step 6. Collect the results**: the results table has one row per task with
+`seed`, `samples`, `pi` and `seconds` ([§7](#7-collect-the-results)). To try
+more seeds without editing the file: `pool sweep pi-sweep.yaml --set seed=0..19
+--group my-lab` (40 tasks; add `--dry-run` to see the count first).
+
+### 5.3 Process many files
+
+Count the lines and words of a folder of text files, split over the group's
+computers ([`examples/many-files/`](../examples/many-files)). The same pattern
+fits grading a pile of submissions or converting a set of images.
+
+The program takes every n-th file, starting at its own number, so the parts
+share the work without overlap, and writes a CSV with the same columns in
+every part:
+
+```python
+import csv, os, pathlib
+
+part = int(os.environ["POOL_TASK_INDEX"])
+parts = int(os.environ["POOL_TASK_COUNT"])
+files = sorted(pathlib.Path("/data").glob("*.txt"))
+
+with open("/out/summary.csv", "w", newline="") as f:
+    w = csv.writer(f)
+    w.writerow(["file", "lines", "words"])
+    for path in files[part::parts]:
+        text = path.read_text()
+        w.writerow([path.name, len(text.splitlines()), len(text.split())])
 ```
 
-**Step 6. Follow it.** Use the job page in the browser, or:
+Jobs cannot read files from the server yet, so the files go into the image:
 
-```bash
-pool status JOB-ID              # one line per task: state, attempts, which computer
-pool logs JOB-ID --task 3 -f    # follow one task's output
+```dockerfile
+FROM python:3.12-slim
+COPY process.py /app/process.py
+COPY data/ /data/
 ```
-
-**Step 7. Collect the results.**
-
-```bash
-for i in $(seq 0 9); do pool download JOB-ID --task "$i" -o "results/task-$i"; done
-python3 - <<'EOF'
-import json, pathlib, statistics
-rows = [json.loads(p.read_text()) for p in pathlib.Path("results").glob("task-*/result.json")]
-for n in sorted({r["samples"] for r in rows}):
-    vals = [r["pi"] for r in rows if r["samples"] == n]
-    print(f"{n:>10} samples: pi ~ {statistics.mean(vals):.5f} (spread {statistics.pstdev(vals):.5f})")
-EOF
-```
-
-`pool download` checks every file's SHA-256 against what the computer
-reported, so a damaged or swapped file is never saved.
-
-### Private images
-
-Keep the group's images in an **organization** on ghcr.io or Docker Hub, so
-your code is not public:
-
-1. **Everyone pushes with their own account** that is a member of the
-   organization with write access. Removing someone from the organization
-   removes their access; there is no shared password.
-2. **A coordinator or admin stores one read-only token** for the group: on the
-   group's **Images** tab, or `pool registry set ghcr.io --username READER
-   --group my-lab` (it asks for the token). Use a token that can only read,
-   ideally from an account made for this:
-   - **GitHub (ghcr.io):** a personal access token **(classic)** with only the
-     `read:packages` scope. Make it under **Settings → Developer settings →
-     Personal access tokens → Tokens (classic) → Generate new token (classic)**.
-     Fine-grained tokens do not work with ghcr.io.
-   - **Docker Hub:** a personal access token with the permission **Repo
-     Read-only**. Make it at app.docker.com under **your avatar → Account
-     settings → Personal access tokens → Generate new token**. Do not keep the
-     default permission *Repo Public Read-only*: it cannot read private images.
-
-   Both sites show the token only once, so copy it right away. Give it an
-   expiry date; when it expires, store a new one the same way. Both kinds of
-   token belong to the account that made them, and stop working if that
-   account loses access to the images.
-
-   Check the registry's own documentation for the current steps. The server
-   checks the token with the registry, stores it encrypted, and never shows it
-   again.
-
-   The server can only check that the token is valid, not that it can read a
-   particular image. The account must also be allowed to read the image: on
-   ghcr.io, check the package's access settings in the organization. To be
-   sure, test the token on your own computer before the first job:
-
-   ```bash
-   export DOCKER_CONFIG=$(mktemp -d)   # a throwaway login, so your own login stays as it is
-   docker login ghcr.io -u READER      # paste the read-only token as the password (Docker Hub: docker login -u READER)
-   docker manifest inspect ghcr.io/YOUR-ORG/pi-sweep:1 > /dev/null && echo "OK: the group can pull it"
-   rm -rf "$DOCKER_CONFIG"; unset DOCKER_CONFIG
-   ```
-
-   `denied` means this account cannot read the image. Use `docker manifest
-   inspect` rather than `docker pull`: `docker pull` does not contact the
-   registry when the image is already on your computer, so it can succeed
-   even when the token has no access.
-3. **Nothing changes for jobs.** When a task needs a private image, the server
-   exchanges the stored token for one that can pull only that image and expires
-   within minutes, and gives the computer only that. Members' computers never
-   hold the group's token.
-4. **Other groups cannot use it.** If a computer pulled the image for your group,
-   another group's task with the same image may only use that copy if the
-   image is public; otherwise it fails with "this image is private".
-
-**Variations**
-
-- **Try more seeds without editing the file:** `pool sweep pi-sweep.yaml --set seed=0..19 --group my-lab` gives 40 tasks. Add `--dry-run` to see the count first.
-- **Long tasks:** set `max_runtime` generously and `retries: 3`. If a computer's owner comes back and stops sharing, the task starts again elsewhere. Saving checkpoints to resume from is planned, not ready yet.
-
-## 5. Example: borrow a bigger machine for one job
-
-A single job that needs more than your laptop has: one task, 8 cores and
-16 GiB of memory.
 
 ```yaml
-apiVersion: pool/v1alpha1
-kind: Job
-metadata:
-  name: big-simulation
-spec:
-  shape: single
-  image: ghcr.io/YOUR-ORG/simulation@sha256:PASTE-THE-DIGEST
-  command: ["python", "/app/simulate.py", "--threads", "8"]
-  resources: { cpu: 8, memory: 16Gi, disk: 10Gi }
-  max_runtime: 6h
+name: count-words
+image: ghcr.io/your-org/count-words:1
+command: python /app/process.py
+parts: auto
+cpu: 1
+memory: 512Mi
+time_limit: 1h
+```
+
+**Download all** then contains `combined/summary.csv`: every part's
+`summary.csv` in one file, with the task number in front of each row.
+
+### 5.4 Split a test suite
+
+Run a slow test suite on several computers at once
+([`examples/test-suite/`](../examples/test-suite)). The image holds the code,
+its tests and pytest:
+
+```dockerfile
+FROM python:3.12-slim
+RUN pip install --no-cache-dir pytest==8.3.3
+COPY tests/ /app/tests/
+WORKDIR /app
+```
+
+Part *i* of *n* runs every n-th test file; a part without files has nothing to
+do. `-p no:cacheprovider` because the container's file system is read-only:
+
+```yaml
+name: tests
+image: ghcr.io/your-org/app-tests:1
+command: >-
+  sh -c 'files=$(ls tests/test_*.py | awk -v n="$POOL_TASK_COUNT" -v i="$POOL_TASK_INDEX" "(NR - 1) % n == i");
+  [ -n "$files" ] || exit 0;
+  pytest -q -p no:cacheprovider --junitxml=/out/junit.xml $files'
+parts: 3
+cpu: 1
+memory: 1Gi
+time_limit: 30m
+retries: 0
+```
+
+`retries: 0`, so a failing test is reported at once instead of being retried.
+A failed part shows the pytest output in its log; **Download all** has each
+part's `junit.xml`.
+
+### 5.5 Borrow a bigger machine
+
+One task that needs more than your laptop has, here 8 cores and 16 GiB:
+
+```yaml
+name: big-simulation
+image: ghcr.io/your-org/simulation:1
+command: python /app/simulate.py --threads 8
+cpu: 8
+memory: 16Gi
+disk: 10Gi
+time_limit: 6h
 ```
 
 If no shared computer offers that much, the job page says so, for example
@@ -291,7 +374,105 @@ If no shared computer offers that much, the job page says so, for example
 (most offered: 7 GiB)"*. Ask for less, or ask an owner to raise their limit
 (`pool-agent share my-lab --memory 20Gi`).
 
-## 6. The command line
+## 6. Private images
+
+Public images (like `python:3.12-slim`) need nothing. For a **private** image,
+the server needs a **read-only token** for its registry. Nobody puts a password
+in a job file, and the computers that run the tasks never see the token: for
+each task, the server exchanges it for access to that one image that expires
+within minutes.
+
+There are two places for a token:
+
+| Where | Who adds it | Used for | Fits |
+|---|---|---|---|
+| **My images** (top bar), or `pool registry set docker.io --username YOU --mine` | you | only jobs **you** submit, in all your groups | images in your own account, e.g. `yourname/app:1` on Docker Hub |
+| The group's **Images** tab, or `pool registry set ghcr.io --username READER --group my-lab` | a coordinator or admin | every job in the group | images in the group's organization; everyone pushes with their own account |
+
+When both exist, your own token is used for your jobs. When you submit a job,
+the server looks up the image's tag with the token, so a wrong token or name
+is reported at once: *"... was not found, or it is private. ... add a
+read-only token for docker.io under My images."*
+
+**How to make a read-only token** (checked against Docker's and GitHub's
+documentation on 3 November 2026; check theirs if the steps have changed):
+
+- **Docker Hub:** at app.docker.com, **your avatar → Account settings →
+  Personal access tokens → Generate new token**. Access permissions: **Repo
+  Read-only**. Do not keep the default, *Repo Public Read-only*: it cannot read
+  private images. The account name is your Docker ID.
+- **GitHub (ghcr.io):** **Settings → Developer settings → Personal access
+  tokens → Tokens (classic) → Generate new token (classic)**, with only the
+  `read:packages` scope. Fine-grained tokens do not work with ghcr.io. The
+  account name is your GitHub user name.
+
+Both sites show the token only once, so copy it right away. Give it an expiry
+date, and when it expires, store a new one the same way. A token belongs to
+the account that made it: it stops working if that account loses access to
+the images. For a group token, an account made for this, with read access to
+the organization's images, is best. Docker Hub tokens cannot be limited to one
+repository, so a personal token can read all private images in your account;
+pool still only ever gives a computer access to the one image a task needs.
+
+The server checks every token with the registry, stores it encrypted, and never
+shows it again. Before it gives a computer pull access, it checks that the
+token really reads that image. A computer that already holds a private image
+for one group does not let another group's task use it unless that group can
+read the image too.
+
+## 7. Collect the results
+
+Each task writes its files to `/out`. Everything it prints goes to its log.
+
+**In the browser**, on the job page under **Results**:
+
+- **Download all (zip)**: everything at once.
+- The **results table**: every task's `/out/result.json` in one table, with the task's sweep values in front. **Download results table (CSV)** saves it.
+- **Logs → Download log** on a task saves that task's whole log.
+
+The zip holds:
+
+```text
+README.txt                  what is inside, and any file left out (and why)
+tasks.csv                   one line per task: values, state, tries, computer, run time
+results.csv                 every result.json in one table
+combined/summary.csv        CSV files with the same name and columns, from all tasks, merged
+task-000_seed=0/result.json one folder per task: its files and log.txt
+task-000_seed=0/log.txt
+task-001_seed=1/...
+```
+
+For the results table, write one JSON object per task to `/out/result.json`,
+for example `{"seed": 3, "accuracy": 0.91}`. Nested values become columns like
+`metrics.loss`.
+
+**On the command line:**
+
+```bash
+pool download JOB-ID --all -o results/   # every task's files, in the same folders as the zip
+pool results JOB-ID -o results.csv       # the results table
+pool logs JOB-ID --task 3                # one task's log
+```
+
+`pool download` checks every file's SHA-256 against what the computer
+reported, so a damaged or swapped file is never saved. The zip does the same:
+it leaves such a file out (files over 64 MiB are checked while they stream, so
+they are marked instead) and says so in `README.txt`.
+
+**Combine further** in a spreadsheet, or in Python:
+
+```python
+import pandas as pd
+df = pd.read_csv("results.csv")
+print(df.groupby("samples")["pi"].agg(["mean", "std"]))
+```
+
+Files stay on the server's file store. A server without one keeps only the
+logs; the files stay on the computers that ran the tasks. A very large job
+(over 2 GiB of files, by default) is too big for one zip: use `pool download
+--all`.
+
+## 8. The command line
 
 The browser does everything a member needs. The `pool` command is handy for
 scripts and for many downloads. For now it runs from a checkout of the
@@ -317,19 +498,21 @@ is packaged.
 | Create a group | `pool groups create my-lab --template research-team` |
 | Ask to join | `pool join my-lab --message "PhD student in the vision lab"` |
 | Accept an invite token | `pool invite accept TOKEN` |
-| Submit a job | `pool submit job.yaml [--group G] [--wait]` |
+| Submit a job (short or full job file) | `pool submit job.yaml [--group G] [--wait]` |
 | Sweep from the command line | `pool sweep job.yaml --set seed=0..9 --set dataset=small,large` |
 | List jobs | `pool jobs list my-lab [--state running]` |
 | Job status | `pool status JOB-ID` |
 | Logs | `pool logs JOB-ID --task 0 [-f]` |
-| Download results | `pool download JOB-ID [--task N] [--path FILE] [-o FOLDER]` |
-| Registry tokens (private images) | `pool registry list my-lab` / `pool registry set ghcr.io --username READER --group my-lab` / `pool registry remove ghcr.io --group my-lab` |
+| Download results | `pool download JOB-ID --all [-o FOLDER]` (every task) or `pool download JOB-ID [--task N] [--path FILE] [-o FOLDER]` |
+| Results table (CSV) | `pool results JOB-ID [-o results.csv]` |
+| My own registry tokens (private images) | `pool registry list --mine` / `pool registry set docker.io --username YOU --mine` / `pool registry remove docker.io --mine` |
+| The group's registry tokens | `pool registry list my-lab` / `pool registry set ghcr.io --username READER --group my-lab` / `pool registry remove ghcr.io --group my-lab` |
 | Cancel | `pool cancel JOB-ID` |
 | Delete a job | `pool jobs delete JOB-ID` |
 | Delete / restore a group | `pool groups delete my-lab` / `pool groups deleted` / `pool groups restore my-lab` |
 | Usage in a group | `pool groups usage my-lab --days 7` |
 
-## 7. Share your computer
+## 9. Share your computer
 
 Anyone with the role coordinator, admin, member or contributor can share a
 computer with a group.
@@ -376,7 +559,7 @@ path). The server can never widen them. **Turn off** in the browser can only
 narrow them. A group's coordinator can also remove your computer from their
 group; your computer's page then says so, and only they can let it back in.
 
-## 8. Run a group (coordinators and admins)
+## 10. Run a group (coordinators and admins)
 
 ### Roles
 
@@ -408,6 +591,7 @@ who only run jobs or share computers are not asked.
 - **Fair use:** tab **Usage**, or `pool groups usage my-lab`. When several people's jobs wait, the person who used the least computer time in the last 7 days goes first.
 - **Records:** tab **Audit log** (coordinators and admins) lists every important action. It is hash-chained, so changes are detectable.
 - **Settings and closing:** tab **Settings** (coordinator only). Close the group when the work is done (`pool groups close my-lab --yes`): work stops, everything stays visible.
+- **Private images:** tab **Images** → store one read-only token for the group's registry ([§6](#6-private-images)). Members with images in their own account add their own token under **My images** instead.
 - **Removing a computer:** tab **Devices** → **Remove** (coordinators and admins). Its work for the group moves to other computers, and it stays out until you choose **Let back in** under "Removed from this group". Its owner sees why on their computer's page.
 - **Deleting a job:** **Delete job** on the job page; the submitter can delete their own, coordinators and admins any (`pool jobs delete JOB-ID`). Its tasks, logs and output files are deleted.
 - **Deleting the group:** tab **Settings** → **Delete group**, typing its name (`pool groups delete my-lab`). It disappears at once and its work stops. For **7 days** a coordinator or server admin can restore it from **Recently deleted groups** on the Groups page (`pool groups restore my-lab`); after that its jobs, logs and files are purged.
@@ -421,7 +605,7 @@ The people listed in `POOL_SERVER_ADMINS` run the server itself. See the
 - Mark an organisation-owned, dedicated computer: `PATCH /api/v1/devices/ID` with `{"org_owned_dedicated": true}`. Only such computers run `confidential` jobs.
 - Check the audit log's hash chain: `GET /api/v1/audit/verify`.
 
-## 9. When something goes wrong
+## 11. When something goes wrong
 
 ### "Tasks waiting: why"
 
@@ -429,7 +613,7 @@ The job page explains every waiting job. The same reasons, in short:
 
 | The page says | What to do |
 |---|---|
-| No computer is shared with this group yet | Someone in the group shares a computer ([§7](#7-share-your-computer)). |
+| No computer is shared with this group yet | Someone in the group shares a computer ([§9](#9-share-your-computer)). |
 | … shared with this group, but none is online | The owner starts the agent: `pool-agent run`. |
 | … the computer's own sharing settings do not include this group | The owner runs `pool-agent share GROUP` on that computer. |
 | … online but not available right now | Outside the owner's sharing hours, or they are using it (`--only-when-idle`). Wait, or ask. |
@@ -438,6 +622,17 @@ The job page explains every waiting job. The same reasons, in short:
 | … able to run this job | Nothing is wrong; it starts within seconds or when a computer finishes its current work. |
 | Waiting to retry after a failure | The last try failed; see the next table. |
 
+### The job is refused when you submit it
+
+| The message says | What to do |
+|---|---|
+| `image: ... was not found, or it is private` | Check the name and tag (`docker push` prints them). If the image is private, add a read-only token ([§6](#6-private-images)). |
+| `image: ... refused the stored credentials` | The token is wrong or expired: store a new one. |
+| `image: cannot reach the registry` | The server cannot reach the registry right now; try again, or ask the server admin. |
+| `image: ... is on a private network` | The registry is inside your network; a server admin can allow that (`POOL_REGISTRY_PRIVATE_NETWORKS=true`). |
+| `unknown field(s) ...` | A typo in the job file; the message lists the fields a job may use ([§4](#4-write-a-job)). |
+| `unknown placeholders: {{seed}}` | The command uses a name that has no values: add it to `sweep`, or use `{{index}}`. |
+
 ### A task failed
 
 Open the task's log. Lines starting with `agent:` come from the computer that
@@ -445,11 +640,11 @@ ran it.
 
 | Log shows | Cause | Fix |
 |---|---|---|
-| `agent: ... pull access denied`, `manifest unknown` | The computer could not download the image | Check the image name and digest. For a private image, the group needs a token for its registry (**Images** tab) |
-| `this image is private: this computer pulled it for another group` | The image belongs to another group's registry | Use your own group's image, or ask a coordinator to add a token for that registry |
-| `the server gave no pull token (...)` | The group's registry token is missing, wrong or expired | A coordinator replaces it on the **Images** tab |
+| `agent: ... pull access denied`, `manifest unknown` | The computer could not download the image | Check the image name. For a private image, add a token under **My images**, or ask a coordinator for one on the **Images** tab |
+| `this image is private: this computer pulled it for another group` | The image belongs to someone else's registry | Use an image you can read, or add a token that can read it ([§6](#6-private-images)) |
+| `the server gave no pull token (...)` | The token is missing, expired or cannot read this image | Replace it under **My images** (your own) or on the **Images** tab (the group's) |
 | `exit 1` (or another number) and your program's error | Your program failed | Fix the program; try it locally with `docker run --rm IMAGE COMMAND` |
-| Result column shows `max_runtime_exceeded` | The task ran out of time | Raise `max_runtime` |
+| Result column shows `max_runtime_exceeded` | The task ran out of time | Raise `time_limit` |
 | `agent: outputs kept on the device only` | The server has no working file store | Ask the server admin; results are still in the log |
 
 ### The agent
@@ -461,11 +656,13 @@ ran it.
 | `enrollment code is invalid, used or expired` | Create a new code; a code works once, for 10 minutes. |
 | The computer does not appear in the group | Run `pool-agent share GROUP` and make sure `pool-agent run` is running. Your role in the group must allow sharing (not *submitter*). |
 
-## 10. What is not possible yet
+## 12. What is not possible yet
 
 - Jobs cannot use the internet, read input files from the server, or use secrets (passwords, tokens). Put small input data into the image.
 - Private images work with registries that use token authentication (ghcr.io, Docker Hub and similar), not with registries that only accept a password on every request.
 - Checkpoints (resuming a long task where it stopped) are planned.
+- Combining results runs on your side (the results table, the merged CSV files, or your own script). A final step that runs on the group's computers after all tasks is not built.
+- `parts` splits work only for programs that can do part of it (by `POOL_TASK_INDEX`); one program cannot be spread over several computers, since tasks cannot talk to each other.
 - GPUs and stronger isolation (gVisor) are built but not tested on real hardware.
 - Windows computers are untested; Macs cannot share.
 - The agent has no installer yet, and the CLI is not packaged.

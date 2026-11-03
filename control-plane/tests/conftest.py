@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import os
 import socket
 import threading
 import time
+import urllib.parse
 import uuid
 from collections.abc import AsyncIterator
 
@@ -49,6 +51,29 @@ def database_url() -> str:
     yield url
     if not os.environ.get("POOL_TEST_KEEP_DB"):
         asyncio.run(drop())
+
+
+@pytest.fixture(autouse=True, scope="session")
+def no_internet_registries():
+    """Tests talk only to registries on this machine (fake ones); a tag such as python:3.12 must never send
+    a test to Docker Hub. The server thread shares this process, so the guard covers API calls too."""
+    from pool_cp import registry
+
+    real = registry._check_address
+
+    def local_only(url: str, allow_private: bool) -> None:
+        host = urllib.parse.urlsplit(url).hostname or ""
+        try:
+            public = ipaddress.ip_address(host).is_global
+        except ValueError:  # a name: only localhost resolves without the network
+            public = host != "localhost"
+        if public:
+            raise registry.RegistryError(f"tests must not contact {host}")
+        real(url, allow_private)
+
+    registry._check_address = local_only
+    yield
+    registry._check_address = real
 
 
 @pytest.fixture(scope="session")
@@ -175,3 +200,26 @@ def group_with_device(user, enrolled):
         return coord, name, agent
 
     return make
+
+
+@pytest.fixture
+def cli(base_url, tmp_path, monkeypatch):
+    """Run the `pool` CLI against the test server, signed in as a new user."""
+    from typer.testing import CliRunner
+
+    from pool_cli.main import app
+
+    monkeypatch.setenv("POOL_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.delenv("POOL_TOKEN", raising=False)
+    monkeypatch.delenv("POOL_SERVER", raising=False)
+    runner = CliRunner()
+
+    def run(*args, ok=True):
+        res = runner.invoke(app, list(args), catch_exceptions=not ok)
+        if ok:
+            assert res.exit_code == 0, res.output
+        return res
+
+    run("login", "--server", base_url, "--dev-user", f"cli-{gname()}")
+    run.server = base_url
+    return run

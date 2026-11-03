@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { client, unwrap } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import { EXAMPLE_JOB } from "../lib/jobspec";
+import { EXAMPLE_FORM, formToYaml } from "../lib/jobspec";
 
 /**
  * In-app user guide, one section per role (plan §6.2 roles). It must match what the
@@ -155,41 +155,50 @@ export function GuidePage() {
             Change the example to your work:
             <ul>
               <li>
-                <code>image</code>: the container image with your code, pinned by digest so every task runs exactly the
-                same software. It can be private, in your group's organization on ghcr.io or Docker Hub. For a
-                private image, a coordinator or admin first stores one read-only token for its registry on the
-                group's <em>Images</em> tab. This is done once per group; the job itself never contains a password.
-                To find the digest of an image you use:{" "}
-                <code>docker pull python:3.12 && docker inspect --format "{"{{index .RepoDigests 0}}"}" python:3.12</code>
+                <strong>Image</strong>: your image as you push it, e.g. <code>ghcr.io/your-org/app:1</code> or{" "}
+                <code>yourname/app:v2</code>. The server fixes the exact version when you submit, so every task runs the
+                same software. Private image? Add a read-only token once under <Link to="/images">My images</Link> (or a
+                coordinator adds one for the group on the <em>Images</em> tab). A job never contains a password.
               </li>
               <li>
-                <code>command</code>: what to run. <code>{"{{seed}}"}</code> is replaced by each value in{" "}
-                <code>matrix</code>, so one job becomes many tasks (a parameter sweep).
+                <strong>Command</strong>: what to run, as in a terminal. Leave it empty to run the image's own command.
               </li>
               <li>
-                <code>resources</code>: CPU, memory and disk per task. Ask only for what you need: smaller tasks fit on
+                <strong>How to run</strong>: <em>Once</em>; <em>Split into parts</em> (<em>Auto</em>: as many as the
+                group's computers can run at once), where each part gets its number as <code>{"{{index}}"}</code> and in{" "}
+                <code>POOL_TASK_INDEX</code>; or <em>For each value</em>, e.g. <code>seed</code> = <code>0..9</code>,
+                used as <code>{"{{seed}}"}</code>.
+              </li>
+              <li>
+                <strong>Size</strong>: CPU, memory and disk per task. Ask only for what you need: smaller tasks fit on
                 more computers.
               </li>
               <li>
-                Write result files to <code>/out</code>; anything printed is kept in the task's log.
+                Write result files to <code>/out</code>, and one JSON object to <code>/out/result.json</code> to get a
+                results table; anything printed is kept in the task's log.
               </li>
             </ul>
           </li>
           <li>
-            Open the job to follow it. If tasks wait, a box says <strong>why</strong> and what would fix it. Click a task
-            to see its log and, once it has finished, its output files with a <em>Download</em> button (or use{" "}
-            <code>pool download JOB-ID</code>). You can cancel your own job at any time, and delete it (with its logs
-            and files) with <em>Delete job</em>.
+            Open the job to follow it. If tasks wait, a box says <strong>why</strong> and what would fix it. Under{" "}
+            <em>Results</em>: <em>Download all (zip)</em> gives every task's files and log, a table of all{" "}
+            <code>result.json</code> files and merged CSV files; <em>Download results table (CSV)</em> gives the table
+            alone. On the command line: <code>pool download JOB-ID --all</code> and <code>pool results JOB-ID</code>.
+          </li>
+          <li>
+            <em>Run again with changes</em> on a job page opens the form filled with that job. You can cancel your own job
+            at any time, and delete it (with its logs and files) with <em>Delete job</em>.
           </li>
         </ol>
         <details>
-          <summary>The example job</summary>
-          <pre>{EXAMPLE_JOB}</pre>
+          <summary>The example job, as a job file</summary>
+          <pre>{formToYaml(EXAMPLE_FORM)}</pre>
         </details>
         <p className="muted small-text">
           Jobs have no internet access, cannot read input files from the server, and cannot use secrets yet: put small
           input data into the image. Downloads need the server's file store; without one, output files stay on the
-          computer that ran the task.
+          computer that ran the task. Examples for every kind of work (random runs, sweeps, many files, test suites) are
+          in the user guide, docs/user-guide.md §5.
         </p>
       </Section>
 
@@ -245,8 +254,9 @@ export function GuidePage() {
           </li>
           <li>
             <strong>Private images:</strong> tab <em>Images</em> → store one <em>read-only</em> token for the
-            group's registry (ghcr.io or Docker Hub). Members push with their own accounts; computers only ever get
-            short-lived access to the one image a task needs.
+            group's registry (ghcr.io or Docker Hub). Members push with their own accounts; images in someone's personal
+            account use that person's own token (<em>My images</em>). Computers only ever get short-lived access to the
+            one image a task needs.
           </li>
           <li>
             <strong>Computers:</strong> tab <em>Devices</em> → <em>Remove</em> takes a computer out of the group; it

@@ -127,6 +127,34 @@ def object_exists(settings: Settings, group_id: uuid.UUID, sha256: str) -> bool:
         raise
 
 
+def copy_object(settings: Settings, group_id: uuid.UUID, sha256: str, out, max_bytes: int) -> int:  # noqa: ANN001
+    """Write a stored object into the file-like `out`, checking its SHA-256 (blocking; call it from a thread).
+
+    Returns the number of bytes written. Raises LookupError if the object is missing, ValueError if it is
+    larger than max_bytes or does not match its hash (then `out` may hold part of it).
+    """
+    import hashlib
+
+    from botocore.exceptions import ClientError
+
+    try:
+        obj = _internal_client(settings).get_object(Bucket=settings.s3_bucket, Key=object_key(group_id, sha256))
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
+            raise LookupError(sha256) from None
+        raise
+    digest, size = hashlib.sha256(), 0
+    for chunk in obj["Body"].iter_chunks(1024 * 1024):
+        size += len(chunk)
+        if size > max_bytes:
+            raise ValueError("object is larger than allowed")
+        digest.update(chunk)
+        out.write(chunk)
+    if digest.hexdigest() != sha256:
+        raise ValueError("object does not match its hash")
+    return size
+
+
 def ensure_bucket(settings: Settings) -> str:
     """Make sure the bucket exists. Returns "exists" or "created"; raises on any other outcome.
 

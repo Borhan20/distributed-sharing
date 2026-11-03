@@ -30,6 +30,7 @@ func (a *Agent) runAttempt(ctx context.Context, at *attempt) {
 	spec := sandbox.Spec{
 		AttemptID: at.id, TaskID: at.taskID, Epoch: at.epoch, Group: at.group, Profile: a.cfg.Profile.Name,
 		Tier: at.tier, Image: env.Spec.Image, Command: env.Spec.Command, Env: env.Spec.Env,
+		TaskIndex: env.Spec.TaskIndex, TaskCount: env.Spec.TaskCount,
 		CPU: env.Spec.Resources.CPU, MemoryMB: env.Spec.Resources.MemoryMB, DiskMB: env.Spec.Resources.DiskMB,
 		GPUs: env.Spec.Resources.GPUs, MaxRuntime: time.Duration(env.Spec.MaxRuntimeS) * time.Second,
 		OutputsPath: env.Spec.OutputsPath,
