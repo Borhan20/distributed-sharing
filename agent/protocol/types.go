@@ -266,6 +266,9 @@ type TaskEnvelope struct {
 	IssuedAt           time.Time `json:"issued_at"`
 	ExpiresAt          time.Time `json:"expires_at"`
 	Spec               TaskSpec  `json:"spec"`
+	// RegistryAuth: the image is private; ask for a short-lived pull token
+	// (pull_auth_request) before pulling it.
+	RegistryAuth bool `json:"registry_auth"`
 }
 
 // ---------------------------------------------------------------------------
@@ -432,6 +435,26 @@ type UploadURLs struct {
 	Reason    *string     `json:"reason"`
 }
 
+// PullAuthRequest asks for a short-lived token to pull this attempt's private image.
+type PullAuthRequest struct {
+	Type      string `json:"type"`
+	MsgID     string `json:"msg_id"`
+	AttemptID string `json:"attempt_id"`
+	Epoch     int64  `json:"epoch"`
+}
+
+// PullAuth carries a bearer token for one image (pull only). Registry is the
+// key for Docker's config "auths". Without a token, Reason says why.
+type PullAuth struct {
+	Type      string     `json:"type"`
+	MsgID     string     `json:"msg_id"`
+	AttemptID string     `json:"attempt_id"`
+	Registry  *string    `json:"registry"`
+	Token     *string    `json:"token"`
+	ExpiresAt *time.Time `json:"expires_at"`
+	Reason    *string    `json:"reason"`
+}
+
 type Commit struct {
 	Type           string        `json:"type"`
 	MsgID          string        `json:"msg_id"`
@@ -519,6 +542,8 @@ const (
 	TypeProgress      = "progress"
 	TypeUploadRequest = "upload_request"
 	TypeUploadURLs    = "upload_urls"
+	TypePullAuthReq   = "pull_auth_request"
+	TypePullAuth      = "pull_auth"
 	TypeCommit        = "commit"
 	TypeCommitAck     = "commit_ack"
 	TypeAbort         = "abort"
@@ -561,6 +586,10 @@ func NewMessage(msgType string) (any, bool) {
 		return &UploadRequest{}, true
 	case TypeUploadURLs:
 		return &UploadURLs{}, true
+	case TypePullAuthReq:
+		return &PullAuthRequest{}, true
+	case TypePullAuth:
+		return &PullAuth{}, true
 	case TypeCommit:
 		return &Commit{}, true
 	case TypeCommitAck:

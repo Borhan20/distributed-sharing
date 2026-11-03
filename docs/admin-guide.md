@@ -128,7 +128,7 @@ tested end to end yet):
 
 - `/opt/pool/deploy/.env`: every password. Without it, the rest cannot be read.
 - **The database:** `docker compose exec -T postgres pg_dumpall -U pool > pool-db.sql`. It holds groups, jobs, accounts (Keycloak), and the audit log.
-- **The Docker volumes** `pool_pool-keys` (the device CA and signing key: lose it and every computer must enroll again), `pool_seaweed-data` (job output files) and `pool_caddy-data` (certificates and, without a domain, the CA).
+- **The Docker volumes** `pool_pool-keys` (the device CA, the signing key, and `secrets.key`, which encrypts groups' registry tokens: lose it and every computer must enroll again and every token must be re-entered), `pool_seaweed-data` (job output files) and `pool_caddy-data` (certificates and, without a domain, the CA).
 
 ## 7. Security notes
 

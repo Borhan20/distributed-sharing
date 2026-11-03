@@ -47,6 +47,15 @@ type Spec struct {
 	PidsLimit   int
 	MaxRuntime  time.Duration
 	OutputsPath string // inside the container, default /out
+	// RegistryAuth, when set, is a short-lived token to pull a private image.
+	RegistryAuth *RegistryAuth
+}
+
+// RegistryAuth is a bearer token for one image, from the server (pull_auth).
+// Key is the registry's key in Docker's config "auths".
+type RegistryAuth struct {
+	Key   string
+	Token string
 }
 
 // Output is one collected output file.

@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     ca_key_file: Path | None = None
     ca_cert_file: Path | None = None
     signing_key_file: Path | None = None
+    secrets_key_file: Path | None = None  # encrypts stored secrets such as registry pull tokens
     autocreate_keys: bool | None = None  # default: dev_mode
 
     cert_ttl_hours: int = 24
@@ -83,6 +84,7 @@ class Settings(BaseSettings):
         self.ca_key_file = self.ca_key_file or self.data_dir / "ca.key"
         self.ca_cert_file = self.ca_cert_file or self.data_dir / "ca.crt"
         self.signing_key_file = self.signing_key_file or self.data_dir / "signing.key"
+        self.secrets_key_file = self.secrets_key_file or self.data_dir / "secrets.key"
         if not self.dev_mode and not (self.oidc_issuer and self.oidc_audience):
             raise ValueError("POOL_OIDC_ISSUER and POOL_OIDC_AUDIENCE are required unless POOL_DEV_MODE=true")
         self._check_object_store()

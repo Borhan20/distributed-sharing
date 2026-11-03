@@ -169,6 +169,17 @@ func (d *Docker) Run(ctx context.Context, s Spec, onStart func(), logs LogSink) 
 		_, _ = d.output(rmCtx, "rm", "-f", "-v", name)
 	}()
 
+	if s.RegistryAuth != nil {
+		pullCtx, cancelPull := context.WithTimeout(ctx, 30*time.Minute)
+		err := d.pullPrivate(pullCtx, s.Image, *s.RegistryAuth)
+		cancelPull()
+		if err != nil {
+			if ctx.Err() != nil {
+				return res, ErrKilled
+			}
+			return res, fmt.Errorf("pull private image: %w", err)
+		}
+	}
 	// docker create pulls the image if needed; allow time for large images.
 	createCtx, cancelCreate := context.WithTimeout(ctx, 30*time.Minute)
 	_, err = d.output(createCtx, args...)
@@ -422,4 +433,37 @@ func (d *Docker) forget(attemptID string) {
 	defer d.mu.Unlock()
 	delete(d.images, attemptID)
 	delete(d.outDirs, attemptID)
+}
+
+// pullPrivate pulls an image with a short-lived token through a throwaway
+// Docker config: the token is in a 0600 file inside a 0700 directory that is
+// removed right after, never on a command line, and never in the owner's own
+// Docker config. The following "docker create" then finds the image locally.
+func (d *Docker) pullPrivate(ctx context.Context, image string, auth RegistryAuth) error {
+	return d.pullWithConfig(ctx, image, map[string]any{auth.Key: map[string]string{"registrytoken": auth.Token}})
+}
+
+// pullWithConfig pulls with exactly these Docker "auths" (none: anonymously),
+// ignoring the owner's own Docker login.
+func (d *Docker) pullWithConfig(ctx context.Context, image string, auths map[string]any) error {
+	if len(d.Cmd) != 1 {
+		return errors.New("private images are not supported on this runtime yet (Windows/WSL2)")
+	}
+	if err := os.MkdirAll(d.WorkRoot, 0o700); err != nil {
+		return err
+	}
+	dir, err := os.MkdirTemp(d.WorkRoot, "pull-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	cfg, err := json.Marshal(map[string]any{"auths": auths})
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), cfg, 0o600); err != nil {
+		return err
+	}
+	_, err = d.output(ctx, "--config", dir, "pull", "--quiet", image)
+	return err
 }

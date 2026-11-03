@@ -32,12 +32,14 @@ from ..models import (
     Device,
     DeviceShare,
     Group,
+    GroupRegistryCredential,
     Job,
     Membership,
     Task,
     TaskLog,
     UsageLedger,
 )
+from ..registry import RegistryError, parse_image
 from ..timeutil import utcnow
 
 log = logging.getLogger(__name__)
@@ -243,6 +245,15 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
     return await _assign(session, settings, signer, device, task, submitter_handle, group, on_probation, now)
 
 
+async def _private_image(session: AsyncSession, group_id: uuid.UUID, image: str) -> bool:
+    """Whether the group stored credentials for this image's registry (then the agent asks for a token)."""
+    try:
+        ref = parse_image(image)
+    except RegistryError:
+        return False
+    return await session.get(GroupRegistryCredential, (group_id, ref.registry)) is not None
+
+
 async def _assign(session: AsyncSession, settings: Settings, signer: EnvelopeSigner, device: Device, task: Task,
                   submitter_handle: str, group: Group, on_probation: bool, now: datetime) -> pm.Offer:
     epoch = task.epoch + 1
@@ -258,6 +269,7 @@ async def _assign(session: AsyncSession, settings: Settings, signer: EnvelopeSig
         attempt_id=str(attempt.id), task_id=str(task.id), job_id=str(task.job_id), epoch=epoch, group=group.name,
         group_id=str(group.id), submitter=submitter_handle, submitter_probation=on_probation,
         device_id=str(device.id), issued_at=now, expires_at=expires, spec=pm.TaskSpec.model_validate(task.spec),
+        registry_auth=await _private_image(session, group.id, task.spec["image"]),
     )
     payload = envelope.model_dump_json().encode()
     await session.flush()
@@ -444,6 +456,9 @@ async def handle_abort(session: AsyncSession, settings: Settings, device_id: uui
     penalty = msg.reason not in NO_PENALTY_ABORTS
     _end_attempt(f.attempt, "failed" if penalty else "preempted", f"abort_{msg.reason}", now)
     await _requeue_or_fail(session, settings, f.task, count_failure=penalty, crashed=False, now=now)
+    if f.task.state == "failed" and msg.detail:
+        # Keep the device's explanation where people look: the task's result on the job page.
+        f.task.result = {**(f.task.result or {}), "attempt_id": str(f.attempt.id), "error": msg.detail[:500]}
     await audit.record(session, actor_type="device", actor_id=device_id, action="attempt.abort",
                        group_id=f.task.group_id, device_id=device_id, target_type="attempt",
                        target_id=f.attempt.id, details={"reason": msg.reason, "detail": msg.detail[:500]})

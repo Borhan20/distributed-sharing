@@ -515,6 +515,36 @@
       "title": "Progress",
       "type": "object"
     },
+    "PullAuthRequest": {
+      "description": "A -> S: a short-lived token to pull this attempt's private image (sent only if registry_auth).",
+      "properties": {
+        "attempt_id": {
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "epoch": {
+          "minimum": 1,
+          "title": "Epoch",
+          "type": "integer"
+        },
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "pull_auth_request",
+          "default": "pull_auth_request",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt_id",
+        "epoch"
+      ],
+      "title": "PullAuthRequest",
+      "type": "object"
+    },
     "Ready": {
       "properties": {
         "free": {
@@ -806,6 +836,7 @@
       "heartbeat": "#/$defs/Heartbeat",
       "hello": "#/$defs/Hello",
       "progress": "#/$defs/Progress",
+      "pull_auth_request": "#/$defs/PullAuthRequest",
       "ready": "#/$defs/Ready",
       "renew_cert": "#/$defs/RenewCert",
       "started": "#/$defs/Started",
@@ -837,6 +868,9 @@
     },
     {
       "$ref": "#/$defs/UploadRequest"
+    },
+    {
+      "$ref": "#/$defs/PullAuthRequest"
     },
     {
       "$ref": "#/$defs/Commit"

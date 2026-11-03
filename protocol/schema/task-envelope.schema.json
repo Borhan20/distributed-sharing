@@ -243,6 +243,12 @@
       "title": "Job Id",
       "type": "string"
     },
+    "registry_auth": {
+      "default": false,
+      "description": "The image is private: ask for a short-lived pull token with pull_auth_request before pulling",
+      "title": "Registry Auth",
+      "type": "boolean"
+    },
     "spec": {
       "$ref": "#/$defs/TaskSpec"
     },

@@ -296,6 +296,79 @@
       "title": "Preempt",
       "type": "object"
     },
+    "PullAuth": {
+      "description": "S -> A: a bearer token for this one image (pull only), never the group's stored credentials.\n\n`registry` is the key for Docker's config `auths` (e.g. \"ghcr.io\", \"https://index.docker.io/v1/\").\nWithout a token, `reason` says why; the agent then fails the attempt instead of pulling anonymously.",
+      "properties": {
+        "attempt_id": {
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires At"
+        },
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "registry": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Registry"
+        },
+        "token": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Token"
+        },
+        "type": {
+          "const": "pull_auth",
+          "default": "pull_auth",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt_id"
+      ],
+      "title": "PullAuth",
+      "type": "object"
+    },
     "Revoke": {
       "properties": {
         "group": {
@@ -477,6 +550,7 @@
       "no_work": "#/$defs/NoWork",
       "offer": "#/$defs/Offer",
       "preempt": "#/$defs/Preempt",
+      "pull_auth": "#/$defs/PullAuth",
       "revoke": "#/$defs/Revoke",
       "upload_urls": "#/$defs/UploadURLs",
       "welcome": "#/$defs/Welcome"
@@ -501,6 +575,9 @@
     },
     {
       "$ref": "#/$defs/UploadURLs"
+    },
+    {
+      "$ref": "#/$defs/PullAuth"
     },
     {
       "$ref": "#/$defs/CommitAck"

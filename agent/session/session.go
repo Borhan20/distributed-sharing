@@ -34,6 +34,7 @@ const (
 	logChunkBytes      = 16 * 1024
 	readyTimeout       = 30 * time.Second
 	uploadURLTimeout   = 60 * time.Second
+	pullAuthTimeout    = 30 * time.Second
 	ownerCheckInterval = 5 * time.Second
 	stopGrace          = 30 * time.Second
 )
@@ -54,6 +55,9 @@ type Config struct {
 	DeviceInfo func() sysinfo.Info
 	HTTPClient *http.Client
 	Dialer     *websocket.Dialer
+	// CheckPublic reports whether anyone can pull an image (default: ask its
+	// registry, registry.CheckPublic). Tests replace it.
+	CheckPublic func(ctx context.Context, image string) error
 }
 
 // Agent runs one profile.
@@ -86,6 +90,11 @@ type Agent struct {
 	hbInterval   time.Duration
 	leaseTTL     time.Duration
 	uploadWait   map[string]chan protocol.UploadURLs
+	pullWait     map[string]chan protocol.PullAuth
+	// Images this computer pulled with a group's token ("token") or found to
+	// be public ("public"); private-images.json in the profile directory, so it
+	// survives restarts.
+	privateImages map[string]string
 
 	writeMu sync.Mutex
 	wake    chan struct{}
@@ -148,7 +157,9 @@ func New(cfg Config) (*Agent, error) {
 	a := &Agent{
 		cfg: cfg, log: cfg.Logger.With("profile", cfg.Profile.Name),
 		keys: keyMap, attempts: map[string]*attempt{}, uploadWait: map[string]chan protocol.UploadURLs{},
-		hbInterval: 15 * time.Second, leaseTTL: 60 * time.Second, wake: make(chan struct{}, 1),
+		pullWait:      map[string]chan protocol.PullAuth{},
+		privateImages: readPrivateImages(cfg.Profile.Dir),
+		hbInterval:    15 * time.Second, leaseTTL: 60 * time.Second, wake: make(chan struct{}, 1),
 	}
 	if err := a.reloadPolicy(true); err != nil {
 		return nil, err
@@ -434,8 +445,13 @@ func (a *Agent) disconnected(conn *websocket.Conn) {
 	}
 	waiters := a.uploadWait
 	a.uploadWait = map[string]chan protocol.UploadURLs{}
+	pulls := a.pullWait
+	a.pullWait = map[string]chan protocol.PullAuth{}
 	a.mu.Unlock()
 	for _, ch := range waiters {
+		close(ch)
+	}
+	for _, ch := range pulls {
 		close(ch)
 	}
 	a.writeState()
@@ -664,6 +680,15 @@ func (a *Agent) handle(ctx context.Context, msg any) error {
 		a.mu.Lock()
 		ch := a.uploadWait[m.AttemptID]
 		delete(a.uploadWait, m.AttemptID)
+		a.mu.Unlock()
+		if ch != nil {
+			ch <- *m
+			close(ch)
+		}
+	case *protocol.PullAuth:
+		a.mu.Lock()
+		ch := a.pullWait[m.AttemptID]
+		delete(a.pullWait, m.AttemptID)
 		a.mu.Unlock()
 		if ch != nil {
 			ch <- *m
@@ -994,4 +1019,51 @@ func (a *Agent) shutdown() {
 	defer cancel()
 	_, _ = a.cfg.Runtime.KillAll(ctx, a.cfg.Profile.Name)
 	a.writeState()
+}
+
+const privateImagesFile = "private-images.json"
+
+func readPrivateImages(dir string) map[string]string {
+	out := map[string]string{}
+	raw, err := os.ReadFile(filepath.Join(dir, privateImagesFile))
+	if err != nil {
+		return out
+	}
+	_ = json.Unmarshal(raw, &out)
+	return out
+}
+
+func (a *Agent) setImageState(image, state string) {
+	a.privateImages[image] = state
+	raw, _ := json.Marshal(a.privateImages)
+	path := filepath.Join(a.cfg.Profile.Dir, privateImagesFile)
+	if err := os.WriteFile(path+".tmp", raw, 0o600); err == nil {
+		_ = os.Rename(path+".tmp", path)
+	}
+}
+
+// markPrivate records that image was pulled with a token, so another group
+// must pull it itself (without credentials) before using it here. Images
+// already found to be public stay public.
+func (a *Agent) markPrivate(image string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.privateImages[image] == "" {
+		a.setImageState(image, "token")
+	}
+}
+
+// markPublic records that image can be pulled without credentials.
+func (a *Agent) markPublic(image string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.privateImages[image] != "public" {
+		a.setImageState(image, "public")
+	}
+}
+
+func (a *Agent) isPrivate(image string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.privateImages[image] == "token"
 }

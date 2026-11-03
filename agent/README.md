@@ -171,6 +171,15 @@ Decline reasons are the ones listed in the design doc §3.3.
   LAN addresses. When the URL signs `x-amz-checksum-sha256`, the agent sends
   the file's SHA-256 in that header, and the store rejects a body that does
   not match. Then it commits.
+- **Private images:** when the server marks an offer `registry_auth`, the agent
+  asks for a pull token (`pull_auth_request`), writes it to a throwaway Docker
+  config (mode 0600 in a 0700 directory, removed right after), and pulls with
+  `docker --config DIR pull`. The token works for that one image and expires
+  within minutes; the owner's own Docker login is never used. Images pulled
+  this way are listed in `private-images.json` in the profile directory: a
+  later task without a token may use the local copy only if the registry
+  serves the image to anonymous clients (checked over HTTP, because Docker
+  does not ask the registry when the image is already local).
 - **Cleaning up:** the agent user cannot delete files that uid 65534 created
   inside nested directories. If deletion fails, a short-lived container runs
   as that same uid, with the same pinned image, no network and no

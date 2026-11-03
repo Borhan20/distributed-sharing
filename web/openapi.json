@@ -2237,6 +2237,146 @@
         }
       }
     },
+    "/api/v1/groups/{name}/registries": {
+      "get": {
+        "tags": [
+          "registries"
+        ],
+        "summary": "List Registries",
+        "operationId": "list_registries_api_v1_groups__name__registries_get",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RegistryCredentialOut"
+                  },
+                  "title": "Response List Registries Api V1 Groups  Name  Registries Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "registries"
+        ],
+        "summary": "Set Registry",
+        "operationId": "set_registry_api_v1_groups__name__registries_put",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegistryCredentialIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistryCredentialOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/groups/{name}/registries/{registry}": {
+      "delete": {
+        "tags": [
+          "registries"
+        ],
+        "summary": "Remove Registry",
+        "operationId": "remove_registry_api_v1_groups__name__registries__registry__delete",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "registry",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Registry"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/config": {
       "get": {
         "tags": [
@@ -3694,6 +3834,73 @@
           "joined_at"
         ],
         "title": "MemberOut"
+      },
+      "RegistryCredentialIn": {
+        "properties": {
+          "registry": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Registry",
+            "description": "e.g. ghcr.io or docker.io"
+          },
+          "username": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Username"
+          },
+          "token": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Token",
+            "description": "A read-only access token; never shown again"
+          }
+        },
+        "type": "object",
+        "required": [
+          "registry",
+          "username",
+          "token"
+        ],
+        "title": "RegistryCredentialIn"
+      },
+      "RegistryCredentialOut": {
+        "properties": {
+          "registry": {
+            "type": "string",
+            "title": "Registry"
+          },
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated By"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "registry",
+          "username",
+          "updated_by",
+          "updated_at"
+        ],
+        "title": "RegistryCredentialOut"
       },
       "RemovedDeviceOut": {
         "properties": {
