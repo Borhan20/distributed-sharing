@@ -1923,6 +1923,30 @@
         }
       }
     },
+    "/api/v1/config": {
+      "get": {
+        "tags": [
+          "ops"
+        ],
+        "summary": "Public Config",
+        "description": "What the web UI needs before sign-in. Public: everything here is visible to any visitor anyway.",
+        "operationId": "public_config_api_v1_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Public Config Api V1 Config Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/healthz": {
       "get": {
         "tags": [

@@ -236,6 +236,31 @@ func (p *Profile) TLSConfig() (*tls.Config, error) {
 	return cfg, nil
 }
 
+// UploadTLSConfig is for presigned upload URLs. They usually point at the
+// server's own address (one public address, docs/design/easy-onboarding.md
+// §4), which may use a private CA, but may also point at a public object
+// store. So: the system roots plus the pinned server CA, and no device
+// certificate (the store has no use for it).
+func (p *Profile) UploadTLSConfig() (*tls.Config, error) {
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if p.ServerCAFile == "" {
+		return cfg, nil
+	}
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool() // e.g. Windows before Go 1.18 semantics, or no system store
+	}
+	raw, err := os.ReadFile(p.ServerCAFile)
+	if err != nil {
+		return nil, fmt.Errorf("server CA: %w", err)
+	}
+	if !pool.AppendCertsFromPEM(raw) {
+		return nil, fmt.Errorf("server CA %s: no certificates found", p.ServerCAFile)
+	}
+	cfg.RootCAs = pool
+	return cfg, nil
+}
+
 func loadCAPool(path string) (*x509.CertPool, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {

@@ -98,8 +98,12 @@ def _group_out(g: Group, role: str | None) -> GroupOut:
 
 @router.get("/me")
 async def me(request: Request, p: Principal = Depends(current_principal)) -> dict:
-    admins = request.app.state.settings.server_admins
-    return {"id": str(p.user.id), "handle": p.user.handle, "mfa": p.has_mfa, "server_admin": p.user.handle in admins}
+    settings = request.app.state.settings
+    admin = p.user.handle in settings.server_admins
+    return {"id": str(p.user.id), "handle": p.user.handle, "mfa": p.has_mfa, "server_admin": admin,
+            "can_create_groups": admin or settings.group_creators == "anyone",
+            # Coordinators and admins need two-step sign-in for privileged actions on this server.
+            "mfa_required": bool(settings.require_mfa_for_admins)}
 
 
 @router.get("/groups", response_model=list[GroupOut])
@@ -112,8 +116,12 @@ async def list_groups(p: Principal = Depends(current_principal), s: AsyncSession
 
 
 @router.post("/groups", response_model=GroupOut, status_code=201)
-async def create_group(body: GroupCreate, p: Principal = Depends(current_principal),
+async def create_group(body: GroupCreate, request: Request, p: Principal = Depends(current_principal),
                        s: AsyncSession = Depends(get_session)):
+    settings = request.app.state.settings
+    if settings.group_creators == "admins" and p.user.handle not in settings.server_admins:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "On this server only server admins create groups. Ask one to "
+                                                       "create the group and invite you as its coordinator.")
     defaults = TEMPLATES.get(body.template or "research-team")
     expires_at = body.expires_at
     if expires_at is None and defaults["expires_in_days"]:

@@ -1,20 +1,23 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { UserManager, WebStorageStateStore } from "oidc-client-ts";
 import { client, unwrap } from "../api/client";
+import { runtimeConfig } from "./runtimeConfig";
 import { getToken, setToken, tokenTtl } from "./token";
 
 export type AuthMode = "dev" | "oidc";
-export const AUTH_MODE: AuthMode = import.meta.env.VITE_AUTH_MODE === "oidc" ? "oidc" : "dev";
+/** Dev sign-in (any name, no password) or the server's OIDC provider; see runtimeConfig.ts. */
+export function authMode(): AuthMode {
+  return runtimeConfig().auth;
+}
 
 let manager: UserManager | null = null;
 export function oidcManager(): UserManager {
   if (!manager) {
-    const authority = import.meta.env.VITE_OIDC_AUTHORITY;
-    const clientId = import.meta.env.VITE_OIDC_CLIENT_ID;
-    if (!authority || !clientId) throw new Error("VITE_OIDC_AUTHORITY and VITE_OIDC_CLIENT_ID must be set");
+    const c = runtimeConfig();
+    if (c.auth !== "oidc") throw new Error("this server does not use OIDC sign-in");
     manager = new UserManager({
-      authority,
-      client_id: clientId,
+      authority: c.oidc_authority,
+      client_id: c.oidc_client_id,
       redirect_uri: `${window.location.origin}/auth/callback`,
       post_logout_redirect_uri: window.location.origin,
       response_type: "code", // authorization code flow; oidc-client-ts always uses PKCE (S256) for it
@@ -27,7 +30,16 @@ export function oidcManager(): UserManager {
   return manager;
 }
 
-type Me = { id: string; handle: string; mfa: boolean; server_admin: boolean };
+type Me = {
+  id: string;
+  handle: string;
+  mfa: boolean;
+  server_admin: boolean;
+  can_create_groups?: boolean;
+  mfa_required?: boolean;
+};
+
+export type OidcLoginOptions = { prompt?: "login"; kcAction?: "CONFIGURE_TOTP" };
 
 type AuthState = {
   token: string | null;
@@ -35,7 +47,7 @@ type AuthState = {
   loading: boolean;
   error: string | null;
   loginDev: (username: string, mfa: boolean) => Promise<void>;
-  loginOidc: (returnTo?: string) => Promise<void>;
+  loginOidc: (returnTo?: string, opts?: OidcLoginOptions) => Promise<void>;
   completeOidc: () => Promise<string>;
   logout: () => void;
 };
@@ -98,8 +110,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [apply],
   );
 
-  const loginOidc = useCallback(async (returnTo?: string) => {
-    await oidcManager().signinRedirect({ state: { returnTo: returnTo ?? window.location.pathname } });
+  const loginOidc = useCallback(async (returnTo?: string, opts?: OidcLoginOptions) => {
+    await oidcManager().signinRedirect({
+      state: { returnTo: returnTo ?? window.location.pathname },
+      // prompt=login: ask for the password (and the authenticator code) again, even with a live session.
+      prompt: opts?.prompt,
+      // Keycloak application-initiated action, e.g. CONFIGURE_TOTP to add an authenticator app.
+      extraQueryParams: opts?.kcAction ? { kc_action: opts.kcAction } : undefined,
+    });
   }, []);
 
   const completeOidc = useCallback(async () => {
@@ -111,7 +129,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     apply(null);
-    if (AUTH_MODE === "oidc") void oidcManager().removeUser();
+    if (authMode() === "oidc") void oidcManager().removeUser();
   }, [apply]);
 
   const value = useMemo(

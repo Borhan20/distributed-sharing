@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import Field, model_validator
@@ -28,6 +29,11 @@ class Settings(BaseSettings):
     oidc_username_claim: str = "preferred_username"
     require_mfa_for_admins: bool | None = None  # default: True unless dev_mode
     server_admins: list[str] = Field(default_factory=list)  # user handles
+    # The OIDC client the web UI signs in with (public, PKCE). Served to the UI by GET /api/v1/config.
+    oidc_web_client_id: str = "pool-web"
+    # Who may create groups. "admins" (server admins only) suits a server open to self-registration,
+    # so strangers cannot create groups and use its storage.
+    group_creators: Literal["anyone", "admins"] = "anyone"
 
     # Keys. Default location: <data_dir>/ca.key, ca.crt, signing.key
     data_dir: Path = Path("./var")

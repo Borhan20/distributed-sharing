@@ -166,3 +166,39 @@ async def test_download_needs_a_file_store_and_a_known_output(user, group_with_d
     await owner.req("GET", f"/api/v1/jobs/{job_id}/tasks/7/download", params={"path": "result.txt"}, expect=404)
     outsider = await user()
     await outsider.req("GET", base, params={"path": "result.txt"}, expect=404)
+
+
+# --------------------------------------------------------------------------
+# Server install (step 1): public UI config and who may create groups
+# --------------------------------------------------------------------------
+
+
+async def test_public_config_tells_the_ui_how_to_sign_in(http):
+    r = await http.get("/api/v1/config")  # no token needed
+    assert r.status_code == 200 and r.json() == {"auth": "dev"}
+
+
+async def test_public_config_in_oidc_mode(settings):
+    import httpx
+
+    from pool_cp.app import create_app
+    from pool_cp.config import Settings
+
+    oidc = Settings(**{**settings.model_dump(), "dev_mode": False, "oidc_issuer": "https://pool.example.org/auth/realms/pool",
+                       "oidc_audience": "pool-api", "autocreate_keys": True})
+    app = create_app(oidc)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+        r = await c.get("/api/v1/config")
+    assert r.json() == {"auth": "oidc", "oidc_authority": "https://pool.example.org/auth/realms/pool",
+                        "oidc_client_id": "pool-web"}
+
+
+async def test_group_creation_can_be_limited_to_server_admins(user, settings, monkeypatch):
+    monkeypatch.setattr(settings, "group_creators", "admins")
+    member = await user()
+    assert (await member.get("/api/v1/me"))["can_create_groups"] is False
+    r = await member.post("/api/v1/groups", {"name": gname(), "display_name": "x"}, expect=403)
+    assert "only server admins create groups" in r.json()["detail"]
+    admin = await user("root-admin")  # listed in the test settings' server_admins
+    assert (await admin.get("/api/v1/me"))["can_create_groups"] is True
+    await admin.post("/api/v1/groups", {"name": gname(), "display_name": "x"}, expect=201)

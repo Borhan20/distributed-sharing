@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { client, unwrap, type Group } from "../api/client";
+import { useAuth } from "../auth/AuthContext";
 import { Empty, ErrorBox, Loading, StateBadge } from "../components/ui";
 import { fmtTime } from "../lib/format";
 
@@ -15,6 +16,7 @@ const TEMPLATES = [
 type Template = (typeof TEMPLATES)[number]["id"];
 
 export function GroupsPage() {
+  const { me } = useAuth();
   const groups = useQuery({ queryKey: ["groups"], queryFn: () => unwrap(client.GET("/api/v1/groups")) });
   return (
     <>
@@ -59,7 +61,17 @@ export function GroupsPage() {
         )}
       </section>
       <div className="grid2">
-        <CreateGroup />
+        {me?.can_create_groups === false ? (
+          <section className="card">
+            <h2>Create a group</h2>
+            <p className="muted">
+              On this server, groups are created by a server admin. Ask one to create your group and invite you as its
+              coordinator.
+            </p>
+          </section>
+        ) : (
+          <CreateGroup />
+        )}
         <RequestToJoin />
       </div>
     </>

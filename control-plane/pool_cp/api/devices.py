@@ -18,7 +18,7 @@ from pool_protocol import messages as pm
 
 from .. import audit
 from ..auth import Principal, current_principal, get_session
-from ..authz import ANY_MEMBER, SHARERS, load_group, not_found, require_role
+from ..authz import ANY_MEMBER, MFA_NEEDED, SHARERS, load_group, not_found, require_role
 from ..ca import CAError, LocalCA, sha256_hex
 from ..models import Attempt, Device, DeviceShare, EnrollmentCode, Group, Job, RevokedCert, Task, User
 from ..scheduler.core import ACTIVE_ATTEMPT_STATES, lose_attempt
@@ -183,7 +183,7 @@ async def patch_device(device_id: uuid.UUID, body: DevicePatch, request: Request
         if not is_admin:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "only server admins can mark devices org-owned")
         if settings.require_mfa_for_admins and not p.has_mfa:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "multi-factor authentication is required")
+            raise HTTPException(status.HTTP_403_FORBIDDEN, MFA_NEEDED)
         d.org_owned_dedicated = body.org_owned_dedicated
     if body.always_on is not None:
         if d.owner_id != p.user.id:

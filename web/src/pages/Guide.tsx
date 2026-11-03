@@ -219,6 +219,10 @@ export function GuidePage() {
       <Section id="coordinator" title="Coordinators">
         <ul>
           <li>
+            <strong>Two-step sign-in:</strong> on a shared server, invites, settings, roles and votes need a code from an
+            authenticator app on your phone. The banner at the top of the page sets it up once.
+          </li>
+          <li>
             <strong>Invite people:</strong> tab <em>Invites</em> → choose role, number of uses and expiry → <em>Create
             invite</em> → copy the link and send it by chat or email.
           </li>
