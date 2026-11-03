@@ -28,6 +28,7 @@ second way in, for programs you work with interactively.
 - **Strong isolation for apps:** apps and stacks run under gVisor (T2), so images that start as root (PostgreSQL, Redis) work unchanged and still cannot touch the owner's kernel ([§3.5](#35-compose-stacks)).
 - **Registry clean-up after 30 days unused**, adjustable by the server admin and per group ([§3.1](#31-images-built-on-your-computer-kept-by-the-server)).
 - **Apps must be testable, with or without a UI** ([§2.7](#27-testing-an-app-with-or-without-a-ui)).
+- **One job, the same everywhere:** a job from the browser form, from a job file (`pool submit`) and from `pool run` is the same job, behaves like `docker run` on your own computer, and everything it shows (output, files, ports) is visible from your computer ([§2.0](#20-one-job-three-ways-to-start-it)).
 
 ### What it cannot do
 
@@ -42,6 +43,54 @@ second way in, for programs you work with interactively.
 | Load tests through the tunnel | The tunnel is for one person using the app | Run the load generator (e.g. k6) as a service in the stack |
 
 ## 2. What it is like
+
+### 2.0 One job, three ways to start it
+
+The YAML jobs of the user guide and `pool run` are not two systems. There is
+one kind of job, and three ways to start it:
+
+| Start it from | Good for | Then |
+|---|---|---|
+| The browser form | No terminal needed | The job page: output, results, Download all |
+| A job file: `pool submit job.yaml` | Saving and sharing a job, sweeps | The same job page |
+| `pool run`, with `docker run`'s flags | Working on your own code, apps | Stays attached: live output, ports at `localhost`, files into your folder |
+
+A job file gets one new field, `port:` (and later `replicas:`), so a job from
+the browser or from `pool submit` can be an app too. `pool.yaml` in a project
+is just such a job file.
+
+**Any job can be attached from your terminal**, wherever it was started:
+`pool attach JOB` streams its output, opens its ports at `localhost`, and saves
+its `/out` files when it ends. The job page shows this command for every app.
+
+**The same flags as `docker run`.** If it runs with `docker run` on your
+computer, you replace `docker` with `pool`:
+
+| `docker run ...` | `pool run ...` | Note |
+|---|---|---|
+| `IMAGE COMMAND` | same | A tag is pinned when you submit, as for every job |
+| `--build .` (`pool` only) | builds your Dockerfile | §3.1 |
+| `-p 8000:8000` | same | The app's port 8000 at your `localhost:8000` |
+| `-e KEY=value`, `--env-file .env` | same | Values reach the computer; not for real secrets (§3.8) |
+| `--gpus 1` | same | Plus `--cpu`, `--memory`, `--disk` for the size |
+| `-w /app`, `--entrypoint` | same | |
+| `-it` | later | An interactive terminal needs the tunnel of step 2 |
+| `-v ./data:/data` | refused | Your folder is not on that computer: put the files in the image (data inputs come later) |
+| `--network host`, `--privileged`, `--cap-add`, `--device`, `-v /var/run/docker.sock:...` | refused | They would open the owner's computer; the message says why |
+
+`docker compose up` becomes `pool up` the same way (§2.3).
+
+**Check it on your own computer first: `pool run --local`.** It runs the same
+job with your own Docker and pool's rules: no network, read-only file system,
+an unprivileged user, `/out` as the only writable folder, and the size limits.
+Something that would fail on a member's computer fails here first, with the
+same message, before you wait for a computer:
+
+```text
+$ pool run --local -- python train.py
+[app] OSError: [Errno 30] Read-only file system: '/app/cache'
+pool: the container's file system is read-only. Write to /out (kept) or /tmp (scratch).
+```
 
 ### 2.1 A script or a training run
 
@@ -285,7 +334,7 @@ copy has its own memory and files.
 
 | Part | New |
 |---|---|
-| `pool` command | `run`, `up`, `down`, `test`, `attach`, `logs`, `ps`; reading `pool.yaml`; local build and push; tunnel listener |
+| `pool` command | `run` (with `docker run`'s flags and `--local`), `up`, `down`, `test`, `attach`, `logs`, `ps`; reading `pool.yaml`; local build and push; tunnel listener |
 | Server | Built-in registry service and its token issuer; app shape and app spec checks; tunnel endpoints for user and agent; placement only on computers that allow apps |
 | Agent | One internal network per app; several containers per app under gVisor; health checks; the `--desktop` sidecar; tunnel client; `--allow-apps` and `--app-hours` in the policy |
 | Web | Running apps on the job page and the computer's page; Stop |
@@ -296,8 +345,8 @@ copy has its own memory and files.
 
 | Step | Scope | Done when (measured) |
 |---|---|---|
-| 1. `pool run` for programs without ports | Local build, built-in registry, run, live output, Ctrl-C, `/out` back, `pool.yaml` | A Dockerfile project's script runs on another computer with one command; a code-only change uploads only the changed layer; Ctrl-C stops the container within 10 s (tests) |
-| 2. One app with ports | App shape, owner opt-in, internal network, tunnel, moving on owner return | A FastAPI app and a Node app on another computer answer at `localhost`; another user cannot open the tunnel; the app cannot reach the owner's services or the internet (tests) |
+| 1. `pool run` for programs without ports | Local build, built-in registry, run, live output, Ctrl-C, `/out` back, `pool.yaml`; `docker run` flags (refused ones explained); `pool run --local`; `pool attach` for any job, also one started in the browser | A Dockerfile project's script runs on another computer with one command; a code-only change uploads only the changed layer; Ctrl-C stops the container within 10 s; a program that writes outside `/out` fails the same way with `--local` and on a member's computer; a job submitted in the browser can be attached from the terminal (tests) |
+| 2. One app with ports | App shape and the `port:` field in job files, owner opt-in, internal network, tunnel, moving on owner return | A FastAPI app and a Node app on another computer answer at `localhost`; another user cannot open the tunnel; the app cannot reach the owner's services or the internet (tests) |
 | 3. Compose stacks and testing | gVisor spike first; `pool up/down/test`, app spec, refused options | The spike's numbers are in the design; a web + PostgreSQL + Redis example stack runs under gVisor on one computer; `pool test` passes and fails with the tests service's exit code; every refused option has a test |
 | 3b. Desktop apps | `--desktop` sidecar | A Tkinter and a Qt example app can be used in the browser at `localhost:6080` |
 | 4. Replicas | Several copies, connection spreading, replacement | Three copies serve one local port; stopping one computer keeps the port answering (test) |
