@@ -221,8 +221,19 @@ your code is not public:
    group's **Images** tab, or `pool registry set ghcr.io --username READER
    --group my-lab` (it asks for the token). Use a token that can only read,
    ideally from an account made for this:
-   - GitHub: a personal access token (classic) with only the `read:packages` scope.
-   - Docker Hub: an access token with read-only permission.
+   - **GitHub (ghcr.io):** a personal access token **(classic)** with only the
+     `read:packages` scope. Make it under **Settings → Developer settings →
+     Personal access tokens → Tokens (classic) → Generate new token (classic)**.
+     Fine-grained tokens do not work with ghcr.io.
+   - **Docker Hub:** a personal access token with the permission **Repo
+     Read-only**. Make it at app.docker.com under **your avatar → Account
+     settings → Personal access tokens → Generate new token**. Do not keep the
+     default permission *Repo Public Read-only*: it cannot read private images.
+
+   Both sites show the token only once, so copy it right away. Give it an
+   expiry date; when it expires, store a new one the same way. Both kinds of
+   token belong to the account that made them, and stop working if that
+   account loses access to the images.
 
    Check the registry's own documentation for the current steps. The server
    checks the token with the registry, stores it encrypted, and never shows it
