@@ -108,3 +108,23 @@ spec:
     res = cli("download", job_id, "-o", str(tmp_path / "out"), ok=False)
     assert res.exit_code != 0 and "no file store" in str(res.exception), res.exception
     assert not (tmp_path / "out").exists(), "nothing is written when the download cannot start"
+
+
+async def test_cli_deletes_and_restores(cli, tmp_path):
+    g = gname()
+    cli("groups", "create", g, "--template", "research-team")
+    spec = tmp_path / "one.yaml"
+    spec.write_text(f"""
+apiVersion: pool/v1alpha1
+kind: Job
+metadata: {{name: one, group: {g}}}
+spec:
+  image: {IMG}
+  command: ["sh", "-c", "echo hi"]
+""")
+    job_id = cli("submit", str(spec)).output.strip().split("id=")[1]
+    assert "job deleted" in cli("jobs", "delete", job_id, "--yes").output
+    assert "restore it before" in cli("groups", "delete", g, "--yes").output
+    assert g in cli("groups", "deleted").output
+    assert "restored" in cli("groups", "restore", g).output
+    assert g in cli("groups", "list").output

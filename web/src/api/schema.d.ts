@@ -67,7 +67,12 @@ export interface paths {
         get: operations["get_group_api_v1_groups__name__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Group
+         * @description Delete a group: it disappears at once and its work stops; its data is purged after the grace
+         *     period (Settings.group_delete_grace_days) unless a coordinator or server admin restores it.
+         */
+        delete: operations["delete_group_api_v1_groups__name__delete"];
         options?: never;
         head?: never;
         /** Update Group */
@@ -88,6 +93,46 @@ export interface paths {
          * @description Close a group: stop all its jobs. Data is kept for `retention_days` (deletion is a separate step).
          */
         post: operations["close_group_api_v1_groups__name__close_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/deleted-groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Deleted Groups
+         * @description Deleted groups that can still be restored: the ones you coordinate (server admins: all).
+         */
+        get: operations["deleted_groups_api_v1_deleted_groups_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/groups/{name}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore Group
+         * @description Undo a deletion during the grace period. Jobs that were stopped stay cancelled.
+         */
+        post: operations["restore_group_api_v1_groups__name__restore_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -300,6 +345,8 @@ export interface paths {
         /**
          * Revoke Device
          * @description Stolen laptop (threat #4): deny-list the certificate now and requeue its work.
+         *
+         *     The owner, or a server admin (with two-step sign-in) for a computer that is lost or stolen.
          */
         post: operations["revoke_device_api_v1_devices__device_id__revoke_post"];
         delete?: never;
@@ -335,6 +382,64 @@ export interface paths {
         };
         /** Group Devices */
         get: operations["group_devices_api_v1_groups__name__devices_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/groups/{name}/devices/{device_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Device From Group
+         * @description Coordinators and admins: take a computer out of the group. Its work for the group stops, and it
+         *     stays out (its owner cannot turn it back on) until a coordinator or admin lets it back in.
+         */
+        delete: operations["remove_device_from_group_api_v1_groups__name__devices__device_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/groups/{name}/devices/{device_id}/allow": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Allow Device Back
+         * @description Undo a removal. The computer is shared again if its own settings still offer the group.
+         */
+        post: operations["allow_device_back_api_v1_groups__name__devices__device_id__allow_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/groups/{name}/removed-devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Removed Devices */
+        get: operations["removed_devices_api_v1_groups__name__removed_devices_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -392,7 +497,14 @@ export interface paths {
         get: operations["get_job_api_v1_jobs__job_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Job
+         * @description Delete a job: its tasks, logs and stored output files. Running work stops first.
+         *
+         *     The submitter may delete their own job; coordinators and admins any job in the group (with two-step
+         *     sign-in). Kept: the audit log, and a "what ran here" line for each computer's owner.
+         */
+        delete: operations["delete_job_api_v1_jobs__job_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -577,6 +689,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Public Config
+         * @description What the web UI needs before sign-in. Public: everything here is visible to any visitor anyway.
+         */
+        get: operations["public_config_api_v1_config_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -651,6 +783,31 @@ export interface components {
              */
             confirm: boolean;
         };
+        /** DeleteGroupBody */
+        DeleteGroupBody: {
+            /**
+             * Confirm Name
+             * @description The group's name, typed again to confirm
+             */
+            confirm_name: string;
+        };
+        /** DeletedGroupOut */
+        DeletedGroupOut: {
+            /** Name */
+            name: string;
+            /** Display Name */
+            display_name: string;
+            /**
+             * Deleted At
+             * Format: date-time
+             */
+            deleted_at: string;
+            /**
+             * Purge After
+             * Format: date-time
+             */
+            purge_after: string;
+        };
         /** DevTokenRequest */
         DevTokenRequest: {
             /** Username */
@@ -721,6 +878,11 @@ export interface components {
              * @description Groups the owner switched off on the server
              */
             turned_off: string[];
+            /**
+             * Removed From
+             * @description Groups whose coordinator removed this computer
+             */
+            removed_from: string[];
             /**
              * Cert Not After
              * Format: date-time
@@ -926,6 +1088,11 @@ export interface components {
             /** Command */
             command: string[];
             /**
+             * Job Deleted
+             * @default false
+             */
+            job_deleted: boolean;
+            /**
              * Created At
              * Format: date-time
              */
@@ -983,6 +1150,15 @@ export interface components {
             revoked: boolean;
             /** Token */
             token?: string | null;
+        };
+        /** JobDeletedOut */
+        JobDeletedOut: {
+            /** Deleted */
+            deleted: boolean;
+            /** Runs Kept For Owners */
+            runs_kept_for_owners: number;
+            /** Files Deleted */
+            files_deleted: number;
         };
         /** JobOut */
         JobOut: {
@@ -1098,6 +1274,20 @@ export interface components {
              * Format: date-time
              */
             joined_at: string;
+        };
+        /** RemovedDeviceOut */
+        RemovedDeviceOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Owner */
+            owner: string;
+            /** Removed At */
+            removed_at: string | null;
         };
         /** RoleChange */
         RoleChange: {
@@ -1329,6 +1519,41 @@ export interface operations {
             };
         };
     };
+    delete_group_api_v1_groups__name__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteGroupBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeletedGroupOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     update_group_api_v1_groups__name__patch: {
         parameters: {
             query?: never;
@@ -1378,6 +1603,57 @@ export interface operations {
                 "application/json": components["schemas"]["CloseBody"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deleted_groups_api_v1_deleted_groups_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeletedGroupOut"][];
+                };
+            };
+        };
+    };
+    restore_group_api_v1_groups__name__restore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -1994,6 +2270,101 @@ export interface operations {
             };
         };
     };
+    remove_device_from_group_api_v1_groups__name__devices__device_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemovedDeviceOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    allow_device_back_api_v1_groups__name__devices__device_id__allow_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemovedDeviceOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    removed_devices_api_v1_groups__name__removed_devices_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemovedDeviceOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     device_history_api_v1_devices__device_id__history_get: {
         parameters: {
             query?: {
@@ -2116,6 +2487,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_job_api_v1_jobs__job_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobDeletedOut"];
                 };
             };
             /** @description Validation Error */
@@ -2427,6 +2829,28 @@ export interface operations {
         };
     };
     audit_verify_api_v1_audit_verify_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    public_config_api_v1_config_get: {
         parameters: {
             query?: never;
             header?: never;

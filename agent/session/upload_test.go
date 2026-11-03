@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/pem"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -93,5 +94,43 @@ func TestPutRejectsBadHashAndPlainHTTP(t *testing.T) {
 	secure := &Agent{cfg: Config{Profile: &enroll.Profile{InsecureHTTP: false}}}
 	if err := secure.put(srv.Client(), signed, testOutput(t, []byte("data"))); err == nil {
 		t.Fatal("expected plain http to be refused for a non-dev profile")
+	}
+}
+
+// A server with a private CA (e.g. a LAN server behind Caddy's internal CA):
+// uploads must trust the CA pinned at enrollment, as the WebSocket does.
+func TestUploadTrustsPinnedServerCA(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	caFile := filepath.Join(t.TempDir(), "server-ca.pem")
+	ca := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+	if err := os.WriteFile(caFile, ca, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	o := testOutput(t, []byte("data"))
+
+	unpinned := &enroll.Profile{}
+	cfg, err := unpinned.UploadTLSConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &Agent{cfg: Config{Profile: unpinned}}
+	if err := a.put(&http.Client{Transport: &http.Transport{TLSClientConfig: cfg}}, srv.URL+"/b/k", o); err == nil {
+		t.Fatal("expected a TLS error without the pinned CA")
+	}
+
+	pinned := &enroll.Profile{ServerCAFile: caFile}
+	cfg, err = pinned.UploadTLSConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Certificates) != 0 {
+		t.Fatal("uploads must not present the device certificate")
+	}
+	a = &Agent{cfg: Config{Profile: pinned}}
+	if err := a.put(&http.Client{Transport: &http.Transport{TLSClientConfig: cfg}}, srv.URL+"/b/k", o); err != nil {
+		t.Fatalf("upload with pinned CA: %v", err)
 	}
 }

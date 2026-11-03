@@ -43,17 +43,19 @@ must never be used on a shared server.
 
 ## Use it with other people
 
-Today this needs one person to run a server that the others can reach over
-HTTPS, with real sign-in (Keycloak, bundled in
-[`deploy/compose.oidc.yaml`](deploy/compose.oidc.yaml)):
+One person installs the server on a Linux machine that stays on, ideally with a
+domain name pointing to it ([admin guide](docs/admin-guide.md)):
 
-- **Running jobs:** members only need a browser.
-- **Sharing a computer:** members install the agent and follow **My computers** in the web UI. That is four commands for now; installers are planned.
+```bash
+wget -qO install.sh https://raw.githubusercontent.com/Borhan20/distributed-sharing/main/deploy/install.sh
+sudo bash install.sh        # asks for the address and your email; about 5 minutes
+```
 
-The plan to make this easy is in
-[`docs/design/easy-onboarding.md`](docs/design/easy-onboarding.md): a
-one-command server install with automatic HTTPS, then installers with
-click-to-approve pairing.
+It sets up HTTPS (automatic certificates with a domain name), sign-in with
+registration and two-step sign-in, and the file store, all on one address.
+
+- **Running jobs:** members only need a browser: invite link → register → join.
+- **Sharing a computer:** members install the agent and follow **My computers** in the web UI. That is four commands for now; installers with click-to-approve pairing are next ([design](docs/design/easy-onboarding.md)).
 
 ## Documentation
 
@@ -61,7 +63,7 @@ click-to-approve pairing.
 |---|---|
 | Everyone using pool | [User guide](docs/user-guide.md), from joining a group to running a parameter sweep, with examples. The same guide by role is in the web UI under **Guide**. |
 | People sharing a computer | [`agent/README.md`](agent/README.md): what the agent does on your computer and how to control it |
-| Server admins | [`deploy/compose.yaml`](deploy/compose.yaml), [`deploy/.env.example`](deploy/.env.example), and the security notes in [`security/`](security/) |
+| Server admins | [Admin guide](docs/admin-guide.md): install, HTTPS, upgrades, backups, security notes |
 | Developers | [Design notes](docs/design/phase1-implementation.md), [ADRs](docs/adr/), [status](docs/STATUS.md), [plan](plan.md) |
 
 ## How it works

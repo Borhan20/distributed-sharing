@@ -1,0 +1,82 @@
+# A shared server: HTTPS on one address, real sign-in, file store (docs/admin-guide.md).
+#
+# deploy/install.sh writes deploy/.env with COMPOSE_FILE=compose.yaml:compose.server.yaml and
+# COMPOSE_PROFILES=storage, so plain `docker compose ...` inside deploy/ uses this file too.
+#
+# One public address, routed by Caddy (Apache-2.0):
+#   https://ADDRESS/idp/...           -> Keycloak (sign-in); its admin console and master realm are not public
+#   https://ADDRESS/pool-artifacts/... -> SeaweedFS (presigned up- and downloads; the URL signature covers host and path)
+#   https://ADDRESS/...                -> pool API and web UI
+
+x-server-env: &server-env
+  POOL_DEV_MODE: "false"
+  POOL_PUBLIC_URL: https://${POOL_ADDRESS:?set POOL_ADDRESS in deploy/.env}
+  POOL_OIDC_ISSUER: https://${POOL_ADDRESS}/idp/realms/pool
+  POOL_OIDC_AUDIENCE: pool-api
+  POOL_OIDC_JWKS_URL: http://keycloak:8080/idp/realms/pool/protocol/openid-connect/certs
+  POOL_REQUIRE_MFA_FOR_ADMINS: ${POOL_REQUIRE_MFA_FOR_ADMINS:-true}
+  POOL_GROUP_CREATORS: ${POOL_GROUP_CREATORS:-admins}
+  POOL_S3_ENDPOINT: http://seaweedfs:8333
+  POOL_S3_PUBLIC_ENDPOINT: https://${POOL_ADDRESS}
+
+services:
+  migrate:
+    environment: *server-env
+  api:
+    environment:
+      <<: *server-env
+      POOL_AUTOCREATE_KEYS: "true"  # creates the device CA and signing key once, in the pool-keys volume
+  scheduler:
+    environment: *server-env
+
+  keycloak:
+    # Apache-2.0. Production mode behind Caddy, served under /idp, data in PostgreSQL.
+    image: quay.io/keycloak/keycloak:26.0.8@sha256:09a381c715ab0b111835b70f2905955274843a219c6f27efb348e4d9f4086858
+    restart: unless-stopped
+    command: ["start", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?set KEYCLOAK_DB_PASSWORD in deploy/.env}
+      KC_HTTP_ENABLED: "true"            # TLS ends at Caddy
+      KC_HTTP_RELATIVE_PATH: /idp
+      KC_HOSTNAME: https://${POOL_ADDRESS}/idp
+      KC_HOSTNAME_ADMIN: http://127.0.0.1:8080/idp   # admin console only through an SSH tunnel
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in deploy/.env}
+    volumes: ["./keycloak/pool-realm.server.json:/opt/keycloak/data/import/pool-realm.json:ro"]
+    ports: ["127.0.0.1:8080:8080"]  # for the admin console via SSH tunnel; never public
+    depends_on: { postgres: { condition: service_healthy } }
+    healthcheck:
+      # The image has no curl; ask the management port with bash.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /idp/health/ready HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q UP <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  seaweedfs:
+    ports: !reset []  # reached only through Caddy
+
+  caddy:
+    # Apache-2.0. Gets and renews certificates by itself (Let's Encrypt), or uses its own CA (POOL_TLS=internal).
+    image: caddy:2.11.7@sha256:36c24ad91a7ff7bc4c87fe22bfa8df3c4b18da0773d73fc12ee2c52b98c0bb7e
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      POOL_ADDRESS: ${POOL_ADDRESS}
+      POOL_TLS: ${POOL_TLS:?set POOL_TLS in deploy/.env (an email address for Let's Encrypt, or internal)}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api: { condition: service_healthy }
+      keycloak: { condition: service_healthy }
+
+volumes:
+  caddy-data:
+  caddy-config:

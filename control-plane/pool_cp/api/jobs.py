@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from datetime import datetime, timedelta
 from pathlib import PurePosixPath
@@ -20,12 +21,14 @@ from pool_protocol.messages import TIER_RANK
 from .. import audit, storage
 from ..auth import Principal, current_principal, get_session
 from ..authz import ANY_MEMBER, MANAGERS, SUBMITTERS, load_group, membership, not_found, require_role
+from ..deletion import archive_runs_of_job, outputs_only_in_job
 from ..models import Attempt, AuditEvent, Group, Job, Task, TaskLog, UsageLedger, User
 from ..scheduler.core import cancel_tasks
 from ..scheduler.explain import explain_waiting
 from ..timeutil import utcnow
 from .notify import notify_stops
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["jobs"])
 
 
@@ -177,7 +180,7 @@ async def _load_job(s: AsyncSession, job_id: uuid.UUID, p: Principal) -> tuple[J
     if job is None:
         raise not_found("job")
     g = await s.get(Group, job.group_id)
-    m = await membership(s, g, p)
+    m = await membership(s, g, p) if g.state != "deleted" else None
     if m is None:
         raise not_found("job")
     return job, g, m.role
@@ -241,6 +244,45 @@ async def download_output(job_id: uuid.UUID, index: int, path: str, request: Req
     url = storage.presign_get(settings, g.id, out["sha256"], filename=PurePosixPath(path).name)
     return DownloadOut(path=path, size=out.get("size", 0), url=url,
                        expires_at=utcnow() + timedelta(seconds=settings.presign_ttl_s))
+
+
+class JobDeletedOut(BaseModel):
+    deleted: bool
+    runs_kept_for_owners: int
+    files_deleted: int
+
+
+# SECURITY-SENSITIVE: data deletion and its access control. Needs security review (plan §8.10).
+@router.delete("/jobs/{job_id}", response_model=JobDeletedOut)
+async def delete_job(job_id: uuid.UUID, request: Request, p: Principal = Depends(current_principal),
+                     s: AsyncSession = Depends(get_session)):
+    """Delete a job: its tasks, logs and stored output files. Running work stops first.
+
+    The submitter may delete their own job; coordinators and admins any job in the group (with two-step
+    sign-in). Kept: the audit log, and a "what ran here" line for each computer's owner.
+    """
+    settings = request.app.state.settings
+    job, g, _ = await _load_job(s, job_id, p)
+    if job.submitter_id != p.user.id:
+        await require_role(s, g, p, MANAGERS, require_active=False, mfa_required=settings.require_mfa_for_admins)
+    stops = await cancel_tasks(s, Task.job_id == job.id, "job_deleted")
+    kept = await archive_runs_of_job(s, job.id)
+    files = await outputs_only_in_job(s, job.id, g.id)
+    tasks = (await s.execute(select(func.count()).select_from(Task).where(Task.job_id == job.id))).scalar()
+    await audit.record(s, actor_type="user", actor_id=p.user.id, action="job.delete", group_id=g.id,
+                       target_type="job", target_id=job.id,
+                       details={"name": job.name, "tasks": tasks, "stopped_attempts": len(stops),
+                                "runs_kept_for_owners": kept, "files": len(files)})
+    await s.delete(job)  # cascades to tasks, attempts and logs; usage records stay (fair share)
+    await s.commit()
+    await notify_stops(request.app, stops, "job_deleted")
+    deleted_files = 0
+    if files:
+        try:
+            deleted_files = await asyncio.to_thread(storage.delete_objects, settings, g.id, files)
+        except Exception:  # the store is down: the job is gone; its files become unreachable leftovers
+            log.warning("could not delete stored files of job %s", job_id, exc_info=True)
+    return JobDeletedOut(deleted=True, runs_kept_for_owners=kept, files_deleted=deleted_files)
 
 
 class TaskOut(BaseModel):

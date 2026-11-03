@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { AUTH_MODE, useAuth } from "../auth/AuthContext";
+import { authMode, useAuth } from "../auth/AuthContext";
 import { ErrorBox } from "../components/ui";
 
 export function Login({ returnTo }: { returnTo?: string }) {
@@ -9,11 +9,14 @@ export function Login({ returnTo }: { returnTo?: string }) {
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
 
-  if (AUTH_MODE === "oidc") {
+  if (authMode() === "oidc") {
     return (
       <section className="card narrow">
         <h1>Sign in</h1>
-        <p>You sign in with your organization's identity provider.</p>
+        <p>
+          You sign in on this server's sign-in page. New here? Choose <em>Register</em> there to create an account, then
+          open your invite link again.
+        </p>
         <ErrorBox error={error} />
         <button
           type="button"

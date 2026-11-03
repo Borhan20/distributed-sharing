@@ -155,10 +155,15 @@ D = denial of service, E = elevation of privilege.
 
 | | Threat | Mitigation | Status |
 |---|---|---|---|
-| S | Phished member password | MFA (required for coordinators and admins), k-person approvals, audit, alerts | MFA check in slice 1; alerts planned |
+| S | Phished member password | MFA (required for coordinators and admins), k-person approvals, audit, alerts | MFA check in slice 1; on installed servers Keycloak reports TOTP in `amr` (`deploy/keycloak/configure.py`) and coordinators are guided to set it up; alerts planned |
 | S | Brute-forced enrollment code | Single use, 10 min, high entropy, rate-limited endpoint, hash-only storage | Implemented in slice 1 |
 | E | CA or signing key stolen from server host | Keys in files readable only by the service; KMS/OpenBao later | Open; key rotation procedure not written |
 | T | Certificate kept after revocation | Deny list checked on every session; certificates not renewed | Implemented in slice 1 |
+| S | Someone claims a freshly installed server before its admin | No open setup page: the installer creates the first admin with a one-time password shown only on the admin's terminal, kept root-only until shown, then deleted; Keycloak forces a new password at first sign-in | Implemented (step 1); **needs security review** |
+| E | Strangers self-register on a public server and use it | Registration only creates an account; groups are invite-only and, by default on installed servers, only server admins create groups (`POOL_GROUP_CREATORS=admins`) | Implemented (step 1) |
+| E | Keycloak admin console or master realm attacked from the internet | Not routed publicly (Caddy returns 404); reachable only on 127.0.0.1 through an SSH tunnel | Implemented and checked by `tests/vm/server_acceptance.py` |
+| S | Members trust a wrong server CA (servers without a domain) | Installer prints the CA's SHA-256 fingerprint; agents pin the CA file at enrollment; with a domain, publicly trusted certificates are used instead | Implemented; trust-on-first-use remains for the CA file |
+| I | Secrets on the server's disk | `.env` root-only (0600); file-store keys and the import file owned by the container user (uid 1000, often the cloud image's login user) | Implemented; secrets manager later |
 
 ### 3.8 CLI and web UI
 
@@ -168,6 +173,9 @@ D = denial of service, E = elevation of privilege.
 | T | XSS in job names or logs shown in UI | React escaping; never render logs as HTML | Implemented in slice 1; needs review |
 | S | CSRF | Bearer tokens, not cookies | Implemented in slice 1 |
 | T | Malicious output path writes outside the download folder (`pool download`) | Output paths come from devices and are untrusted: the CLI refuses absolute paths and `..`, resolves inside the target folder, and saves a file only after its SHA-256 matches | Implemented; unit-tested |
+| T/D | A hijacked or careless coordinator deletes a group | Coordinator only, two-step sign-in, type the name; group hidden but restorable for 7 days by a coordinator or server admin; audit events `group.delete`/`restore`/`purge` | Implemented; **needs security review** |
+| R | Deleting jobs or groups hides what ran on members' computers | Audit log cannot be deleted (DB trigger); owners keep a `run_history` line per run; usage records stay (fair share cannot be reset by deleting) | Implemented |
+| E | A coordinator removes or re-admits computers they do not own | Only from their own group (shares are per group); owners cannot override a removal; disabling a computer entirely stays with its owner, or a server admin for lost/stolen ones (two-step sign-in) | Implemented; **needs security review** |
 
 ## 4. The 12 threats from the plan (§8.2)
 

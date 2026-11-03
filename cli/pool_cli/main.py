@@ -164,6 +164,27 @@ def groups_close(name: str, yes: bool = typer.Option(False, "--yes", help="Confi
     typer.echo(f"group {name} closed")
 
 
+@groups_app.command("delete")
+def groups_delete(name: str, yes: bool = typer.Option(False, "--yes", help="Confirm")) -> None:
+    """Delete a group (coordinators). It can be restored for 7 days, then its data is purged."""
+    if not yes:
+        typer.confirm(f"Delete group {name}? Its work stops now; it can be restored for 7 days.", abort=True)
+    gone = api("DELETE", f"/api/v1/groups/{name}", json={"confirm_name": name})
+    typer.echo(f"group {name} deleted; restore it before {gone['purge_after']} with: pool groups restore {name}")
+
+
+@groups_app.command("deleted")
+def groups_deleted() -> None:
+    """Deleted groups you can still restore."""
+    table(api("GET", "/api/v1/deleted-groups"), ["name", "display_name", "deleted_at", "purge_after"])
+
+
+@groups_app.command("restore")
+def groups_restore(name: str) -> None:
+    api("POST", f"/api/v1/groups/{name}/restore")
+    typer.echo(f"group {name} restored")
+
+
 # ------------------------------------------------------------------ members / invites / requests
 
 
@@ -332,6 +353,15 @@ def sweep(file: Path = typer.Argument(..., exists=True), set_: list[str] = typer
         typer.echo(f"{count} tasks: {json.dumps(matrix)}")
         return
     _submit(data, group)
+
+
+@jobs_app.command("delete")
+def jobs_delete(job_id: str, yes: bool = typer.Option(False, "--yes", help="Confirm")) -> None:
+    """Delete a job: its tasks, logs and output files (running work stops first)."""
+    if not yes:
+        typer.confirm(f"Delete job {job_id}? Its logs and output files are deleted for good.", abort=True)
+    r = api("DELETE", f"/api/v1/jobs/{job_id}")
+    typer.echo(f"job deleted ({r['files_deleted']} stored files removed)")
 
 
 @jobs_app.command("list")

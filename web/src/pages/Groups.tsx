@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { client, unwrap, type Group } from "../api/client";
+import { useAuth } from "../auth/AuthContext";
 import { Empty, ErrorBox, Loading, StateBadge } from "../components/ui";
 import { fmtTime } from "../lib/format";
 
@@ -15,6 +16,7 @@ const TEMPLATES = [
 type Template = (typeof TEMPLATES)[number]["id"];
 
 export function GroupsPage() {
+  const { me } = useAuth();
   const groups = useQuery({ queryKey: ["groups"], queryFn: () => unwrap(client.GET("/api/v1/groups")) });
   return (
     <>
@@ -59,9 +61,20 @@ export function GroupsPage() {
         )}
       </section>
       <div className="grid2">
-        <CreateGroup />
+        {me?.can_create_groups === false ? (
+          <section className="card">
+            <h2>Create a group</h2>
+            <p className="muted">
+              On this server, groups are created by a server admin. Ask one to create your group and invite you as its
+              coordinator.
+            </p>
+          </section>
+        ) : (
+          <CreateGroup />
+        )}
         <RequestToJoin />
       </div>
+      <RecentlyDeleted />
     </>
   );
 }
@@ -153,6 +166,39 @@ function RequestToJoin() {
           Send request
         </button>
       </form>
+    </section>
+  );
+}
+
+/** Deleted groups that can still be restored: ones you coordinate (server admins see all). */
+function RecentlyDeleted() {
+  const qc = useQueryClient();
+  const deleted = useQuery({ queryKey: ["deleted-groups"], queryFn: () => unwrap(client.GET("/api/v1/deleted-groups")) });
+  const restore = useMutation({
+    mutationFn: (name: string) => unwrap(client.POST("/api/v1/groups/{name}/restore", { params: { path: { name } } })),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["groups"] });
+      void qc.invalidateQueries({ queryKey: ["deleted-groups"] });
+    },
+  });
+  if (!deleted.data || deleted.data.length === 0) return null;
+  return (
+    <section className="card">
+      <h2>Recently deleted groups</h2>
+      <p className="muted">Restore a group before its date; after that its jobs, logs and files are gone for good.</p>
+      <ErrorBox error={restore.error} />
+      <ul className="plain">
+        {deleted.data.map((g) => (
+          <li key={g.name} className="row between">
+            <span>
+              <strong>{g.display_name}</strong> <span className="muted">({g.name}) · deleted {fmtTime(g.deleted_at)} · gone after {fmtTime(g.purge_after)}</span>
+            </span>
+            <button type="button" className="secondary small" disabled={restore.isPending} onClick={() => restore.mutate(g.name)}>
+              Restore
+            </button>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

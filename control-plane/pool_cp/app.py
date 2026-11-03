@@ -87,6 +87,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(jobs.router)
     app.include_router(agent_ws.router)
 
+    @app.get("/api/v1/config", tags=["ops"])
+    async def public_config() -> dict:
+        """What the web UI needs before sign-in. Public: everything here is visible to any visitor anyway."""
+        if settings.dev_mode:
+            return {"auth": "dev"}
+        return {"auth": "oidc", "oidc_authority": settings.oidc_issuer, "oidc_client_id": settings.oidc_web_client_id}
+
     @app.get("/healthz", tags=["ops"])
     async def healthz() -> dict:
         return {"ok": True}

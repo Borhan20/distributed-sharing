@@ -86,6 +86,29 @@ that were not available.
 | User guide | Done | `docs/user-guide.md`; in-app guide by role at `/guide` |
 | One-command local setup | Done | `scripts/dev-up.sh` / `scripts/dev-down.sh` |
 
+## Easy onboarding, step 1: one-command server install
+
+| Item | Status | Notes |
+|---|---|---|
+| `deploy/install.sh` (Ubuntu/Debian) | Done | Two questions; installs Docker; generates every secret; upgrade by re-running. Fresh Ubuntu 24.04 VM: 4 min 23 s |
+| One HTTPS address (Caddy) | Done | Sign-in under `/idp`, files under `/pool-artifacts`; Keycloak admin console, master realm and internal ports not public |
+| Let's Encrypt with a domain | **Untested** | Needs a public server; the VM used Caddy's internal CA |
+| Real sign-in, registration, first admin | Done | One-time password, forced change; only server admins create groups |
+| Two-step sign-in for coordinators and admins | Done | Authenticator-app codes; Keycloak `amr` (`deploy/keycloak/configure.py`); web banner. **Needs security review** |
+| Web UI learns its sign-in mode at runtime | Done | `GET /api/v1/config` |
+| Agent uploads trust a pinned server CA | Done | Needed for servers with a private CA |
+| Acceptance test | Done | `tests/vm/server_acceptance.py` (browser sign-in with TOTP, invite, agent job, download); run book in `tests/vm/README.md` |
+
+## Deleting and removing (decisions of 3 November 2026)
+
+| Item | Status | Notes |
+|---|---|---|
+| Delete a job | Done | Submitter, or coordinator/admin with two-step sign-in. Running work stops; tasks, logs and files (not shared with other jobs) deleted |
+| Delete a group, restore for 7 days, purge | Done | Coordinator; hidden at once; scheduler purges after 7 days, including stored files (tested against SeaweedFS) |
+| Kept after deletion | Done | Audit log; owners' "what ran here" (`run_history`); usage records |
+| Remove a computer from a group / let it back in | Done | Coordinators and admins; the owner cannot override |
+| Server admins revoke any computer | Done | Lost or stolen computers; two-step sign-in |
+
 ## Ahead of plan (Phase 2 and later pieces already built)
 
 | Item | Status | Notes |

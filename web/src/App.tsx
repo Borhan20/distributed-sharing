@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { AUTH_MODE, useAuth } from "./auth/AuthContext";
+import { authMode, useAuth } from "./auth/AuthContext";
+import { MfaBanner } from "./components/MfaBanner";
 import { ErrorBox, Loading } from "./components/ui";
 import { AcceptInvitePage } from "./pages/AcceptInvite";
 import { DevicePage } from "./pages/DevicePage";
@@ -48,7 +49,7 @@ export function App() {
 
   return (
     <>
-      {AUTH_MODE === "dev" && (
+      {authMode() === "dev" && (
         <div className="dev-banner" role="note">
           DEV MODE — no password. Anyone can sign in as anyone. Never use this on a shared server.
         </div>
@@ -82,6 +83,7 @@ export function App() {
         )}
       </header>
       <main>
+        {token && !publicRoute && <MfaBanner />}
         {error && token && <ErrorBox error={new Error(error)} />}
         {body}
       </main>

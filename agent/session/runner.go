@@ -183,7 +183,13 @@ func (a *Agent) upload(at *attempt, outs []sandbox.Output) []protocol.ArtifactRe
 	}
 	client := a.cfg.HTTPClient
 	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Minute}
+		tlsCfg, err := a.cfg.Profile.UploadTLSConfig()
+		if err != nil {
+			a.agentLog(at, "agent: outputs were not uploaded: "+err.Error())
+			return refs
+		}
+		client = &http.Client{Timeout: 30 * time.Minute,
+			Transport: &http.Transport{TLSClientConfig: tlsCfg, Proxy: http.ProxyFromEnvironment}}
 	}
 	uploaded := 0
 	for _, u := range urls.URLs {

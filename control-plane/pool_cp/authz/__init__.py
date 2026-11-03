@@ -25,14 +25,18 @@ SHARERS = frozenset({"coordinator", "admin", "member", "contributor"})
 ANY_MEMBER = frozenset({"coordinator", "admin", "member", "contributor", "submitter"})
 PRIVILEGED = MANAGERS
 
+MFA_NEEDED = ("This needs two-step sign-in: sign in again with a code from your authenticator app, or set "
+              "one up first (the banner at the top of the web page).")
+
 
 def not_found(what: str = "group") -> HTTPException:
     return HTTPException(status.HTTP_404_NOT_FOUND, f"{what} not found")
 
 
-async def load_group(session: AsyncSession, name: str) -> Group:
+async def load_group(session: AsyncSession, name: str, *, include_deleted: bool = False) -> Group:
+    """A group by name. Deleted groups (waiting to be purged) are invisible unless asked for."""
     group = (await session.execute(select(Group).where(Group.name == name))).scalar_one_or_none()
-    if group is None:
+    if group is None or (group.state == "deleted" and not include_deleted):
         raise not_found()
     return group
 
@@ -53,5 +57,5 @@ async def require_role(session: AsyncSession, group: Group, principal: Principal
     if require_active and group.state != "active":
         raise HTTPException(status.HTTP_409_CONFLICT, f"group is {group.state}")
     if mfa_required and m.role in PRIVILEGED and not principal.has_mfa:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "multi-factor authentication is required for this action")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, MFA_NEEDED)
     return m

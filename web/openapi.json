@@ -226,6 +226,57 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Delete Group",
+        "description": "Delete a group: it disappears at once and its work stops; its data is purged after the grace\nperiod (Settings.group_delete_grace_days) unless a coordinator or server admin restores it.",
+        "operationId": "delete_group_api_v1_groups__name__delete",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteGroupBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletedGroupOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/groups/{name}/close": {
@@ -257,6 +308,75 @@
             }
           }
         },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/deleted-groups": {
+      "get": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Deleted Groups",
+        "description": "Deleted groups that can still be restored: the ones you coordinate (server admins: all).",
+        "operationId": "deleted_groups_api_v1_deleted_groups_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DeletedGroupOut"
+                  },
+                  "type": "array",
+                  "title": "Response Deleted Groups Api V1 Deleted Groups Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/groups/{name}/restore": {
+      "post": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Restore Group",
+        "description": "Undo a deletion during the grace period. Jobs that were stopped stay cancelled.",
+        "operationId": "restore_group_api_v1_groups__name__restore_post",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -969,7 +1089,7 @@
           "devices"
         ],
         "summary": "Revoke Device",
-        "description": "Stolen laptop (threat #4): deny-list the certificate now and requeue its work.",
+        "description": "Stolen laptop (threat #4): deny-list the certificate now and requeue its work.\n\nThe owner, or a server admin (with two-step sign-in) for a computer that is lost or stolen.",
         "operationId": "revoke_device_api_v1_devices__device_id__revoke_post",
         "parameters": [
           {
@@ -1138,6 +1258,158 @@
                     "$ref": "#/components/schemas/GroupDeviceOut"
                   },
                   "title": "Response Group Devices Api V1 Groups  Name  Devices Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/groups/{name}/devices/{device_id}": {
+      "delete": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Remove Device From Group",
+        "description": "Coordinators and admins: take a computer out of the group. Its work for the group stops, and it\nstays out (its owner cannot turn it back on) until a coordinator or admin lets it back in.",
+        "operationId": "remove_device_from_group_api_v1_groups__name__devices__device_id__delete",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemovedDeviceOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/groups/{name}/devices/{device_id}/allow": {
+      "post": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Allow Device Back",
+        "description": "Undo a removal. The computer is shared again if its own settings still offer the group.",
+        "operationId": "allow_device_back_api_v1_groups__name__devices__device_id__allow_post",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemovedDeviceOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/groups/{name}/removed-devices": {
+      "get": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Removed Devices",
+        "operationId": "removed_devices_api_v1_groups__name__removed_devices_get",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RemovedDeviceOut"
+                  },
+                  "title": "Response Removed Devices Api V1 Groups  Name  Removed Devices Get"
                 }
               }
             }
@@ -1363,6 +1635,48 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/JobOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Delete Job",
+        "description": "Delete a job: its tasks, logs and stored output files. Running work stops first.\n\nThe submitter may delete their own job; coordinators and admins any job in the group (with two-step\nsign-in). Kept: the audit log, and a \"what ran here\" line for each computer's owner.",
+        "operationId": "delete_job_api_v1_jobs__job_id__delete",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobDeletedOut"
                 }
               }
             }
@@ -1923,6 +2237,30 @@
         }
       }
     },
+    "/api/v1/config": {
+      "get": {
+        "tags": [
+          "ops"
+        ],
+        "summary": "Public Config",
+        "description": "What the web UI needs before sign-in. Public: everything here is visible to any visitor anyway.",
+        "operationId": "public_config_api_v1_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Public Config Api V1 Config Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/healthz": {
       "get": {
         "tags": [
@@ -2072,6 +2410,50 @@
         "type": "object",
         "title": "CloseBody"
       },
+      "DeleteGroupBody": {
+        "properties": {
+          "confirm_name": {
+            "type": "string",
+            "title": "Confirm Name",
+            "description": "The group's name, typed again to confirm"
+          }
+        },
+        "type": "object",
+        "required": [
+          "confirm_name"
+        ],
+        "title": "DeleteGroupBody"
+      },
+      "DeletedGroupOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "deleted_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Deleted At"
+          },
+          "purge_after": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Purge After"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "display_name",
+          "deleted_at",
+          "purge_after"
+        ],
+        "title": "DeletedGroupOut"
+      },
       "DevTokenRequest": {
         "properties": {
           "username": {
@@ -2212,6 +2594,14 @@
             "title": "Turned Off",
             "description": "Groups the owner switched off on the server"
           },
+          "removed_from": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Removed From",
+            "description": "Groups whose coordinator removed this computer"
+          },
           "cert_not_after": {
             "type": "string",
             "format": "date-time",
@@ -2249,6 +2639,7 @@
           "policy_digest",
           "shared_with",
           "turned_off",
+          "removed_from",
           "cert_not_after",
           "last_seen_at"
         ],
@@ -2869,6 +3260,11 @@
             "type": "array",
             "title": "Command"
           },
+          "job_deleted": {
+            "type": "boolean",
+            "title": "Job Deleted",
+            "default": false
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -3026,6 +3422,29 @@
           "revoked"
         ],
         "title": "InviteOut"
+      },
+      "JobDeletedOut": {
+        "properties": {
+          "deleted": {
+            "type": "boolean",
+            "title": "Deleted"
+          },
+          "runs_kept_for_owners": {
+            "type": "integer",
+            "title": "Runs Kept For Owners"
+          },
+          "files_deleted": {
+            "type": "integer",
+            "title": "Files Deleted"
+          }
+        },
+        "type": "object",
+        "required": [
+          "deleted",
+          "runs_kept_for_owners",
+          "files_deleted"
+        ],
+        "title": "JobDeletedOut"
       },
       "JobOut": {
         "properties": {
@@ -3275,6 +3694,43 @@
           "joined_at"
         ],
         "title": "MemberOut"
+      },
+      "RemovedDeviceOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "owner": {
+            "type": "string",
+            "title": "Owner"
+          },
+          "removed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Removed At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "owner",
+          "removed_at"
+        ],
+        "title": "RemovedDeviceOut"
       },
       "RoleChange": {
         "properties": {

@@ -134,3 +134,7 @@ ul.plain li { padding: 6px 0; border-bottom: 1px solid var(--border); }
 .guide-nav a.mine { border-color: var(--accent, #2563eb); font-weight: 600; }
 .guide section h2 { margin-top: 0; }
 .guide pre { background: var(--code-bg); padding: 10px; border-radius: 8px; overflow-x: auto; }
+
+/* Two-step sign-in prompt for coordinators and admins */
+.mfa-banner { background: var(--warn-bg); border-radius: 10px; padding: 12px 16px; margin: 12px 0; }
+.mfa-banner p { margin: 0 0 8px; }
