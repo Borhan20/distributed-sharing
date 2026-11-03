@@ -52,6 +52,7 @@ export function ImagesTab({ group }: { group: Group }) {
   };
   return (
     <>
+      <BuiltinRegistry group={group} />
       <section className="card">
         <h2>Private images</h2>
         <p>
@@ -161,5 +162,79 @@ export function ImagesTab({ group }: { group: Group }) {
         <p>Jobs with private images from this registry stop working in this group until a token is added again.</p>
       </ConfirmDialog>
     </>
+  );
+}
+
+/**
+ * The server's built-in registry (docs/design/pool-run.md §3.1): where `pool run` pushes your images, and how
+ * long images nobody uses are kept. Coordinators can change that for the group.
+ */
+function BuiltinRegistry({ group }: { group: Group }) {
+  const qc = useQueryClient();
+  const info = useQuery({
+    queryKey: ["group-registry", group.name],
+    queryFn: () => unwrap(client.GET("/api/v1/groups/{name}/registry", { params: { path: { name: group.name } } })),
+  });
+  const [days, setDays] = useState<string>("");
+  const save = useMutation({
+    mutationFn: (value: number | null) =>
+      unwrap(
+        client.PATCH("/api/v1/groups/{name}", {
+          params: { path: { name: group.name } },
+          body: { registry_retention_days: value },
+        }),
+      ),
+    onSuccess: () => {
+      setDays("");
+      void qc.invalidateQueries({ queryKey: ["group-registry", group.name] });
+    },
+  });
+  if (!info.data?.enabled) return null;
+  const r = info.data;
+  const coordinator = group.my_role === "coordinator";
+  return (
+    <section className="card">
+      <h2>The group's registry</h2>
+      <p>
+        <code>pool run</code> builds your Dockerfile on your computer and pushes the image here for you, under your own
+        name: <code className="break">{r.repository_prefix}/…</code>. Only you can push or use your images there, and
+        nobody needs a Docker Hub or GitHub account.
+      </p>
+      <p className="muted">
+        Images nobody has used for <strong>{r.retention_days} days</strong> are deleted
+        {r.group_retention_days ? " (this group's setting)" : ` (the server's default)`}. Using an image in a job keeps
+        it.
+      </p>
+      {coordinator && (
+        <form
+          className="row wrap"
+          onSubmit={(e) => {
+            e.preventDefault();
+            save.mutate(days.trim() ? Number(days) : null);
+          }}
+        >
+          <label>
+            Keep unused images for (days)
+            <input
+              type="number"
+              min={1}
+              max={3650}
+              value={days}
+              placeholder={String(r.retention_days)}
+              onChange={(e) => setDays(e.target.value)}
+            />
+          </label>
+          <button type="submit" className="secondary" disabled={save.isPending || !days.trim()}>
+            Save
+          </button>
+          {r.group_retention_days !== null && r.group_retention_days !== undefined && (
+            <button type="button" className="secondary" disabled={save.isPending} onClick={() => save.mutate(null)}>
+              Use the server's default ({r.default_retention_days} days)
+            </button>
+          )}
+        </form>
+      )}
+      <ErrorBox error={info.error ?? save.error} />
+    </section>
   );
 }

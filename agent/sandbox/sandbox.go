@@ -38,7 +38,9 @@ type Spec struct {
 	Profile     string
 	Tier        protocol.Tier
 	Image       string
-	Command     []string // empty: the image's own ENTRYPOINT and CMD
+	Command     []string // replaces the image's ENTRYPOINT; empty: keep it
+	Args        []string // after Command, or for the image's ENTRYPOINT (like `docker run IMAGE ARGS`); empty: CMD
+	Workdir     string   // working directory inside the container; empty: the image's
 	Env         map[string]string
 	TaskIndex   int // this task's number in its job, 0..TaskCount-1 (POOL_TASK_INDEX)
 	TaskCount   int // tasks in the job (POOL_TASK_COUNT)
@@ -130,6 +132,10 @@ func CreateArgs(s Spec, outMount string) ([]string, error) {
 	if s.AttemptID == "" || s.Image == "" {
 		return nil, errors.New("spec needs attempt id and image")
 	}
+	if s.Workdir != "" && (!path.IsAbs(s.Workdir) || strings.ContainsRune(s.Workdir, 0) ||
+		strings.Contains("/"+s.Workdir+"/", "/../")) {
+		return nil, fmt.Errorf("bad working directory %q", s.Workdir)
+	}
 	if s.TaskIndex < 0 || (s.TaskCount > 0 && s.TaskIndex >= s.TaskCount) {
 		return nil, fmt.Errorf("task index %d is outside 0..%d", s.TaskIndex, s.TaskCount-1)
 	}
@@ -213,14 +219,19 @@ func CreateArgs(s Spec, outMount string) ([]string, error) {
 		}
 		args = append(args, "--env", k+"="+env[k])
 	}
-	if len(s.Command) == 0 {
-		// No command in the job: run what the image runs by default.
-		return append(args, s.Image), nil
+	if s.Workdir != "" {
+		args = append(args, "--workdir", s.Workdir)
 	}
-	// The job's command replaces the image ENTRYPOINT (like Kubernetes "command").
+	if len(s.Command) == 0 {
+		// No command: the image's own ENTRYPOINT runs, with Args in place of its CMD when given,
+		// as with `docker run IMAGE ARGS`.
+		args = append(args, s.Image)
+		return append(args, s.Args...), nil
+	}
+	// The job's command replaces the image ENTRYPOINT (like Kubernetes "command"), then its arguments.
 	args = append(args, "--entrypoint", s.Command[0], s.Image)
 	args = append(args, s.Command[1:]...)
-	return args, nil
+	return append(args, s.Args...), nil
 }
 
 // collectTar reads a `docker cp` tar stream of the outputs directory, copies

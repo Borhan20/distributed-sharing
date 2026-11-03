@@ -2478,6 +2478,49 @@
         }
       }
     },
+    "/api/v1/groups/{name}/registry": {
+      "get": {
+        "tags": [
+          "registry"
+        ],
+        "summary": "Group Registry",
+        "description": "Where I push images for this group, and how long unused images are kept.",
+        "operationId": "group_registry_api_v1_groups__name__registry_get",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupRegistryOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/jobs/{job_id}/results": {
       "get": {
         "tags": [
@@ -3465,6 +3508,17 @@
             "type": "array",
             "title": "Registry Allowlist"
           },
+          "registry_retention_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registry Retention Days"
+          },
           "state": {
             "type": "string",
             "title": "State"
@@ -3502,6 +3556,62 @@
           "created_at"
         ],
         "title": "GroupOut"
+      },
+      "GroupRegistryOut": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "repository_prefix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repository Prefix"
+          },
+          "retention_days": {
+            "type": "integer",
+            "title": "Retention Days"
+          },
+          "group_retention_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Retention Days"
+          },
+          "default_retention_days": {
+            "type": "integer",
+            "title": "Default Retention Days"
+          }
+        },
+        "type": "object",
+        "required": [
+          "enabled",
+          "retention_days",
+          "default_retention_days"
+        ],
+        "title": "GroupRegistryOut"
       },
       "GroupUpdate": {
         "properties": {
@@ -3599,6 +3709,19 @@
               }
             ],
             "title": "Registry Allowlist"
+          },
+          "registry_retention_days": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 3650.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registry Retention Days"
           }
         },
         "type": "object",

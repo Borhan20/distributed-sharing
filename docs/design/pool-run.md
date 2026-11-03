@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed, for review |
+| **Status** | Accepted; step 1 built (see [§9](#9-as-built)) |
 | **Date** | 3 November 2026 |
 | **Plan links** | Use cases #6, #9 and #10 (plan §2.3), services (§7.10), Phase 3. Deviates from the plan's network design for this case, see [§8](#8-deviation-from-the-plan) |
 
@@ -404,3 +404,21 @@ server, only for the person who started the app:
 
 The overlay stays the plan for services shared with a group and for `gang`
 jobs. It would be recorded as an ADR when step 2 is accepted.
+
+## 9. As built
+
+**Step 1 was built on 4 November 2026.** It follows §5. These choices were made
+while building it:
+
+| Topic | Choice | Why |
+|---|---|---|
+| Registry storage | A Docker volume (`registry-data`), not SeaweedFS | One less moving part. The registry's garbage collection works on it. It can move to the file store later. |
+| Arguments | The words after the image (or `--`) go to the image's ENTRYPOINT | The same as `docker run IMAGE ARG...`. Jobs got two new fields for this: `args` and `workdir`. `command` still replaces the ENTRYPOINT (`--entrypoint`). |
+| Build platform | `linux/amd64` by default; `--platform` changes it | Most shared computers are amd64. The scheduler does not yet check that an image fits a computer. |
+| Retries | 0 for `pool run` | The same as `docker run`: a failing program is reported, not run again. |
+| Container rules | One list, in `pool_protocol/sandbox.py` | The agent's tests and `pool run --local` both use it, so they cannot drift apart. |
+| Clean-up | pool deletes the image; the registry's garbage collection frees the disk | An admin runs the garbage collection with the registry stopped (admin guide). |
+| What the registry sees | Only its certificate, in a volume of its own | It is reachable from the internet. It must never see the server's keys. It also runs with no capabilities and a read-only image. |
+| Clean-up safety | Never an image a waiting or running job needs; the database row is deleted first, and only if it is still old | A job may wait longer than the retention. A job may be submitted during a scan. |
+| Token lifetimes | Members: 5 minutes (Docker asks again). Computers: 30 minutes, pull-only, one repository | Docker does not ask for a new token in the middle of one pull; big images take time. |
+

@@ -1,0 +1,5 @@
+name: train
+args: --epochs 300 --lr 0.1
+cpu: 1
+memory: 512Mi
+time_limit: 30m

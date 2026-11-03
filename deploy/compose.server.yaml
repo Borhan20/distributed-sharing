@@ -21,6 +21,10 @@ x-server-env: &server-env
   POOL_AUTO_PARTS_MAX: ${POOL_AUTO_PARTS_MAX:-1000}
   POOL_S3_ENDPOINT: http://seaweedfs:8333
   POOL_S3_PUBLIC_ENDPOINT: https://${POOL_ADDRESS}
+  POOL_REGISTRY_ADDRESS: ${POOL_ADDRESS}  # the registry is at https://POOL_ADDRESS/v2/ (Caddy)
+  POOL_REGISTRY_INTERNAL_URL: http://registry:5000
+  POOL_REGISTRY_CERT_FILE: /var/lib/pool-registry/registry.crt
+  POOL_REGISTRY_RETENTION_DAYS: ${POOL_REGISTRY_RETENTION_DAYS:-30}
 
 services:
   migrate:
@@ -63,6 +67,11 @@ services:
 
   seaweedfs:
     ports: !reset []  # reached only through Caddy
+
+  registry:
+    environment:
+      REGISTRY_AUTH_TOKEN_REALM: https://${POOL_ADDRESS}/api/v1/registry/token
+    ports: !reset []  # reached only through Caddy, at https://POOL_ADDRESS/v2/
 
   caddy:
     # Apache-2.0. Gets and renews certificates by itself (Let's Encrypt), or uses its own CA (POOL_TLS=internal).

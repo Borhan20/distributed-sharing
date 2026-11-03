@@ -19,7 +19,8 @@ COPY control-plane/ control-plane/
 COPY cli/ cli/
 RUN uv sync --frozen --no-dev --package pool-cp --extra s3 && rm -rf /root/.cache
 COPY --from=web /src/web/dist /srv/web/dist
-RUN useradd --system --uid 10001 --home /srv pool && mkdir -p /var/lib/pool && chown pool /var/lib/pool
+RUN useradd --system --uid 10001 --home /srv pool && mkdir -p /var/lib/pool /var/lib/pool-registry \
+    && chown pool /var/lib/pool /var/lib/pool-registry
 USER pool
 ENV PATH="/srv/.venv/bin:$PATH" POOL_DATA_DIR=/var/lib/pool
 EXPOSE 8000

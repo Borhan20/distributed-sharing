@@ -15,18 +15,19 @@ role, under **Guide**.
 5. [Examples for every kind of work](#5-examples-for-every-kind-of-work)
 6. [Private images](#6-private-images)
 7. [Collect the results](#7-collect-the-results)
-8. [The command line](#8-the-command-line)
-9. [Share your computer](#9-share-your-computer)
-10. [Run a group (coordinators and admins)](#10-run-a-group-coordinators-and-admins)
-11. [When something goes wrong](#11-when-something-goes-wrong)
-12. [What is not possible yet](#12-what-is-not-possible-yet)
+8. [Run your program from your terminal: `pool run`](#8-run-your-program-from-your-terminal-pool-run)
+9. [The command line](#9-the-command-line)
+10. [Share your computer](#10-share-your-computer)
+11. [Run a group (coordinators and admins)](#11-run-a-group-coordinators-and-admins)
+12. [When something goes wrong](#12-when-something-goes-wrong)
+13. [What is not possible yet](#13-what-is-not-possible-yet)
 
 ## 1. The ideas in two minutes
 
 | Word | Meaning |
 |---|---|
 | **Group** | The people who share computers with each other. Invite-only. |
-| **Role** | What you may do in a group: coordinator, admin, member, contributor or submitter ([§10](#roles)). |
+| **Role** | What you may do in a group: coordinator, admin, member, contributor or submitter ([§11](#roles)). |
 | **Computer** (device) | A machine a member shares with the group. It runs the **agent**, a small program that takes work from the server. |
 | **Image** | A container image (Docker) with your code and what it needs, named like `ghcr.io/your-org/app:1`. When you submit, the server fixes the exact version the tag names at that moment, so every task runs the same software. |
 | **Job** | Work you send to the group: an image, a command, how to run it, and how much CPU, memory and disk each task needs. |
@@ -66,7 +67,7 @@ During **probation**, a new member's jobs run only on computers whose owners
 accept work from new members.
 
 A new group has no computers. Jobs wait until at least one member
-[shares a computer](#9-share-your-computer).
+[shares a computer](#10-share-your-computer).
 
 ## 3. Your first job, in the browser
 
@@ -472,7 +473,173 @@ logs; the files stay on the computers that ran the tasks. A very large job
 (over 2 GiB of files, by default) is too big for one zip: use `pool download
 --all`.
 
-## 8. The command line
+## 8. Run your program from your terminal: `pool run`
+
+`pool run` works like `docker run`. The difference: your program runs on a
+computer of your group, not on yours. Use it when your computer does not have
+enough CPU, memory or a GPU.
+
+It works for programs in any language. pool only sees a container, a command
+and its arguments.
+
+### What you need
+
+- Docker on your computer.
+- The `pool` command, signed in ([§9](#9-the-command-line)).
+
+### Run your program
+
+1. Go to the folder with your `Dockerfile`.
+2. Run `pool run`. Put your program's arguments after `--`.
+3. Watch the output in your terminal. Press **Ctrl-C** to stop.
+4. When it ends, find its files in `./pool-out`.
+
+```text
+$ cd my-training
+$ pool run --gpus 1 -m 16g -- --epochs 20
+pool: Building Dockerfile for linux/amd64 ...
+pool: Uploaded 1 new layer(s), 5 already there.
+pool: Submitted train (1 task(s)) to ml-lab: job 6f1c...
+pool: Running on lab-gpu
+epoch 1/20  loss 2.31
+...
+pool: 3 file(s) saved to pool-out/
+pool: done
+```
+
+### What happens
+
+| Step | Where | What |
+|---|---|---|
+| Build | Your computer | Docker builds your `Dockerfile`. |
+| Upload | The group's registry, on the pool server | The image is saved under your name. Only the parts that changed are uploaded, usually just your code. |
+| Run | A computer of your group | The program runs there, in a locked container. |
+| Results | Your computer | The output streams to your terminal. The files in `/out` come back to `./pool-out`. |
+
+You do not need a Docker Hub or GitHub account. Only you can use your images.
+
+### Arguments
+
+The words after `--` go to the image's own command, the same as with
+`docker run IMAGE ARG...`.
+
+Example: the Dockerfile has `ENTRYPOINT ["python", "/app/train.py"]`. Then
+`pool run -- --epochs 20` runs `python /app/train.py --epochs 20`.
+
+You can also use an image you already have. Then no Dockerfile is needed:
+
+```bash
+pool run python:3.12-slim python -c "print(1)"
+pool run ghcr.io/you/app:1 --port 8080      # a private image: see §6
+```
+
+### Flags
+
+The flags are the same as for `docker run`:
+
+| Flag | What it does | Default |
+|---|---|---|
+| `-e KEY=VALUE`, `-e KEY`, `--env-file FILE` | Set environment variables. Do not use them for real secrets: the computer's owner can read them. | – |
+| `--cpus 4` | CPU cores | 1 |
+| `-m 8g` | Memory | 1 GiB |
+| `--disk 20g` | Disk | 1 GiB |
+| `--gpus 1` | GPUs | 0 |
+| `-w /app` | Working directory in the container | the image's |
+| `--entrypoint sh` | Run another command than the image's | the image's |
+| `--time-limit 2h` | Stop the job after this time | 1 h |
+| `--retries 1` | Try again after a failure | 0 |
+| `-d` | Start the job and return at once | – |
+| `-o DIR` | Where the files go | `./pool-out` |
+| `--name NAME` | Job name | the folder name |
+| `--group GROUP` | Group | from `pool login --group` |
+| `--build DIR`, `-f FILE` | What to build | `.` and `Dockerfile` |
+| `--platform linux/arm64` | Build for this kind of computer | `linux/amd64` (most PCs) |
+| `--local` | Run it on **your** computer, with the rules of a member's computer | – |
+
+Some `docker run` flags are refused. The message says why:
+
+| Flag | Why it is refused | Do this instead |
+|---|---|---|
+| `-v`, `--mount` | Your folders are not on that computer. | Copy the files into the image (`COPY` in the Dockerfile). |
+| `--network` | Jobs have no network. | Put everything the program needs into the image. |
+| `--privileged`, `--cap-add`, `--device`, `-u` | They would give the job power over the owner's computer. | – |
+| `-p`, `-it` | Ports and interactive terminals are not ready yet. | They come in the next step ([design](design/pool-run.md#5-delivery-order-and-acceptance-checks)). |
+
+### Any language
+
+The Dockerfile builds your program. These examples are ready to run, in
+[`examples/run/`](../examples/run):
+
+| Example | Language | How the Dockerfile works |
+|---|---|---|
+| [`python-train`](../examples/run/python-train) | Python | Start from `python:3.12-slim`. Copy the script. Run it with `ENTRYPOINT`. |
+| [`go-primes`](../examples/run/go-primes) | Go | Build in `golang:1.23-alpine`. Copy only the program into an empty image. |
+| [`cpp-heat`](../examples/run/cpp-heat) | C++ | Build with CMake in `alpine`. Copy only the program into an empty image. |
+
+Java, Rust and .NET work the same way: build in one stage, run in a small
+image.
+
+Two rules for every language:
+
+- Write your results to `/out`.
+- Size the memory of your runtime from the container's limit. Current Java
+  versions do this by themselves. For Node, use `--max-old-space-size`.
+
+### Check on your computer first: `--local`
+
+`pool run --local` runs the job on your computer. It uses the same rules as a
+member's computer:
+
+- no network,
+- a read-only file system,
+- an unprivileged user (uid 65534),
+- only `/out` and `/tmp` can be written,
+- the CPU and memory you asked for.
+
+So a program that would fail there fails here first. pool shows a hint:
+
+```text
+$ pool run --local -- --epochs 2
+OSError: [Errno 30] Read-only file system: '/app/cache'
+pool: The container's file system is read-only. Write to /out (kept, comes back to you) or /tmp (scratch).
+```
+
+The hints work for every language. They also show after a run on a member's
+computer.
+
+### Save your settings: `pool.yaml`
+
+Put the settings you always use into `pool.yaml`, next to your Dockerfile. It
+is a job file ([§4](#4-write-a-job)) with two extra fields: `build` and
+`platform`. Flags on the command line win over the file.
+
+```yaml
+name: train
+args: --epochs 300 --lr 0.1
+cpu: 2
+memory: 4Gi
+time_limit: 2h
+```
+
+Then `pool run` alone is enough.
+
+### Stop, run in the background, follow again
+
+| You want to | Do this |
+|---|---|
+| Stop the job | Press **Ctrl-C**. pool asks first. In a script, it stops at once. |
+| Start it and do something else | `pool run -d ...` |
+| Follow a job again | `pool attach JOB`. It shows the output, then saves the files. It works for every job, also one from the browser. The job page shows the command. |
+
+### Your images in the group's registry
+
+- Your images are named `SERVER/GROUP/YOU/NAME:run-DATE`.
+- Each group has its own space. Your images in one group are not in another.
+- An image is deleted 30 days after it was last used. Using it in a job keeps
+  it.
+- A coordinator can change the number of days on the group's **Images** tab.
+
+## 9. The command line
 
 The browser does everything a member needs. The `pool` command is handy for
 scripts and for many downloads. For now it runs from a checkout of the
@@ -499,6 +666,8 @@ is packaged.
 | Ask to join | `pool join my-lab --message "PhD student in the vision lab"` |
 | Accept an invite token | `pool invite accept TOKEN` |
 | Submit a job (short or full job file) | `pool submit job.yaml [--group G] [--wait]` |
+| Run a program like `docker run` ([§8](#8-run-your-program-from-your-terminal-pool-run)) | `pool run [FLAGS] [IMAGE] [ARG...]`, `pool run [FLAGS] -- [ARG...]` (builds ./Dockerfile), `pool run --local ...` |
+| Follow a job and save its files | `pool attach JOB-ID [-o FOLDER]` |
 | Sweep from the command line | `pool sweep job.yaml --set seed=0..9 --set dataset=small,large` |
 | List jobs | `pool jobs list my-lab [--state running]` |
 | Job status | `pool status JOB-ID` |
@@ -512,7 +681,7 @@ is packaged.
 | Delete / restore a group | `pool groups delete my-lab` / `pool groups deleted` / `pool groups restore my-lab` |
 | Usage in a group | `pool groups usage my-lab --days 7` |
 
-## 9. Share your computer
+## 10. Share your computer
 
 Anyone with the role coordinator, admin, member or contributor can share a
 computer with a group.
@@ -559,7 +728,7 @@ path). The server can never widen them. **Turn off** in the browser can only
 narrow them. A group's coordinator can also remove your computer from their
 group; your computer's page then says so, and only they can let it back in.
 
-## 10. Run a group (coordinators and admins)
+## 11. Run a group (coordinators and admins)
 
 ### Roles
 
@@ -605,7 +774,7 @@ The people listed in `POOL_SERVER_ADMINS` run the server itself. See the
 - Mark an organisation-owned, dedicated computer: `PATCH /api/v1/devices/ID` with `{"org_owned_dedicated": true}`. Only such computers run `confidential` jobs.
 - Check the audit log's hash chain: `GET /api/v1/audit/verify`.
 
-## 11. When something goes wrong
+## 12. When something goes wrong
 
 ### "Tasks waiting: why"
 
@@ -613,7 +782,7 @@ The job page explains every waiting job. The same reasons, in short:
 
 | The page says | What to do |
 |---|---|
-| No computer is shared with this group yet | Someone in the group shares a computer ([§9](#9-share-your-computer)). |
+| No computer is shared with this group yet | Someone in the group shares a computer ([§10](#10-share-your-computer)). |
 | … shared with this group, but none is online | The owner starts the agent: `pool-agent run`. |
 | … the computer's own sharing settings do not include this group | The owner runs `pool-agent share GROUP` on that computer. |
 | … online but not available right now | Outside the owner's sharing hours, or they are using it (`--only-when-idle`). Wait, or ask. |
@@ -632,6 +801,16 @@ The job page explains every waiting job. The same reasons, in short:
 | `image: ... is on a private network` | The registry is inside your network; a server admin can allow that (`POOL_REGISTRY_PRIVATE_NETWORKS=true`). |
 | `unknown field(s) ...` | A typo in the job file; the message lists the fields a job may use ([§4](#4-write-a-job)). |
 | `unknown placeholders: {{seed}}` | The command uses a name that has no values: add it to `sweep`, or use `{{index}}`. |
+
+### `pool run`
+
+| Message | What to do |
+|---|---|
+| `this server has no built-in registry` | Push your image elsewhere (ghcr.io, Docker Hub) and give it: `pool run IMAGE ...` |
+| `pushing the image ... failed: ... unauthorized` | Sign in again: `pool login ...` (the access token expired) |
+| `pushing the image ... failed: ... x509: certificate signed by unknown authority` | The server uses its own certificate authority: your Docker must trust it (ask the server admin, [admin guide](admin-guide.md)) |
+| `exec format error` in the job's log | The image was built for another kind of computer: `--platform linux/amd64` (or `linux/arm64`) |
+| `pool run does not take -v ...` (or another flag) | The message says why; most often, copy the files into the image in the Dockerfile |
 
 ### A task failed
 
@@ -656,12 +835,14 @@ ran it.
 | `enrollment code is invalid, used or expired` | Create a new code; a code works once, for 10 minutes. |
 | The computer does not appear in the group | Run `pool-agent share GROUP` and make sure `pool-agent run` is running. Your role in the group must allow sharing (not *submitter*). |
 
-## 12. What is not possible yet
+## 13. What is not possible yet
 
 - Jobs cannot use the internet, read input files from the server, or use secrets (passwords, tokens). Put small input data into the image.
 - Private images work with registries that use token authentication (ghcr.io, Docker Hub and similar), not with registries that only accept a password on every request.
 - Checkpoints (resuming a long task where it stopped) are planned.
 - Combining results runs on your side (the results table, the merged CSV files, or your own script). A final step that runs on the group's computers after all tasks is not built.
+- `pool run` has no ports and no interactive terminal yet: programs that compute and write files work now; apps you open in a browser come next ([design](design/pool-run.md)).
+- Computers are not yet matched to the image's platform: build for the kind of computer your group has (`--platform`, default `linux/amd64`).
 - `parts` splits work only for programs that can do part of it (by `POOL_TASK_INDEX`); one program cannot be spread over several computers, since tasks cannot talk to each other.
 - GPUs and stronger isolation (gVisor) are built but not tested on real hardware.
 - Windows computers are untested; Macs cannot share.

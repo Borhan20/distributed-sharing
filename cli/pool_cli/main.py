@@ -526,8 +526,33 @@ def _wait(job_id: str, poll: float = 2.0) -> None:
         time.sleep(poll)
 
 
+@app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True}, add_help_option=False)
+def run(ctx: typer.Context) -> None:
+    """Run a program on a computer of your group, like `docker run` (pool run --help)."""
+    from . import run as run_cmd
+
+    # The `pool` command calls run_cmd.run with the raw arguments before Typer sees them (main below): Click
+    # drops `--`, which `pool run [OPTIONS] -- ARG...` needs. This is only reached from inside Python.
+    raise typer.Exit(run_cmd.run(list(ctx.args)))
+
+
+@app.command()
+def attach(job_id: str,
+           out: Path = typer.Option(Path("pool-out"), "--out", "-o", help="Where the job's /out files go"),
+           yes: bool = typer.Option(False, "--yes", "-y", help="Ctrl-C stops the job without asking")) -> None:
+    """Follow a job: its output (or progress), then save its /out files. Works for any job, also one
+    submitted in the browser."""
+    from . import run as run_cmd
+
+    raise typer.Exit(run_cmd.attach(job_id, out, yes=yes))
+
+
 def main() -> None:
     try:
+        if len(sys.argv) > 1 and sys.argv[1] == "run":
+            from . import run as run_cmd
+
+            raise SystemExit(run_cmd.run(sys.argv[2:]))
         app()
     except ApiError as exc:
         typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)

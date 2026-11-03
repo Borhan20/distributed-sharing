@@ -22,8 +22,16 @@ x-cp: &cp
     POOL_S3_PUBLIC_ENDPOINT: ${POOL_S3_PUBLIC_ENDPOINT:-}
     POOL_S3_ACCESS_KEY: ${POOL_S3_ACCESS_KEY:-}
     POOL_S3_SECRET_KEY: ${POOL_S3_SECRET_KEY:-}
+    # The built-in registry for `pool run` (docs/design/pool-run.md §3.1): the address members' and
+    # computers' Docker use, and how the server reaches it inside compose.
+    POOL_REGISTRY_ADDRESS: ${POOL_REGISTRY_ADDRESS:-127.0.0.1:5000}
+    POOL_REGISTRY_INTERNAL_URL: http://registry:5000
+    # Only the certificate the registry trusts lives in registry-trust; its key stays in pool-keys.
+    POOL_REGISTRY_CERT_FILE: /var/lib/pool-registry/registry.crt
+    POOL_REGISTRY_RETENTION_DAYS: ${POOL_REGISTRY_RETENTION_DAYS:-30}
   volumes:
     - pool-keys:/var/lib/pool
+    - registry-trust:/var/lib/pool-registry
   read_only: true
   tmpfs: [/tmp]
   security_opt: ["no-new-privileges:true"]
@@ -69,6 +77,31 @@ services:
     command: ["python", "-m", "pool_cp.scheduler"]
     depends_on: { api: { condition: service_healthy } }
 
+  registry:
+    # CNCF Distribution (Apache-2.0), pinned to the version the e2e tests run (tests/e2e/test_pool_run.py).
+    # Token sign-in through the API (/api/v1/registry/token); it trusts the certificate the API creates in
+    # the pool-keys volume, so it starts after the API.
+    image: registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+    restart: unless-stopped
+    environment:
+      REGISTRY_AUTH: token
+      REGISTRY_AUTH_TOKEN_REALM: ${POOL_PUBLIC_URL:-http://127.0.0.1:8000}/api/v1/registry/token
+      REGISTRY_AUTH_TOKEN_SERVICE: pool-registry
+      REGISTRY_AUTH_TOKEN_ISSUER: pool-server
+      REGISTRY_AUTH_TOKEN_ROOTCERTBUNDLE: /var/lib/pool-registry/registry.crt
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"  # clean-up of unused images (pool_cp/registry_cleanup.py)
+      REGISTRY_HTTP_RELATIVEURLS: "true"       # correct upload addresses behind a proxy (Caddy)
+    volumes:
+      - registry-data:/var/lib/registry
+      - registry-trust:/var/lib/pool-registry:ro  # the certificate only: never the server's keys
+    # It is reachable from the internet (through Caddy), so it gets no capabilities and a read-only image.
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    ports: ["${POOL_BIND:-127.0.0.1}:5000:5000"]
+    depends_on: { api: { condition: service_healthy } }
+
   seaweedfs:
     profiles: [storage]
     # Apache-2.0. Pinned to the version the object-store tests ran against (tests/e2e/test_object_store.py).
@@ -83,4 +116,6 @@ services:
 volumes:
   pg-data:
   pool-keys:
+  registry-data:
+  registry-trust:
   seaweed-data:

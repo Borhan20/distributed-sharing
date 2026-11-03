@@ -1,0 +1,5 @@
+name: heat
+args: --size 400 --steps 4000
+cpu: 1
+memory: 256Mi
+time_limit: 30m

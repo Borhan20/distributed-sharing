@@ -232,6 +232,20 @@
     "Spec": {
       "additionalProperties": false,
       "properties": {
+        "args": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Args"
+        },
         "checkpoint": {
           "anyOf": [
             {
@@ -412,6 +426,18 @@
           ],
           "default": null,
           "title": "Shape"
+        },
+        "workdir": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workdir"
         }
       },
       "required": [

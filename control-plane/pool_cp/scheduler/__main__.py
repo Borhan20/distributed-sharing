@@ -8,15 +8,17 @@ Only one worker is active at a time (PostgreSQL advisory lock); extra copies wai
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import signal
 
 from sqlalchemy import text
 
-from .. import storage
+from .. import builtin_registry, storage
 from ..config import get_settings
 from ..db import make_engine, make_sessionmaker
 from ..deletion import purge_deleted_groups
+from ..registry_cleanup import clean_up as clean_up_registry
 from ..timeutil import utcnow
 from . import core
 
@@ -45,6 +47,8 @@ async def run(stop: asyncio.Event, settings=None, on_tick=None) -> None:
         grace_until = utcnow().timestamp() + settings.lease_ttl_s
         log.info("scheduler active; lease expiry starts in %ss", settings.lease_ttl_s)
         api_was_down = False
+        cleanup = asyncio.create_task(_registry_loop(stop, settings, maker)) if builtin_registry.enabled(settings) \
+            else None
         while not stop.is_set():
             try:
                 async with maker() as s:
@@ -87,7 +91,43 @@ async def run(stop: asyncio.Event, settings=None, on_tick=None) -> None:
                 await asyncio.wait_for(stop.wait(), timeout=settings.scheduler_interval_s)
             except TimeoutError:
                 pass
+        if cleanup is not None:
+            cleanup.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await cleanup
     await engine.dispose()
+
+
+async def _registry_loop(stop: asyncio.Event, settings, maker) -> None:  # noqa: ANN001
+    """The registry clean-up, apart from the main loop: a long scan never delays lease expiry or roll-ups."""
+    registry = None
+    while not stop.is_set():
+        try:
+            registry = registry or _registry_client(settings)  # the API creates the key on its first start
+            if registry is not None:
+                counts = await clean_up_registry(maker, settings, registry)
+                if counts["deleted"]:
+                    log.info("registry clean-up: %s", counts)
+        except Exception:  # noqa: BLE001 - logged; try again next time
+            log.exception("registry clean-up failed")
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=settings.registry_scan_interval_s)
+        except TimeoutError:
+            pass
+
+
+def _registry_client(settings) -> builtin_registry.Registry | None:  # noqa: ANN001
+    """The built-in registry's admin client, with the key the API created (none: no clean-up)."""
+    if not builtin_registry.enabled(settings):
+        return None
+    try:
+        issuer = builtin_registry.Issuer(settings.registry_key_file, settings.registry_cert_file,
+                                         settings.registry_issuer, settings.registry_service, create=False)
+    except Exception:  # noqa: BLE001 - logged; the scheduler's other work goes on
+        log.warning("built-in registry key not found; registry clean-up is off until the API has created it",
+                    exc_info=True)
+        return None
+    return builtin_registry.Registry(settings, issuer)
 
 
 def main() -> None:

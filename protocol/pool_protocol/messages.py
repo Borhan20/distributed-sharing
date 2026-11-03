@@ -169,7 +169,11 @@ class TaskInput(_Model):
 
 class TaskSpec(_Model):
     image: str
-    command: list[str] = Field(default_factory=list, description="Empty: run the image's own default command")
+    command: list[str] = Field(default_factory=list, description="Replaces the image's ENTRYPOINT; empty: keep it")
+    args: list[str] = Field(default_factory=list,
+                            description="Arguments after the command, or for the image's own ENTRYPOINT when "
+                                        "command is empty (like `docker run IMAGE ARGS`); empty: the image's CMD")
+    workdir: str | None = Field(default=None, description="Working directory inside the container")
     env: dict[str, str] = Field(default_factory=dict)
     task_index: int = Field(default=0, ge=0, description="This task's number in its job (POOL_TASK_INDEX)")
     task_count: int = Field(default=1, ge=1, description="Tasks in the job (POOL_TASK_COUNT)")

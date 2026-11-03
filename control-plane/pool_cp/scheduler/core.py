@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pool_protocol import messages as pm
 
-from .. import audit
+from .. import audit, builtin_registry
 from ..ca import EnvelopeSigner
 from ..config import Settings
 from ..image_access import has_credential
@@ -245,9 +245,11 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
     return await _assign(session, settings, signer, device, task, submitter_handle, group, on_probation, now)
 
 
-async def _private_image(session: AsyncSession, task: Task, image: str) -> bool:
-    """Whether the submitter or the group stored a token for this image's registry (then the agent asks for a
-    pull token instead of pulling anonymously)."""
+async def _private_image(session: AsyncSession, settings: Settings, task: Task, image: str) -> bool:
+    """Whether the agent must ask for a pull token instead of pulling anonymously: the image is in the
+    built-in registry, or the submitter or the group stored a token for its registry."""
+    if builtin_registry.is_builtin(settings, image):
+        return True
     try:
         ref = parse_image(image)
     except RegistryError:
@@ -271,7 +273,7 @@ async def _assign(session: AsyncSession, settings: Settings, signer: EnvelopeSig
         attempt_id=str(attempt.id), task_id=str(task.id), job_id=str(task.job_id), epoch=epoch, group=group.name,
         group_id=str(group.id), submitter=submitter_handle, submitter_probation=on_probation,
         device_id=str(device.id), issued_at=now, expires_at=expires, spec=pm.TaskSpec.model_validate(task.spec),
-        registry_auth=await _private_image(session, task, task.spec["image"]),
+        registry_auth=await _private_image(session, settings, task, task.spec["image"]),
     )
     payload = envelope.model_dump_json().encode()
     await session.flush()

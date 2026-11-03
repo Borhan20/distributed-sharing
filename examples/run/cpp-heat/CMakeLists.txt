@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.20)
+project(heat CXX)
+set(CMAKE_CXX_STANDARD 17)
+add_executable(heat heat.cpp)
+target_compile_options(heat PRIVATE -O2)
+target_link_options(heat PRIVATE -static)

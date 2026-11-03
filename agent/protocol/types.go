@@ -241,6 +241,8 @@ type TaskInput struct {
 type TaskSpec struct {
 	Image       string            `json:"image"`
 	Command     []string          `json:"command"`
+	Args        []string          `json:"args"`
+	Workdir     *string           `json:"workdir"`
 	Env         map[string]string `json:"env"`
 	TaskIndex   int               `json:"task_index"`
 	TaskCount   int               `json:"task_count"`

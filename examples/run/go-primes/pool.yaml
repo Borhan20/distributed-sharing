@@ -1,0 +1,6 @@
+# `pool run` in this folder builds the Dockerfile and runs it with these settings; flags win.
+name: primes
+args: --below 5000000
+cpu: 4
+memory: 256Mi
+time_limit: 15m

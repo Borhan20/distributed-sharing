@@ -182,6 +182,10 @@ class Spec(_Strict):
     # A list, or one string split like a shell would (no pipes or &&: use ["sh", "-c", "..."]). Empty: the
     # image's own default command.
     command: list[str] | str = Field(default_factory=list)
+    # Arguments: after `command`, or for the image's own ENTRYPOINT when there is no command (`docker run IMAGE
+    # ARGS`). A string is split like `command`.
+    args: list[str] | str = Field(default_factory=list)
+    workdir: str | None = None
     env: dict[str, str] = Field(default_factory=dict)
     matrix: dict[str, list[str | int | float | bool] | str | int | float | bool] | None = None
     # Split the work into this many copies of the same task; each copy gets {{index}} and POOL_TASK_INDEX.
@@ -206,7 +210,7 @@ class Spec(_Strict):
             raise ValueError("must be an image name like ghcr.io/lab/app:1 or busybox@sha256:<64 hex>")
         return v
 
-    @field_validator("command", mode="before")
+    @field_validator("command", "args", mode="before")
     @classmethod
     def _command_words(cls, v: Any) -> Any:
         if isinstance(v, str):
@@ -214,6 +218,13 @@ class Spec(_Strict):
                 return shlex.split(v)
             except ValueError as exc:
                 raise ValueError(f"{exc} (check the quotes)") from None
+        return v
+
+    @field_validator("workdir")
+    @classmethod
+    def _workdir(cls, v: str | None) -> str | None:
+        if v is not None and (not v.startswith("/") or "\x00" in v or ".." in v.split("/")):
+            raise ValueError("must be an absolute path inside the container, e.g. /app")
         return v
 
     @field_validator("matrix", mode="before")
@@ -270,7 +281,7 @@ class Spec(_Strict):
             if count > MAX_TASKS_PER_JOB:
                 raise ValueError(f"matrix expands to {count} tasks; the limit is {MAX_TASKS_PER_JOB}")
         used = set()
-        for text in [*self.command, *self.env.values()]:
+        for text in [*self.command, *self.args, *self.env.values()]:
             used.update(PLACEHOLDER_RE.findall(text))
         unknown = used - set(self.matrix or {}) - BUILTIN_PLACEHOLDERS
         if unknown:
@@ -325,6 +336,8 @@ class JobSpec(_Strict):
         return TaskSpec(
             image=s.image,
             command=[sub(c) for c in s.command],
+            args=[sub(a) for a in s.args],
+            workdir=s.workdir,
             env={k: sub(v) for k, v in s.env.items()},
             task_index=index,
             task_count=count,
@@ -360,6 +373,8 @@ SHORT_KEYS = {
     "group": "the group to submit to",
     "image": "container image, e.g. ghcr.io/lab/app:1",
     "command": "what to run (default: the image's own command)",
+    "args": "arguments for the image's own command, like `docker run IMAGE ARGS`",
+    "workdir": "working directory inside the container",
     "env": "environment variables",
     "parts": "split into this many copies, or auto",
     "sweep": "one task per combination of values",
@@ -397,7 +412,7 @@ def expand_short_form(data: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(image, str):
         raise JobSpecError("image is required, e.g. image: ghcr.io/lab/app:1")
     spec: dict[str, Any] = {"image": image}
-    for key in ("command", "env", "parts", "retries", "data_class", "os"):
+    for key in ("command", "args", "workdir", "env", "parts", "retries", "data_class", "os"):
         if key in data:
             spec[key] = data[key]
     if "sweep" in data:

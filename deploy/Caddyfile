@@ -35,6 +35,15 @@
 		reverse_proxy seaweedfs:8333
 	}
 
+	# The built-in container registry (`pool run` pushes, computers pull). Docker's registry API lives at /v2/
+	# of a host, so images are named POOL_ADDRESS/<group>/<user>/<name>. Sign-in is the API's token service.
+	handle /v2/* {
+		request_body {
+			max_size 20GB
+		}
+		reverse_proxy registry:5000
+	}
+
 	# API, agent WebSocket and web UI.
 	handle {
 		reverse_proxy api:8000

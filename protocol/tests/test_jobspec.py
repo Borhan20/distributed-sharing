@@ -182,7 +182,8 @@ def test_full_form_without_shape_infers_it():
     assert load_job_spec(data).spec.shape == "single"
 
 
-@pytest.mark.parametrize("path", sorted((Path(__file__).resolve().parents[2] / "examples").rglob("*.yaml")),
+@pytest.mark.parametrize("path", sorted(p for p in (Path(__file__).resolve().parents[2] / "examples").rglob("*.yaml")
+                                         if p.name != "pool.yaml"),  # project files: tested with the CLI
                          ids=lambda p: p.parent.name + "/" + p.name)
 def test_every_example_job_file_is_valid(path):
     """The files in examples/ are the ones docs/user-guide.md walks through."""

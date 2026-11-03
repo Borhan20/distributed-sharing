@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { client, unwrap, type LogLine, type Task } from "../api/client";
 import { ApiError, errorMessage } from "../api/errors";
 import { useAuth } from "../auth/AuthContext";
-import { ConfirmDialog, ErrorBox, Loading, RichText, StateBadge } from "../components/ui";
+import { ConfirmDialog, CopyButton, ErrorBox, Loading, RichText, StateBadge } from "../components/ui";
 import { TERMINAL, fmtTime } from "../lib/format";
 import { downloadFile } from "../lib/download";
 import { commandText, splitImage } from "../lib/jobspec";
@@ -114,6 +114,10 @@ export function JobPage() {
         </ConfirmDialog>
       </header>
       {!done && <WaitingReasons jobId={id} />}
+      <p className="muted small-text">
+        From your terminal: <code>pool attach {j.id}</code> follows this job and saves its files in{" "}
+        <code>./pool-out</code>. <CopyButton text={`pool attach ${j.id}`} label="Copy" />
+      </p>
       <section className="card">
         <h2>Spec</h2>
         <dl className="kv">

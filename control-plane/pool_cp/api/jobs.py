@@ -18,13 +18,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pool_protocol.jobspec import JobSpecError, is_pinned, load_job_spec
 from pool_protocol.messages import TIER_RANK
 
-from .. import audit, storage
+from .. import audit, builtin_registry, storage
 from ..auth import Principal, current_principal, get_session
 from ..authz import ANY_MEMBER, MANAGERS, SUBMITTERS, load_group, membership, not_found, require_role
 from ..deletion import archive_runs_of_job, outputs_only_in_job
 from ..image_access import credential_for
 from ..models import Attempt, AuditEvent, Group, Job, Task, TaskLog, UsageLedger, User
 from ..registry import RegistryError, parse_image, resolve_digest
+from ..registry_cleanup import mark_used
 from ..scheduler.core import cancel_tasks
 from ..scheduler.explain import auto_parts, explain_waiting
 from ..secretbox import SecretBoxError
@@ -85,6 +86,29 @@ async def _pin_image(s: AsyncSession, request: Request, p: Principal, g: Group, 
         raise HTTPException(422, f"image: {exc}") from None
 
 
+async def _pin_builtin_image(request: Request, p: Principal, g: Group, image: str) -> str:
+    """An image in the built-in registry: only the submitter's own, in this group, pinned through the server's
+    internal address (the registry holds it, so no outside lookup)."""
+    settings = request.app.state.settings
+    try:
+        ref = parse_image(image)
+        mine = builtin_registry.namespace(g.name, p.user.handle)
+    except RegistryError as exc:
+        raise HTTPException(422, f"image: {exc}") from None
+    if not builtin_registry.valid_repository(ref.repository):
+        raise HTTPException(422, f"image: {ref.repository!r} is not a valid name in the group's registry")
+    if not ref.repository.startswith(mine + "/"):
+        raise HTTPException(422, f"image: in this group's registry you can use your own images, under "
+                                 f"{builtin_registry.address(settings)}/{mine}/")
+    if is_pinned(image):
+        return image
+    reg = builtin_registry.Registry(settings, request.app.state.registry_issuer)
+    try:
+        return await asyncio.to_thread(reg.pin, image)
+    except RegistryError as exc:
+        raise HTTPException(422, f"image: {exc}") from None
+
+
 @router.post("/groups/{name}/jobs", response_model=JobOut, status_code=201)
 async def submit_job(
     name: str,
@@ -115,11 +139,16 @@ async def submit_job(
     ).scalar_one()
     if recent >= settings.submit_rate_per_minute:  # plan §7.7: stop accidental floods
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "submission rate limit reached; try again shortly")
-    # The allowlist is checked first, so the server never contacts a registry outside it.
-    if g.registry_allowlist and not any(js.spec.image.startswith(prefix) for prefix in g.registry_allowlist):
+    builtin = builtin_registry.is_builtin(settings, js.spec.image)
+    # The allowlist is checked first, so the server never contacts a registry outside it. The group's own
+    # built-in registry is always allowed.
+    if (not builtin and g.registry_allowlist
+            and not any(js.spec.image.startswith(prefix) for prefix in g.registry_allowlist)):
         raise HTTPException(422, "image registry is not on this group's allowlist")
     as_submitted: dict[str, Any] = {"image": js.spec.image, "parts": js.spec.parts}
-    if not is_pinned(js.spec.image):
+    if builtin:
+        js.spec.image = await _pin_builtin_image(request, p, g, js.spec.image)
+    elif not is_pinned(js.spec.image):
         js.spec.image = await _pin_image(s, request, p, g, js.spec.image)
     res = js.resources()
     job = Job(
@@ -167,6 +196,9 @@ async def submit_job(
     ]
     for i in range(0, len(rows), 1000):
         await s.execute(insert(Task), rows[i : i + 1000])
+    if builtin:
+        ref = parse_image(job.image)
+        await mark_used(s, ref.repository, job.image.rsplit("@", 1)[1], g.id, builtin_registry.tag_of(job.image))
     await audit.record(
         s,
         actor_type="user",
