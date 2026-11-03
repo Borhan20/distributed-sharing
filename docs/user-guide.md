@@ -324,8 +324,14 @@ narrow them.
 | Change settings and roles, remove members, close the group | ✓ | – | – | – | – |
 
 A **contributor** fits a lab machine's account that only shares; a
-**submitter** fits a student without a spare computer. Changing settings and
-roles, inviting and voting may ask for multi-factor sign-in on a real server.
+**submitter** fits a student without a spare computer.
+
+**Two-step sign-in.** On a shared server, coordinators and admins need it for
+invites, settings, roles and votes. The first time, a banner at the top of the
+page offers **Set up two-step sign-in**: scan the code (or type the key) into an
+authenticator app on your phone, then choose **Sign in again with my code**.
+From then on you enter a 6-digit code from the app after your password. Members
+who only run jobs or share computers are not asked.
 
 ### Everyday tasks
 
