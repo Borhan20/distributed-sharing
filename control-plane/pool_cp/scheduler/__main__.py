@@ -13,8 +13,10 @@ import signal
 
 from sqlalchemy import text
 
+from .. import storage
 from ..config import get_settings
 from ..db import make_engine, make_sessionmaker
+from ..deletion import purge_deleted_groups
 from ..timeutil import utcnow
 from . import core
 
@@ -66,6 +68,14 @@ async def run(stop: asyncio.Event, settings=None, on_tick=None) -> None:
                 async with maker() as s:
                     await core.expire_groups(s)
                     await s.commit()
+                async with maker() as s:
+                    purged = await purge_deleted_groups(s)
+                    await s.commit()
+                for gid in purged:  # stored files go after the database rows; leftovers are harmless
+                    try:
+                        await asyncio.to_thread(storage.delete_group_objects, settings, gid)
+                    except Exception:
+                        log.warning("could not delete stored files of purged group %s", gid, exc_info=True)
                 async with maker() as s:
                     await core.rollup_jobs(s)
                     await s.commit()

@@ -18,9 +18,9 @@ from pool_protocol import messages as pm
 
 from .. import audit
 from ..auth import Principal, current_principal, get_session
-from ..authz import ANY_MEMBER, MFA_NEEDED, SHARERS, load_group, not_found, require_role
+from ..authz import ANY_MEMBER, MANAGERS, MFA_NEEDED, SHARERS, load_group, not_found, require_role
 from ..ca import CAError, LocalCA, sha256_hex
-from ..models import Attempt, Device, DeviceShare, EnrollmentCode, Group, Job, RevokedCert, Task, User
+from ..models import Attempt, Device, DeviceShare, EnrollmentCode, Group, Job, RevokedCert, RunHistory, Task, User
 from ..scheduler.core import ACTIVE_ATTEMPT_STATES, lose_attempt
 from ..timeutil import utcnow
 from .notify import disconnect_device, notify_stops
@@ -124,21 +124,25 @@ class DeviceOut(BaseModel):
     policy_digest: str
     shared_with: list[str]
     turned_off: list[str] = Field(description="Groups the owner switched off on the server")
+    removed_from: list[str] = Field(description="Groups whose coordinator removed this computer")
     cert_not_after: datetime
     last_seen_at: datetime | None
 
 
 async def _device_out(s: AsyncSession, d: Device, hb: int) -> DeviceOut:
     owner = await s.get(User, d.owner_id)
-    rows = (await s.execute(select(Group.name, DeviceShare.enabled).join(DeviceShare, DeviceShare.group_id == Group.id)
-                            .where(DeviceShare.device_id == d.id))).all()
-    shared = [name for name, enabled in rows if enabled]
-    turned_off = sorted(name for name, enabled in rows if not enabled)
+    rows = (await s.execute(
+        select(Group.name, DeviceShare.enabled, DeviceShare.removed).join(DeviceShare, DeviceShare.group_id == Group.id)
+        .where(DeviceShare.device_id == d.id, Group.state != "deleted"))).all()
+    shared = [name for name, enabled, _ in rows if enabled]
+    turned_off = sorted(name for name, enabled, removed in rows if not enabled and not removed)
+    removed_from = sorted(name for name, _, removed in rows if removed)
     return DeviceOut(id=d.id, name=d.name, owner=owner.handle, os=d.os, arch=d.arch, agent_version=d.agent_version,
                      state=d.state, online=online(d, hb), owner_active=d.owner_active, always_on=d.always_on,
                      org_owned_dedicated=d.org_owned_dedicated, reliability=round(d.reliability, 3),
                      capabilities=d.capabilities or {}, reported_shares=d.reported_shares or [],
                      policy_digest=d.policy_digest, shared_with=sorted(shared), turned_off=turned_off,
+                     removed_from=removed_from,
                      cert_not_after=d.cert_not_after,
                      last_seen_at=d.last_seen_at)
 
@@ -198,8 +202,16 @@ async def patch_device(device_id: uuid.UUID, body: DevicePatch, request: Request
 @router.post("/devices/{device_id}/revoke", response_model=DeviceOut)
 async def revoke_device(device_id: uuid.UUID, request: Request, p: Principal = Depends(current_principal),
                         s: AsyncSession = Depends(get_session)):
-    """Stolen laptop (threat #4): deny-list the certificate now and requeue its work."""
-    d = await _own_device(s, device_id, p)
+    """Stolen laptop (threat #4): deny-list the certificate now and requeue its work.
+
+    The owner, or a server admin (with two-step sign-in) for a computer that is lost or stolen."""
+    settings = request.app.state.settings
+    d = await s.get(Device, device_id)
+    by_admin = d is not None and d.owner_id != p.user.id and p.user.handle in settings.server_admins
+    if d is None or (d.owner_id != p.user.id and not by_admin):
+        raise not_found("device")
+    if by_admin and settings.require_mfa_for_admins and not p.has_mfa:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, MFA_NEEDED)
     if d.state == "revoked":
         return await _device_out(s, d, request.app.state.settings.heartbeat_interval_s)
     d.state = "revoked"
@@ -211,7 +223,8 @@ async def revoke_device(device_id: uuid.UUID, request: Request, p: Principal = D
         await lose_attempt(s, request.app.state.settings, a, reason="device_revoked")
     await audit.record(s, actor_type="user", actor_id=p.user.id, action="device.revoke", device_id=d.id,
                        target_type="device", target_id=d.id,
-                       details={"cert_serial": d.cert_serial, "requeued_attempts": len(active)})
+                       details={"cert_serial": d.cert_serial, "requeued_attempts": len(active),
+                                "by_server_admin": by_admin})
     await s.commit()
     await disconnect_device(request.app, d.id, "device_revoked")
     return await _device_out(s, d, request.app.state.settings.heartbeat_interval_s)
@@ -226,6 +239,9 @@ async def share_device(device_id: uuid.UUID, group_name: str, request: Request,
     g = await load_group(s, group_name)
     await require_role(s, g, p, SHARERS)
     share = await s.get(DeviceShare, (d.id, g.id))
+    if share is not None and share.removed:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, f"A coordinator removed this computer from {g.name}. Ask them "
+                                                       "to let it back in.")
     if share is None:
         s.add(DeviceShare(device_id=d.id, group_id=g.id, enabled=True))
     else:
@@ -300,6 +316,77 @@ async def group_devices(name: str, request: Request, p: Principal = Depends(curr
     return out
 
 
+class RemovedDeviceOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    owner: str
+    removed_at: datetime | None
+
+
+# SECURITY-SENSITIVE: access control for group membership of computers. Needs security review (plan §8.10).
+@router.delete("/groups/{name}/devices/{device_id}", response_model=RemovedDeviceOut)
+async def remove_device_from_group(name: str, device_id: uuid.UUID, request: Request,
+                                   p: Principal = Depends(current_principal), s: AsyncSession = Depends(get_session)):
+    """Coordinators and admins: take a computer out of the group. Its work for the group stops, and it
+    stays out (its owner cannot turn it back on) until a coordinator or admin lets it back in."""
+    settings = request.app.state.settings
+    g = await load_group(s, name)
+    await require_role(s, g, p, MANAGERS, require_active=False, mfa_required=settings.require_mfa_for_admins)
+    share = await s.get(DeviceShare, (device_id, g.id))
+    d = await s.get(Device, device_id)
+    if share is None or d is None or share.removed:
+        raise not_found("device")
+    share.enabled, share.removed, share.removed_at = False, True, utcnow()
+    active = (await s.execute(
+        select(Attempt).join(Task, Task.id == Attempt.task_id)
+        .where(Attempt.device_id == d.id, Attempt.state.in_(ACTIVE_ATTEMPT_STATES), Task.group_id == g.id)
+    )).scalars().all()
+    stops = []
+    for a in active:
+        stops.append((str(a.id), d.id))
+        await lose_attempt(s, settings, a, reason="device_removed_from_group")
+    owner = await s.get(User, d.owner_id)
+    await audit.record(s, actor_type="user", actor_id=p.user.id, action="device.remove_from_group", group_id=g.id,
+                       device_id=d.id, target_type="device", target_id=d.id,
+                       details={"device": d.name, "owner": owner.handle, "requeued": len(stops)})
+    await s.commit()
+    await notify_stops(request.app, stops, "device_removed_from_group", group=g.name, revoke_devices=[d.id])
+    return RemovedDeviceOut(id=d.id, name=d.name, owner=owner.handle, removed_at=share.removed_at)
+
+
+@router.post("/groups/{name}/devices/{device_id}/allow", response_model=RemovedDeviceOut)
+async def allow_device_back(name: str, device_id: uuid.UUID, request: Request,
+                            p: Principal = Depends(current_principal), s: AsyncSession = Depends(get_session)):
+    """Undo a removal. The computer is shared again if its own settings still offer the group."""
+    settings = request.app.state.settings
+    g = await load_group(s, name)
+    await require_role(s, g, p, MANAGERS, require_active=False, mfa_required=settings.require_mfa_for_admins)
+    share = await s.get(DeviceShare, (device_id, g.id))
+    d = await s.get(Device, device_id)
+    if share is None or d is None or not share.removed:
+        raise not_found("device")
+    share.removed, share.removed_at = False, None
+    share.enabled = any(x.get("group") == g.name for x in d.reported_shares or [])
+    owner = await s.get(User, d.owner_id)
+    await audit.record(s, actor_type="user", actor_id=p.user.id, action="device.allow_back", group_id=g.id,
+                       device_id=d.id, target_type="device", target_id=d.id,
+                       details={"device": d.name, "owner": owner.handle, "shared_again": share.enabled})
+    await s.commit()
+    return RemovedDeviceOut(id=d.id, name=d.name, owner=owner.handle, removed_at=None)
+
+
+@router.get("/groups/{name}/removed-devices", response_model=list[RemovedDeviceOut])
+async def removed_devices(name: str, p: Principal = Depends(current_principal), s: AsyncSession = Depends(get_session)):
+    g = await load_group(s, name)
+    await require_role(s, g, p, MANAGERS, require_active=False)
+    rows = (await s.execute(
+        select(Device, User.handle, DeviceShare.removed_at).join(DeviceShare, DeviceShare.device_id == Device.id)
+        .join(User, User.id == Device.owner_id)
+        .where(DeviceShare.group_id == g.id, DeviceShare.removed.is_(True)).order_by(Device.name)
+    )).all()
+    return [RemovedDeviceOut(id=d.id, name=d.name, owner=h, removed_at=at) for d, h, at in rows]
+
+
 class HistoryRow(BaseModel):
     attempt_id: uuid.UUID
     state: str
@@ -312,6 +399,7 @@ class HistoryRow(BaseModel):
     task_index: int
     image: str
     command: list[str]
+    job_deleted: bool = False
     created_at: datetime
     started_at: datetime | None
     ended_at: datetime | None
@@ -329,10 +417,19 @@ async def device_history(device_id: uuid.UUID, limit: int = 200, p: Principal = 
         .join(Group, Group.id == Job.group_id).join(User, User.id == Job.submitter_id)
         .where(Attempt.device_id == d.id).order_by(Attempt.created_at.desc()).limit(min(limit, 1000))
     )).all()
-    return [HistoryRow(attempt_id=a.id, state=a.state, end_reason=a.end_reason, tier=a.tier, group=gname,
+    live = [HistoryRow(attempt_id=a.id, state=a.state, end_reason=a.end_reason, tier=a.tier, group=gname,
                        submitter=handle, job_id=j.id, job_name=j.name, task_index=t.index, image=t.spec["image"],
                        command=t.spec["command"], created_at=a.created_at, started_at=a.started_at,
                        ended_at=a.ended_at, exit_code=a.exit_code) for a, t, j, gname, handle in rows]
+    # Runs of deleted jobs and groups stay visible to the owner (decision of 3 November 2026).
+    gone = (await s.execute(select(RunHistory).where(RunHistory.device_id == d.id)
+                            .order_by(RunHistory.created_at.desc()).limit(min(limit, 1000)))).scalars().all()
+    kept = [HistoryRow(attempt_id=r.attempt_id, state=r.state, end_reason=r.end_reason, tier=r.tier,
+                       group=r.group_name, submitter=r.submitter, job_id=r.job_id, job_name=r.job_name,
+                       task_index=r.task_index, image=r.image, command=r.command, job_deleted=True,
+                       created_at=r.created_at, started_at=r.started_at, ended_at=r.ended_at, exit_code=r.exit_code)
+            for r in gone]
+    return sorted(live + kept, key=lambda h: h.created_at, reverse=True)[:min(limit, 1000)]
 
 
 class DeviceShareIn(BaseModel):

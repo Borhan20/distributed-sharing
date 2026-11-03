@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { client, unwrap, type LogLine, type Task } from "../api/client";
 import { errorMessage } from "../api/errors";
 import { useAuth } from "../auth/AuthContext";
-import { ErrorBox, Loading, RichText, StateBadge } from "../components/ui";
+import { ConfirmDialog, ErrorBox, Loading, RichText, StateBadge } from "../components/ui";
 import { TERMINAL, fmtTime } from "../lib/format";
 import { TaskCounts } from "./group/JobsTab";
 
@@ -13,6 +13,8 @@ export function JobPage() {
   const { me } = useAuth();
   const qc = useQueryClient();
   const [selected, setSelected] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const navigate = useNavigate();
   const job = useQuery({
     queryKey: ["job", id],
     queryFn: () => unwrap(client.GET("/api/v1/jobs/{job_id}", { params: { path: { job_id: id } } })),
@@ -29,6 +31,20 @@ export function JobPage() {
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: ["job", id] });
       void qc.invalidateQueries({ queryKey: ["tasks", id] });
+    },
+  });
+  const groupName = job.data?.group;
+  const group = useQuery({
+    queryKey: ["group", groupName],
+    queryFn: () => unwrap(client.GET("/api/v1/groups/{name}", { params: { path: { name: groupName ?? "" } } })),
+    enabled: !!groupName,
+  });
+  const remove = useMutation({
+    mutationFn: () => unwrap(client.DELETE("/api/v1/jobs/{job_id}", { params: { path: { job_id: id } } })),
+    onSuccess: () => {
+      setDeleting(false);
+      void qc.invalidateQueries({ queryKey: ["jobs", groupName] });
+      navigate(`/groups/${groupName}`);
     },
   });
   if (job.isLoading) return <Loading />;
@@ -52,12 +68,36 @@ export function JobPage() {
         <p>
           <TaskCounts counts={j.tasks} />
         </p>
-        {!done && j.submitter === me?.handle && (
-          <button type="button" className="secondary" disabled={cancel.isPending} onClick={() => cancel.mutate()}>
-            Cancel job
-          </button>
-        )}
+        <div className="row">
+          {!done && j.submitter === me?.handle && (
+            <button type="button" className="secondary" disabled={cancel.isPending} onClick={() => cancel.mutate()}>
+              Cancel job
+            </button>
+          )}
+          {(j.submitter === me?.handle || ["coordinator", "admin"].includes(group.data?.my_role ?? "")) && (
+            <button type="button" className="danger" onClick={() => setDeleting(true)}>
+              Delete job…
+            </button>
+          )}
+        </div>
         <ErrorBox error={cancel.error} />
+        <ConfirmDialog
+          open={deleting}
+          title={`Delete ${j.name}?`}
+          confirmLabel="Delete job"
+          busy={remove.isPending}
+          error={remove.error}
+          onCancel={() => {
+            setDeleting(false);
+            remove.reset();
+          }}
+          onConfirm={() => remove.mutate()}
+        >
+          <p>
+            {done ? "" : "Its running tasks stop first. "}Its tasks, logs and output files are deleted for good. The audit
+            log and each computer owner's "what ran here" list keep a short record.
+          </p>
+        </ConfirmDialog>
       </header>
       {!done && <WaitingReasons jobId={id} />}
       <section className="card">

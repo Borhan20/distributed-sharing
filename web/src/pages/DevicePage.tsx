@@ -61,7 +61,11 @@ export function DevicePage() {
   const d = device.data;
   const shareable = (groups.data ?? []).filter(
     (g) =>
-      g.state === "active" && SHARERS.has(g.my_role ?? "") && !d.shared_with.includes(g.name) && !d.turned_off.includes(g.name),
+      g.state === "active" &&
+      SHARERS.has(g.my_role ?? "") &&
+      !d.shared_with.includes(g.name) &&
+      !d.turned_off.includes(g.name) &&
+      !d.removed_from.includes(g.name),
   );
   const caps = d.capabilities as { cpu_cores?: number; memory_mb?: number; tiers?: string[]; gpus?: unknown[] };
   const reported = d.reported_shares as { group: string; active_now?: boolean }[];
@@ -125,7 +129,9 @@ export function DevicePage() {
             itself. <em>Turn off</em> stops a group from here without touching the computer. The computer's own settings
             always have the final say.
           </p>
-          {d.shared_with.length === 0 && d.turned_off.length === 0 && <Empty>Not shared with any group.</Empty>}
+          {d.shared_with.length === 0 && d.turned_off.length === 0 && d.removed_from.length === 0 && (
+            <Empty>Not shared with any group.</Empty>
+          )}
           <ul className="plain">
             {d.shared_with.map((g) => {
               const r = reported.find((x) => x.group === g);
@@ -149,6 +155,13 @@ export function DevicePage() {
                 </li>
               );
             })}
+            {d.removed_from.map((g) => (
+              <li key={g} className="row between">
+                <span>
+                  {g} <span className="muted">· removed by the group's coordinator; ask them to let it back in</span>
+                </span>
+              </li>
+            ))}
             {d.turned_off.map((g) => (
               <li key={g} className="row between">
                 <span>
@@ -212,7 +225,12 @@ export function DevicePage() {
                     <td>{h.group}</td>
                     <td>{h.submitter}</td>
                     <td>
-                      <Link to={`/jobs/${h.job_id}`}>{h.job_name}</Link> #{h.task_index}
+                      {h.job_deleted ? (
+                        <span title="The job was deleted; this line is kept for you">{h.job_name} (deleted)</span>
+                      ) : (
+                        <Link to={`/jobs/${h.job_id}`}>{h.job_name}</Link>
+                      )}{" "}
+                      #{h.task_index}
                     </td>
                     <td>
                       <code className="small-text break">{h.image}</code>

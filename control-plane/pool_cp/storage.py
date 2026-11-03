@@ -88,6 +88,32 @@ def presign_get(settings: Settings, group_id: uuid.UUID, sha256: str, filename: 
                                                              ExpiresIn=settings.presign_ttl_s)
 
 
+def delete_objects(settings: Settings, group_id: uuid.UUID, sha256s: list[str]) -> int:
+    """Delete these objects of a group (blocking; call it from a thread). Returns how many were requested."""
+    if not enabled(settings) or not sha256s:
+        return 0
+    client = _internal_client(settings)
+    for i in range(0, len(sha256s), 1000):  # the S3 API takes at most 1000 keys per request
+        batch = [{"Key": object_key(group_id, sha)} for sha in sha256s[i:i + 1000]]
+        client.delete_objects(Bucket=settings.s3_bucket, Delete={"Objects": batch, "Quiet": True})
+    return len(sha256s)
+
+
+def delete_group_objects(settings: Settings, group_id: uuid.UUID) -> int:
+    """Delete every stored object of a group (blocking; call it from a thread)."""
+    if not enabled(settings):
+        return 0
+    client = _internal_client(settings)
+    deleted = 0
+    for page in client.get_paginator("list_objects_v2").paginate(Bucket=settings.s3_bucket,
+                                                                  Prefix=f"groups/{group_id}/"):
+        keys = [{"Key": o["Key"]} for o in page.get("Contents", [])]
+        if keys:
+            client.delete_objects(Bucket=settings.s3_bucket, Delete={"Objects": keys, "Quiet": True})
+            deleted += len(keys)
+    return deleted
+
+
 def object_exists(settings: Settings, group_id: uuid.UUID, sha256: str) -> bool:
     """Whether the store holds this object (blocking; call it from a thread)."""
     from botocore.exceptions import ClientError

@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     # Who may create groups. "admins" (server admins only) suits a server open to self-registration,
     # so strangers cannot create groups and use its storage.
     group_creators: Literal["anyone", "admins"] = "anyone"
+    # A deleted group can be restored for this long; then its data is purged.
+    group_delete_grace_days: int = 7
 
     # Keys. Default location: <data_dir>/ca.key, ca.crt, signing.key
     data_dir: Path = Path("./var")

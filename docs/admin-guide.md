@@ -139,7 +139,8 @@ tested end to end yet):
 - **Two-step sign-in** is required for coordinators' and admins' privileged actions (`POOL_REQUIRE_MFA_FOR_ADMINS`, on by default). Members are never asked for a code unless they set one up themselves. The installer configures Keycloak to report the authenticator-app step in its tokens (`deploy/keycloak/configure.py`, re-applied on every upgrade).
   If someone loses their phone: in Keycloak's admin console, Users → that user → Credentials → delete the OTP entry; they set up a new app at the next banner prompt.
 - **Who creates groups:** `POOL_GROUP_CREATORS=admins` in `.env` (installer default) or `anyone`. Restart with `docker compose up -d` after changing it.
-- **Server admins:** the handles in `POOL_SERVER_ADMINS`. Add yours there to make another person a server admin.
+- **Server admins:** the handles in `POOL_SERVER_ADMINS`. Add yours there to make another person a server admin. They can revoke any computer (lost or stolen) from a group's Devices tab, and restore any deleted group during its 7 days.
+- **Deleted groups** are purged automatically by the scheduler 7 days after deletion (`POOL_GROUP_DELETE_GRACE_DAYS`): jobs, logs, members and stored files go; the audit log and owners' "what ran here" lines stay.
 - **Secrets on disk:** `.env` and the file store's keys are readable only by root and, for the keys, the container's own user (uid 1000). On many cloud images uid 1000 is the default login user.
 - **Not yet reviewed:** pool has not had its security review (plan §8.10). Do not use it for confidential data yet.
 

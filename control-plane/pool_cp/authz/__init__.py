@@ -33,9 +33,10 @@ def not_found(what: str = "group") -> HTTPException:
     return HTTPException(status.HTTP_404_NOT_FOUND, f"{what} not found")
 
 
-async def load_group(session: AsyncSession, name: str) -> Group:
+async def load_group(session: AsyncSession, name: str, *, include_deleted: bool = False) -> Group:
+    """A group by name. Deleted groups (waiting to be purged) are invisible unless asked for."""
     group = (await session.execute(select(Group).where(Group.name == name))).scalar_one_or_none()
-    if group is None:
+    if group is None or (group.state == "deleted" and not include_deleted):
         raise not_found()
     return group
 
