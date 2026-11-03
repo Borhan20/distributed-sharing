@@ -99,6 +99,16 @@ that were not available.
 | Agent uploads trust a pinned server CA | Done | Needed for servers with a private CA |
 | Acceptance test | Done | `tests/vm/server_acceptance.py` (browser sign-in with TOTP, invite, agent job, download); run book in `tests/vm/README.md` |
 
+## Deleting and removing (decisions of 3 November 2026)
+
+| Item | Status | Notes |
+|---|---|---|
+| Delete a job | Done | Submitter, or coordinator/admin with two-step sign-in. Running work stops; tasks, logs and files (not shared with other jobs) deleted |
+| Delete a group, restore for 7 days, purge | Done | Coordinator; hidden at once; scheduler purges after 7 days, including stored files (tested against SeaweedFS) |
+| Kept after deletion | Done | Audit log; owners' "what ran here" (`run_history`); usage records |
+| Remove a computer from a group / let it back in | Done | Coordinators and admins; the owner cannot override |
+| Server admins revoke any computer | Done | Lost or stolen computers; two-step sign-in |
+
 ## Ahead of plan (Phase 2 and later pieces already built)
 
 | Item | Status | Notes |

@@ -205,3 +205,57 @@ async def test_unreachable_store_does_not_block_jobs(control_plane_factory, tmp_
     assert "server: object_store_not_ready" in text, text
     r = await http.get(f"/api/v1/jobs/{job_id}/tasks/0/download", params={"path": "result.txt"})
     assert r.status_code == 503 and "not reachable" in r.json()["detail"], r.text
+
+
+async def test_deleting_jobs_and_groups_removes_their_files(seaweedfs, control_plane_factory, tmp_path, cleanup):
+    """Files shared by two jobs (same content, same object) survive until the last job is deleted;
+    a deleted group's files go when the scheduler purges it after the grace period."""
+    import asyncpg
+    from botocore.exceptions import ClientError
+
+    cp, http, agent, group_id = await make_platform(control_plane_factory, tmp_path, **seaweedfs.env())
+    cleanup.append((agent, http))
+    await wait_object_store(cp.url, "ready")
+    agent.start()
+    client = seaweedfs.client()
+
+    def stored(sha: str) -> bool:
+        try:
+            client.head_object(Bucket=BUCKET, Key=storage.object_key(uuid.UUID(group_id), sha))
+            return True
+        except ClientError:
+            return False
+
+    same = ["sh", "-c", "printf 'same bytes\\n' > /out/result.txt"]
+    a = await submit(http, job("copy-a", same))
+    b = await submit(http, job("copy-b", same))
+    for j in (a, b):
+        assert (await wait_job(http, j, 120))["state"] == "succeeded"
+    sha = hashlib.sha256(b"same bytes\n").hexdigest()
+    assert stored(sha)
+    r = (await http.delete(f"/api/v1/jobs/{a}")).json()
+    assert r["files_deleted"] == 0 and stored(sha), "job b still uses the file"
+    r = (await http.delete(f"/api/v1/jobs/{b}")).json()
+    assert r["files_deleted"] == 1 and not stored(sha), "the last job using it is gone"
+
+    c = await submit(http, job("unique", ["sh", "-c", "printf 'only here\\n' > /out/result.txt"]))
+    assert (await wait_job(http, c, 120))["state"] == "succeeded"
+    unique = hashlib.sha256(b"only here\n").hexdigest()
+    assert stored(unique)
+    (await http.request("DELETE", "/api/v1/groups/e2e", json={"confirm_name": "e2e"})).raise_for_status()
+    assert stored(unique), "files are kept during the grace period"
+    conn = await asyncpg.connect(cp.dsn)
+    try:
+        await conn.execute("UPDATE groups SET purge_after = now() - interval '1 second' WHERE name = 'e2e'")
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and await conn.fetchval("SELECT count(*) FROM groups WHERE name = 'e2e'"):
+            await asyncio.sleep(0.5)
+        assert await conn.fetchval("SELECT count(*) FROM groups WHERE name = 'e2e'") == 0, "scheduler purged it"
+        kept = await conn.fetchval("SELECT count(*) FROM run_history WHERE group_name = 'e2e'")
+        assert kept == 3, "the computer's owner still sees the three runs"
+    finally:
+        await conn.close()
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline and stored(unique):
+        await asyncio.sleep(0.5)
+    assert not stored(unique), "the purged group's files are gone"

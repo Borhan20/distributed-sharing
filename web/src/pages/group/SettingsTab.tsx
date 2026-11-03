@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { client, unwrap, type Group } from "../../api/client";
 import { ConfirmDialog, ErrorBox } from "../../components/ui";
@@ -13,6 +14,8 @@ export function SettingsTab({ group }: { group: Group }) {
   const [probation, setProbation] = useState(group.probation_days);
   const [retention, setRetention] = useState(group.retention_days);
   const [closing, setClosing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const navigate = useNavigate();
   const save = useMutation({
     mutationFn: () =>
       unwrap(
@@ -29,6 +32,16 @@ export function SettingsTab({ group }: { group: Group }) {
       setClosing(false);
       void qc.invalidateQueries({ queryKey: ["group", group.name] });
       void qc.invalidateQueries({ queryKey: ["groups"] });
+    },
+  });
+  const remove = useMutation({
+    mutationFn: () =>
+      unwrap(client.DELETE("/api/v1/groups/{name}", { params: { path }, body: { confirm_name: group.name } })),
+    onSuccess: () => {
+      setDeleting(false);
+      void qc.invalidateQueries({ queryKey: ["groups"] });
+      void qc.invalidateQueries({ queryKey: ["deleted-groups"] });
+      navigate("/");
     },
   });
   const active = group.state === "active";
@@ -74,8 +87,8 @@ export function SettingsTab({ group }: { group: Group }) {
       <section className="card danger-zone">
         <h2>Close the group</h2>
         <p>
-          All queued and running jobs stop at once. Data is kept for {group.retention_days} days; deleting it is a
-          separate step.
+          All queued and running jobs stop at once. Members can still see the group and its results. To remove the
+          group and its data, delete it below.
         </p>
         <button type="button" className="danger" disabled={!active} onClick={() => setClosing(true)}>
           Close group…
@@ -95,6 +108,32 @@ export function SettingsTab({ group }: { group: Group }) {
         onConfirm={() => close.mutate()}
       >
         <p>This cannot be undone from the UI. Every job in the group is cancelled.</p>
+      </ConfirmDialog>
+      <section className="card danger-zone">
+        <h2>Delete the group</h2>
+        <p>
+          The group disappears for everyone at once and its work stops. For 7 days you, or a server admin, can restore
+          it from the Groups page. After that its jobs, logs and files are deleted for good. The audit log and each
+          computer owner's "what ran here" list are kept.
+        </p>
+        <button type="button" className="danger" onClick={() => setDeleting(true)}>
+          Delete group…
+        </button>
+      </section>
+      <ConfirmDialog
+        open={deleting}
+        title={`Delete ${group.display_name}?`}
+        confirmLabel="Delete group"
+        typeToConfirm={group.name}
+        busy={remove.isPending}
+        error={remove.error}
+        onCancel={() => {
+          setDeleting(false);
+          remove.reset();
+        }}
+        onConfirm={() => remove.mutate()}
+      >
+        <p>Running jobs stop now. You can restore the group for 7 days.</p>
       </ConfirmDialog>
     </>
   );

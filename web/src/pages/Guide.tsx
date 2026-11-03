@@ -27,8 +27,9 @@ const PERMISSIONS: [string, Role[]][] = [
   ["Submit jobs", ["coordinator", "admin", "member", "submitter"]],
   ["Share a computer with the group", ["coordinator", "admin", "member", "contributor"]],
   ["Vote on join requests (when the group's rule asks members)", ["coordinator", "admin", "member"]],
-  ["Create invite links, see the audit log, cancel anyone's job", ["coordinator", "admin"]],
-  ["Change settings and roles, remove members, close the group", ["coordinator"]],
+  ["Create invite links, see the audit log, cancel or delete anyone's job", ["coordinator", "admin"]],
+  ["Remove a computer from the group, and let it back in", ["coordinator", "admin"]],
+  ["Change settings and roles, remove members, close, delete or restore the group", ["coordinator"]],
 ];
 
 function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
@@ -174,7 +175,8 @@ export function GuidePage() {
           <li>
             Open the job to follow it. If tasks wait, a box says <strong>why</strong> and what would fix it. Click a task
             to see its log and, once it has finished, its output files with a <em>Download</em> button (or use{" "}
-            <code>pool download JOB-ID</code>). You can cancel your own job at any time.
+            <code>pool download JOB-ID</code>). You can cancel your own job at any time, and delete it (with its logs
+            and files) with <em>Delete job</em>.
           </li>
         </ol>
         <details>
@@ -239,6 +241,16 @@ export function GuidePage() {
             group when the work is done.
           </li>
           <li>
+            <strong>Computers:</strong> tab <em>Devices</em> → <em>Remove</em> takes a computer out of the group; it
+            stays out until you choose <em>Let back in</em>. Only its owner can disable a computer entirely.
+          </li>
+          <li>
+            <strong>Deleting:</strong> <em>Delete job</em> on any job page. To delete the whole group: tab{" "}
+            <em>Settings</em> → <em>Delete group</em>. It disappears at once; for 7 days you can restore it from the Groups
+            page, then its jobs, logs and files are gone. The audit log and each computer owner's "what ran here" list are
+            kept.
+          </li>
+          <li>
             <strong>Fairness and records:</strong> tab <em>Usage</em> shows who used how much; tab <em>Audit log</em>{" "}
             records every important action and cannot be edited.
           </li>
@@ -265,6 +277,10 @@ export function GuidePage() {
           </li>
           <li>
             Check that the audit log has not been tampered with: <code>GET /api/v1/audit/verify</code>.
+          </li>
+          <li>
+            Revoke a lost or stolen computer (<em>Revoke…</em> in a group's Devices tab), and restore any deleted group
+            during its 7 days (Groups page).
           </li>
         </ul>
       </Section>

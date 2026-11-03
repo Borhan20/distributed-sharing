@@ -74,6 +74,7 @@ export function GroupsPage() {
         )}
         <RequestToJoin />
       </div>
+      <RecentlyDeleted />
     </>
   );
 }
@@ -165,6 +166,39 @@ function RequestToJoin() {
           Send request
         </button>
       </form>
+    </section>
+  );
+}
+
+/** Deleted groups that can still be restored: ones you coordinate (server admins see all). */
+function RecentlyDeleted() {
+  const qc = useQueryClient();
+  const deleted = useQuery({ queryKey: ["deleted-groups"], queryFn: () => unwrap(client.GET("/api/v1/deleted-groups")) });
+  const restore = useMutation({
+    mutationFn: (name: string) => unwrap(client.POST("/api/v1/groups/{name}/restore", { params: { path: { name } } })),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["groups"] });
+      void qc.invalidateQueries({ queryKey: ["deleted-groups"] });
+    },
+  });
+  if (!deleted.data || deleted.data.length === 0) return null;
+  return (
+    <section className="card">
+      <h2>Recently deleted groups</h2>
+      <p className="muted">Restore a group before its date; after that its jobs, logs and files are gone for good.</p>
+      <ErrorBox error={restore.error} />
+      <ul className="plain">
+        {deleted.data.map((g) => (
+          <li key={g.name} className="row between">
+            <span>
+              <strong>{g.display_name}</strong> <span className="muted">({g.name}) · deleted {fmtTime(g.deleted_at)} · gone after {fmtTime(g.purge_after)}</span>
+            </span>
+            <button type="button" className="secondary small" disabled={restore.isPending} onClick={() => restore.mutate(g.name)}>
+              Restore
+            </button>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

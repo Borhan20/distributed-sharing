@@ -156,17 +156,21 @@ async def explain_waiting(s: AsyncSession, settings: Settings, job: Job) -> tupl
                                 "Remove network.egress from the job.")]
 
     rows = (await s.execute(
-        select(Device, DeviceShare.enabled)
+        select(Device, DeviceShare.enabled, DeviceShare.removed)
         .join(DeviceShare, DeviceShare.device_id == Device.id)
         .join(Membership, (Membership.group_id == job.group_id) & (Membership.user_id == Device.owner_id))
         .where(DeviceShare.group_id == job.group_id, Device.state == "active", Membership.role.in_(SHARE_ROLES))
     )).all()
-    shared = [d for d, enabled in rows if enabled]
+    shared = [d for d, enabled, _ in rows if enabled]
     share_cmd = f"`pool-agent share {group.name}`"
     if not shared:
         message = "No computer is shared with this group yet."
-        if len(rows) > len(shared):
-            message += f" {_computers(len(rows) - len(shared))} switched off for this group by the owner."
+        removed = sum(1 for _, enabled, rem in rows if rem)
+        turned_off = sum(1 for _, enabled, rem in rows if not enabled and not rem)
+        if turned_off:
+            message += f" {_computers(turned_off)} switched off for this group by the owner."
+        if removed:
+            message += f" {_computers(removed)} removed from this group by a coordinator or admin."
         return pending, [Reason("no_devices", message,
                                 f"Anyone in the group can share a computer: install the agent, then run {share_cmd}. "
                                 "The Devices page shows the steps.")]

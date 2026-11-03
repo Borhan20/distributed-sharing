@@ -65,12 +65,16 @@ class Group(Base):
     expires_at: Mapped[datetime | None] = mapped_column(TS)
     retention_days: Mapped[int] = mapped_column(Integer, default=30)
     registry_allowlist: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
-    state: Mapped[str] = mapped_column(String(16), default="active")  # active | expired | closed
+    state: Mapped[str] = mapped_column(String(16), default="active")  # active | expired | closed | deleted
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now())
     closed_at: Mapped[datetime | None] = mapped_column(TS)
+    # Deleting a group hides it at once; its data is purged after purge_after unless it is restored.
+    deleted_at: Mapped[datetime | None] = mapped_column(TS)
+    purge_after: Mapped[datetime | None] = mapped_column(TS)
+    state_before_delete: Mapped[str | None] = mapped_column(String(16))
     __table_args__ = (
         CheckConstraint(_in("approval_rule", APPROVAL_RULES), name="ck_groups_approval_rule"),
-        CheckConstraint("state IN ('active','expired','closed')", name="ck_groups_state"),
+        CheckConstraint("state IN ('active','expired','closed','deleted')", name="ck_groups_state"),
         CheckConstraint("approval_k >= 1", name="ck_groups_k"),
     )
 
@@ -184,7 +188,39 @@ class DeviceShare(Base):
     device_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"), primary_key=True)
     group_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # A coordinator or admin removed this computer from the group: it stays out (the owner cannot
+    # turn it back on) until one of them lets it back in.
+    removed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    removed_at: Mapped[datetime | None] = mapped_column(TS)
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now())
+
+
+class RunHistory(Base):
+    """What ran on a device, kept for its owner after the job or group is deleted (plan §8.1 principle 5).
+
+    One row per attempt, copied from attempts/tasks/jobs just before they are deleted. Logs, results and
+    files are not kept. The live view reads attempts; this table only holds runs whose job is gone.
+    """
+
+    __tablename__ = "run_history"
+    attempt_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    device_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"))
+    group_name: Mapped[str] = mapped_column(String(63))
+    submitter: Mapped[str] = mapped_column(String(64))
+    job_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    job_name: Mapped[str] = mapped_column(String(63))
+    task_index: Mapped[int] = mapped_column(Integer)
+    image: Mapped[str] = mapped_column(Text)
+    command: Mapped[list[str]] = mapped_column(JSONB)
+    state: Mapped[str] = mapped_column(String(16))
+    end_reason: Mapped[str | None] = mapped_column(String(64))
+    tier: Mapped[str | None] = mapped_column(String(4))
+    exit_code: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(TS)
+    started_at: Mapped[datetime | None] = mapped_column(TS)
+    ended_at: Mapped[datetime | None] = mapped_column(TS)
+    deleted_at: Mapped[datetime] = mapped_column(TS, server_default=func.now())
+    __table_args__ = (Index("ix_run_history_device", "device_id", "created_at"),)
 
 
 class Job(Base):

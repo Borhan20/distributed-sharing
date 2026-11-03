@@ -262,6 +262,8 @@ is packaged.
 | Logs | `pool logs JOB-ID --task 0 [-f]` |
 | Download results | `pool download JOB-ID [--task N] [--path FILE] [-o FOLDER]` |
 | Cancel | `pool cancel JOB-ID` |
+| Delete a job | `pool jobs delete JOB-ID` |
+| Delete / restore a group | `pool groups delete my-lab` / `pool groups deleted` / `pool groups restore my-lab` |
 | Usage in a group | `pool groups usage my-lab --days 7` |
 
 ## 7. Share your computer
@@ -308,7 +310,8 @@ tested; Macs are not supported for sharing yet).
 
 The settings live in a file on your computer (`pool-agent share` prints its
 path). The server can never widen them. **Turn off** in the browser can only
-narrow them.
+narrow them. A group's coordinator can also remove your computer from their
+group; your computer's page then says so, and only they can let it back in.
 
 ## 8. Run a group (coordinators and admins)
 
@@ -320,8 +323,9 @@ narrow them.
 | Submit jobs | ✓ | ✓ | ✓ | – | ✓ |
 | Share a computer with the group | ✓ | ✓ | ✓ | ✓ | – |
 | Vote on join requests (when the rule asks members) | ✓ | ✓ | ✓ | – | – |
-| Create invite links, read the audit log, cancel anyone's job | ✓ | ✓ | – | – | – |
-| Change settings and roles, remove members, close the group | ✓ | – | – | – | – |
+| Create invite links, read the audit log, cancel or delete anyone's job | ✓ | ✓ | – | – | – |
+| Remove a computer from the group, and let it back in | ✓ | ✓ | – | – | – |
+| Change settings and roles, remove members, close, delete or restore the group | ✓ | – | – | – | – |
 
 A **contributor** fits a lab machine's account that only shares; a
 **submitter** fits a student without a spare computer.
@@ -340,7 +344,11 @@ who only run jobs or share computers are not asked.
 - **Roles and removal:** tab **Members**, or `pool members role my-lab bob admin` and `pool members remove my-lab bob --yes`. When someone is removed, work running on their computers for this group stops and goes back to the queue.
 - **Fair use:** tab **Usage**, or `pool groups usage my-lab`. When several people's jobs wait, the person who used the least computer time in the last 7 days goes first.
 - **Records:** tab **Audit log** (coordinators and admins) lists every important action. It is hash-chained, so changes are detectable.
-- **Settings and closing:** tab **Settings** (coordinator only). Close the group when the work is done (`pool groups close my-lab --yes`).
+- **Settings and closing:** tab **Settings** (coordinator only). Close the group when the work is done (`pool groups close my-lab --yes`): work stops, everything stays visible.
+- **Removing a computer:** tab **Devices** → **Remove** (coordinators and admins). Its work for the group moves to other computers, and it stays out until you choose **Let back in** under "Removed from this group". Its owner sees why on their computer's page.
+- **Deleting a job:** **Delete job** on the job page; the submitter can delete their own, coordinators and admins any (`pool jobs delete JOB-ID`). Its tasks, logs and output files are deleted.
+- **Deleting the group:** tab **Settings** → **Delete group**, typing its name (`pool groups delete my-lab`). It disappears at once and its work stops. For **7 days** a coordinator or server admin can restore it from **Recently deleted groups** on the Groups page (`pool groups restore my-lab`); after that its jobs, logs and files are purged.
+- **What deleting keeps:** the audit log (it cannot be deleted) and, for each computer's owner, a short "what ran here" line per run (group, job, image, time), marked *(deleted)*. Usage records stay, so deleting jobs does not change fair share.
 
 ### Server admins
 
