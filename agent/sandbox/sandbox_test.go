@@ -5,6 +5,9 @@ package sandbox
 import (
 	"archive/tar"
 	"bytes"
+	"context"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -202,5 +205,44 @@ appendWindowsPath = false
 	}
 	if p := CheckWSLConf(""); len(p) != len(RequiredWSLConf) {
 		t.Fatalf("empty config: %v", p)
+	}
+}
+
+// A stand-in "docker" records its arguments and the config it was given, so
+// the test sees exactly what a real pull would receive.
+func TestPrivatePullUsesAThrowawayConfig(t *testing.T) {
+	work := t.TempDir()
+	logf := filepath.Join(t.TempDir(), "calls.log")
+	script := filepath.Join(t.TempDir(), "docker")
+	body := "#!/bin/sh\necho \"ARGS $*\" >> " + logf + "\ncat \"$2/config.json\" >> " + logf + "\necho >> " + logf + "\n"
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	d := &Docker{Cmd: []string{script}, WorkRoot: work}
+	image := "ghcr.io/lab/app@sha256:" + strings.Repeat("b", 64)
+	if err := d.pullPrivate(context.Background(), image, RegistryAuth{Key: "ghcr.io", Token: "tok-123"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(logf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := string(raw)
+	if !strings.Contains(log, "pull --quiet "+image) || !strings.Contains(log, "ARGS --config "+work) {
+		t.Fatalf("docker was called as: %s", log)
+	}
+	if !strings.Contains(log, `{"auths":{"ghcr.io":{"registrytoken":"tok-123"}}}`) {
+		t.Fatalf("config given to docker: %s", log)
+	}
+	if strings.Contains(strings.SplitN(log, "\n", 2)[0], "tok-123") {
+		t.Fatal("the token must not appear on the command line")
+	}
+	left, _ := os.ReadDir(work)
+	if len(left) != 0 {
+		t.Fatalf("throwaway config left behind: %v", left)
+	}
+	wsl := &Docker{Cmd: []string{"wsl.exe", "-d", "pool-runtime", "--", "docker"}, WorkRoot: work}
+	if err := wsl.pullPrivate(context.Background(), image, RegistryAuth{Key: "ghcr.io", Token: "x"}); err == nil {
+		t.Fatal("WSL2 runtime should refuse private pulls for now")
 	}
 }

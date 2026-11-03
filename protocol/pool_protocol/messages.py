@@ -195,6 +195,10 @@ class TaskEnvelope(_Model):
     issued_at: datetime
     expires_at: datetime
     spec: TaskSpec
+    registry_auth: bool = Field(
+        default=False,
+        description="The image is private: ask for a short-lived pull token with pull_auth_request before pulling",
+    )
 
 
 # --------------------------------------------------------------------------
@@ -402,6 +406,29 @@ class Revoke(_Msg):
     reason: str = ""
 
 
+class PullAuthRequest(_Msg):
+    """A -> S: a short-lived token to pull this attempt's private image (sent only if registry_auth)."""
+
+    type: Literal["pull_auth_request"] = "pull_auth_request"
+    attempt_id: str
+    epoch: int = Field(ge=1)
+
+
+class PullAuth(_Msg):
+    """S -> A: a bearer token for this one image (pull only), never the group's stored credentials.
+
+    `registry` is the key for Docker's config `auths` (e.g. "ghcr.io", "https://index.docker.io/v1/").
+    Without a token, `reason` says why; the agent then fails the attempt instead of pulling anonymously.
+    """
+
+    type: Literal["pull_auth"] = "pull_auth"
+    attempt_id: str
+    registry: str | None = None
+    token: str | None = None
+    expires_at: datetime | None = None
+    reason: str | None = None
+
+
 class Error(_Msg):
     type: Literal["error"] = "error"
     code: str
@@ -410,7 +437,18 @@ class Error(_Msg):
 
 
 AgentMessage = Annotated[
-    Hello | Heartbeat | Ready | Accept | Decline | Started | Progress | UploadRequest | Commit | Abort | RenewCert,
+    Hello
+    | Heartbeat
+    | Ready
+    | Accept
+    | Decline
+    | Started
+    | Progress
+    | UploadRequest
+    | PullAuthRequest
+    | Commit
+    | Abort
+    | RenewCert,
     Field(discriminator="type"),
 ]
 
@@ -421,6 +459,7 @@ ServerMessage = Annotated[
     | Offer
     | NoWork
     | UploadURLs
+    | PullAuth
     | CommitAck
     | CertRenewed
     | Cancel
@@ -450,6 +489,8 @@ ALL_MESSAGE_TYPES: dict[str, type[_Msg]] = {
         Progress,
         UploadRequest,
         UploadURLs,
+        PullAuthRequest,
+        PullAuth,
         Commit,
         CommitAck,
         Abort,

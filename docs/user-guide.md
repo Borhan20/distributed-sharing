@@ -140,16 +140,18 @@ FROM python:3.12-slim
 COPY pi.py /app/pi.py
 ```
 
-**Step 3. Build it and publish it** to a registry the group's computers can
-download from, for example the GitHub container registry or Docker Hub. The
-image must be public for now, because computers cannot log in to private
-registries yet. Replace `YOUR-NAME`:
+**Step 3. Build it and push it** to your group's organization on the GitHub
+container registry (ghcr.io) or Docker Hub. The image can stay **private**:
+you push with your own account, and the group's computers get access to it
+only for the tasks that need it (see [Private images](#private-images)).
+Replace `YOUR-ORG`:
 
 ```bash
-docker build -t ghcr.io/YOUR-NAME/pi-sweep:1 .
-docker push ghcr.io/YOUR-NAME/pi-sweep:1
-docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/YOUR-NAME/pi-sweep:1
-# prints ghcr.io/YOUR-NAME/pi-sweep@sha256:...   <- use this as the image
+docker login ghcr.io                      # your own account; it needs write access to the organization
+docker build -t ghcr.io/YOUR-ORG/pi-sweep:1 .
+docker push ghcr.io/YOUR-ORG/pi-sweep:1
+docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/YOUR-ORG/pi-sweep:1
+# prints ghcr.io/YOUR-ORG/pi-sweep@sha256:...   <- use this as the image
 ```
 
 **Step 4. Describe the job.** Save as `pi-sweep.yaml`:
@@ -161,7 +163,7 @@ metadata:
   name: pi-sweep
 spec:
   shape: array
-  image: ghcr.io/YOUR-NAME/pi-sweep@sha256:PASTE-THE-DIGEST
+  image: ghcr.io/YOUR-ORG/pi-sweep@sha256:PASTE-THE-DIGEST
   command: ["python", "/app/pi.py", "--seed", "{{seed}}", "--samples", "{{samples}}"]
   matrix:
     seed: [0, 1, 2, 3, 4]
@@ -201,6 +203,32 @@ EOF
 `pool download` checks every file's SHA-256 against what the computer
 reported, so a damaged or swapped file is never saved.
 
+### Private images
+
+Keep the group's images in an **organization** on ghcr.io or Docker Hub, so
+your code is not public:
+
+1. **Everyone pushes with their own account** that is a member of the
+   organization with write access. Removing someone from the organization
+   removes their access; there is no shared password.
+2. **A coordinator or admin stores one read-only token** for the group: on the
+   group's **Images** tab, or `pool registry set ghcr.io --username READER
+   --group my-lab` (it asks for the token). Use a token that can only read,
+   ideally from an account made for this:
+   - GitHub: a personal access token (classic) with only the `read:packages` scope.
+   - Docker Hub: an access token with read-only permission.
+
+   Check the registry's own documentation for the current steps. The server
+   checks the token with the registry, stores it encrypted, and never shows it
+   again.
+3. **Nothing changes for jobs.** When a task needs a private image, the server
+   exchanges the stored token for one that can pull only that image and expires
+   within minutes, and gives the computer only that. Members' computers never
+   hold the group's token.
+4. **Other groups cannot use it.** If a computer pulled the image for your group,
+   another group's task with the same image may only use that copy if the
+   image is public; otherwise it fails with "this image is private".
+
 **Variations**
 
 - **Try more seeds without editing the file:** `pool sweep pi-sweep.yaml --set seed=0..19 --group my-lab` gives 40 tasks. Add `--dry-run` to see the count first.
@@ -218,7 +246,7 @@ metadata:
   name: big-simulation
 spec:
   shape: single
-  image: ghcr.io/YOUR-NAME/simulation@sha256:PASTE-THE-DIGEST
+  image: ghcr.io/YOUR-ORG/simulation@sha256:PASTE-THE-DIGEST
   command: ["python", "/app/simulate.py", "--threads", "8"]
   resources: { cpu: 8, memory: 16Gi, disk: 10Gi }
   max_runtime: 6h
@@ -261,6 +289,7 @@ is packaged.
 | Job status | `pool status JOB-ID` |
 | Logs | `pool logs JOB-ID --task 0 [-f]` |
 | Download results | `pool download JOB-ID [--task N] [--path FILE] [-o FOLDER]` |
+| Registry tokens (private images) | `pool registry list my-lab` / `pool registry set ghcr.io --username READER --group my-lab` / `pool registry remove ghcr.io --group my-lab` |
 | Cancel | `pool cancel JOB-ID` |
 | Delete a job | `pool jobs delete JOB-ID` |
 | Delete / restore a group | `pool groups delete my-lab` / `pool groups deleted` / `pool groups restore my-lab` |
@@ -382,7 +411,9 @@ ran it.
 
 | Log shows | Cause | Fix |
 |---|---|---|
-| `agent: ... pull access denied`, `manifest unknown` | The computer could not download the image | Check the image name and digest, and that the image is public |
+| `agent: ... pull access denied`, `manifest unknown` | The computer could not download the image | Check the image name and digest. For a private image, the group needs a token for its registry (**Images** tab) |
+| `this image is private: this computer pulled it for another group` | The image belongs to another group's registry | Use your own group's image, or ask a coordinator to add a token for that registry |
+| `the server gave no pull token (...)` | The group's registry token is missing, wrong or expired | A coordinator replaces it on the **Images** tab |
 | `exit 1` (or another number) and your program's error | Your program failed | Fix the program; try it locally with `docker run --rm IMAGE COMMAND` |
 | Result column shows `max_runtime_exceeded` | The task ran out of time | Raise `max_runtime` |
 | `agent: outputs kept on the device only` | The server has no working file store | Ask the server admin; results are still in the log |
@@ -399,7 +430,7 @@ ran it.
 ## 10. What is not possible yet
 
 - Jobs cannot use the internet, read input files from the server, or use secrets (passwords, tokens). Put small input data into the image.
-- Images must be public; private registries are not supported.
+- Private images work with registries that use token authentication (ghcr.io, Docker Hub and similar), not with registries that only accept a password on every request.
 - Checkpoints (resuming a long task where it stopped) are planned.
 - GPUs and stronger isolation (gVisor) are built but not tested on real hardware.
 - Windows computers are untested; Macs cannot share.

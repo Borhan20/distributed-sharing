@@ -176,8 +176,8 @@ export function JobPage() {
 function resultText(t: Task): string {
   const r = t.result as Record<string, unknown> | null;
   if (!r) return "–";
-  if (r.reason) return String(r.reason);
   if (r.error) return `${String(r.error)}${r.exit_code !== undefined ? ` (exit ${r.exit_code})` : ""}`;
+  if (r.reason) return String(r.reason);
   if (r.exit_code !== undefined) return `exit ${r.exit_code}`;
   return "–";
 }

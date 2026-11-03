@@ -156,7 +156,8 @@ export function GuidePage() {
             <ul>
               <li>
                 <code>image</code>: the container image with your code, pinned by digest so every task runs exactly the
-                same software. To find the digest of an image you use:{" "}
+                same software. It can be private, in your group's organization on ghcr.io or Docker Hub (see the
+                group's <em>Images</em> tab). To find the digest of an image you use:{" "}
                 <code>docker pull python:3.12 && docker inspect --format "{"{{index .RepoDigests 0}}"}" python:3.12</code>
               </li>
               <li>
@@ -239,6 +240,11 @@ export function GuidePage() {
           <li>
             <strong>Settings:</strong> tab <em>Settings</em> for the approval rule and other group options, and to close the
             group when the work is done.
+          </li>
+          <li>
+            <strong>Private images:</strong> tab <em>Images</em> → store one <em>read-only</em> token for the
+            group's registry (ghcr.io or Docker Hub). Members push with their own accounts; computers only ever get
+            short-lived access to the one image a task needs.
           </li>
           <li>
             <strong>Computers:</strong> tab <em>Devices</em> → <em>Remove</em> takes a computer out of the group; it

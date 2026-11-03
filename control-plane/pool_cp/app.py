@@ -19,13 +19,14 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from . import agent_ws, storage
-from .api import devices, groups, jobs
+from .api import devices, groups, jobs, registries
 from .auth import TokenVerifier
 from .auth.dev_idp import DEV_AUDIENCE, DEV_ISSUER, DevIdP
 from .auth.dev_idp import router as dev_router
 from .ca import EnvelopeSigner, LocalCA
 from .config import Settings, get_settings
 from .db import make_engine, make_sessionmaker
+from .secretbox import SecretBox
 
 log = logging.getLogger("pool_cp")
 
@@ -66,6 +67,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.ca = LocalCA(settings.ca_key_file, settings.ca_cert_file, timedelta(hours=settings.cert_ttl_hours),
                            create=bool(settings.autocreate_keys))
     app.state.signer = EnvelopeSigner(settings.signing_key_file, create=bool(settings.autocreate_keys))
+    app.state.secretbox = SecretBox(settings.secrets_key_file, create=bool(settings.autocreate_keys))
     app.state.agent_conns = {}
     # Dependencies that do not gate readiness. The object store is optional: jobs run
     # without it and outputs stay on the devices.
@@ -85,6 +87,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(groups.router)
     app.include_router(devices.router)
     app.include_router(jobs.router)
+    app.include_router(registries.router)
     app.include_router(agent_ws.router)
 
     @app.get("/api/v1/config", tags=["ops"])

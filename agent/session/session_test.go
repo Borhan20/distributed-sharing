@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -41,6 +42,7 @@ type fakeRuntime struct {
 	cleaned map[string]bool
 	stopped map[string]bool
 	exit    int
+	auth    *sandbox.RegistryAuth // last private-image token seen by Run
 }
 
 func newFakeRuntime(t *testing.T) *fakeRuntime {
@@ -63,6 +65,9 @@ func (f *fakeRuntime) ch(m map[string]chan struct{}, id string) chan struct{} {
 }
 
 func (f *fakeRuntime) Run(ctx context.Context, s sandbox.Spec, onStart func(), logs sandbox.LogSink) (sandbox.Result, error) {
+	f.mu.Lock()
+	f.auth = s.RegistryAuth
+	f.mu.Unlock()
 	onStart()
 	close(f.ch(f.started, s.AttemptID))
 	logs("stdout", []byte("hello from "+s.AttemptID+"\n"))
@@ -314,7 +319,7 @@ func start(t *testing.T, block bool) *harness {
 	return h
 }
 
-func startWith(t *testing.T, rt sandbox.Runtime) *harness {
+func startWith(t *testing.T, rt sandbox.Runtime, configure ...func(*Config)) *harness {
 	t.Helper()
 	home := t.TempDir()
 	dir := filepath.Join(home, "profiles", "default")
@@ -329,13 +334,17 @@ func startWith(t *testing.T, rt sandbox.Runtime) *harness {
 		CertPEM: []byte("-----BEGIN CERTIFICATE-----\nZmFrZQ==\n-----END CERTIFICATE-----\n"),
 	}
 	_ = os.WriteFile(filepath.Join(dir, enroll.PolicyFile), []byte(testPolicy), 0o600)
-	a, err := New(Config{
+	cfg := Config{
 		Profile: prof, Home: home, Runtime: rt, AgentVersion: "test", Idle: idle.Static{Idle: true},
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		DeviceInfo: func() sysinfo.Info {
 			return sysinfo.Info{OS: "linux", Arch: "amd64", CPUCores: 8, MemoryMB: 16384, FreeDiskMB: 100000, GPUs: []protocol.GPUInfo{}}
 		},
-	})
+	}
+	for _, f := range configure {
+		f(&cfg)
+	}
+	a, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -599,5 +608,101 @@ func TestOwnerReturnCheckpointAndStop(t *testing.T) {
 	c.send(protocol.TypeOffer, o2)
 	if d := c.expect("decline", 10*time.Second); d["reason"] != protocol.DeclineOwnerActive {
 		t.Fatalf("decline: %v", d)
+	}
+}
+
+func TestPrivateImageAsksForAPullToken(t *testing.T) {
+	h := start(t, false)
+	c := h.conn()
+	c.expect("ready", 5*time.Second)
+	o := h.fs.offer(h.prof.DeviceID, func(e *protocol.TaskEnvelope) { e.RegistryAuth = true }, nil)
+	c.send(protocol.TypeOffer, o)
+	c.expect("accept", 5*time.Second)
+	req := c.expect("pull_auth_request", 5*time.Second)
+	if req["attempt_id"] != o.AttemptID || req["epoch"].(float64) != 1 {
+		t.Fatalf("pull_auth_request: %v", req)
+	}
+	reg, tok := "ghcr.io", "short-lived-token"
+	c.send(protocol.TypePullAuth, &protocol.PullAuth{AttemptID: o.AttemptID, Registry: &reg, Token: &tok})
+	c.expect("started", 5*time.Second)
+	h.rt.mu.Lock()
+	got := h.rt.auth
+	h.rt.mu.Unlock()
+	if got == nil || got.Key != "ghcr.io" || got.Token != tok {
+		t.Fatalf("runtime got auth %+v", got)
+	}
+}
+
+func TestPrivateImageWithoutATokenFailsInsteadOfPullingAnonymously(t *testing.T) {
+	h := start(t, false)
+	c := h.conn()
+	c.expect("ready", 5*time.Second)
+	o := h.fs.offer(h.prof.DeviceID, func(e *protocol.TaskEnvelope) { e.RegistryAuth = true }, nil)
+	c.send(protocol.TypeOffer, o)
+	c.expect("accept", 5*time.Second)
+	c.expect("pull_auth_request", 5*time.Second)
+	reason := "no registry credentials for ghcr.io in this group"
+	c.send(protocol.TypePullAuth, &protocol.PullAuth{AttemptID: o.AttemptID, Reason: &reason})
+	abort := c.expect("abort", 5*time.Second)
+	if abort["reason"] != protocol.AbortRuntimeError || !strings.Contains(abort["detail"].(string), reason) {
+		t.Fatalf("abort: %v", abort)
+	}
+	c.none(500*time.Millisecond, "started")
+}
+
+// After a computer pulled an image with one group's token, a task without a
+// token for the same image may use the local copy only if the registry serves
+// the image to anyone; the list survives an agent restart.
+func TestOtherGroupsMustProveAccessToACachedPrivateImage(t *testing.T) {
+	var public bool
+	var checked []string
+	rt := newFakeRuntime(t)
+	h := startWith(t, rt, func(c *Config) {
+		c.CheckPublic = func(_ context.Context, image string) error {
+			checked = append(checked, image)
+			if public {
+				return nil
+			}
+			return errors.New("the registry refuses this image without credentials")
+		}
+	})
+	h.rt = rt
+	c := h.conn()
+	c.expect("ready", 5*time.Second)
+	private := h.fs.offer(h.prof.DeviceID, func(e *protocol.TaskEnvelope) { e.RegistryAuth = true }, nil)
+	c.send(protocol.TypeOffer, private)
+	c.expect("accept", 5*time.Second)
+	c.expect("pull_auth_request", 5*time.Second)
+	reg, tok := "ghcr.io", "t"
+	c.send(protocol.TypePullAuth, &protocol.PullAuth{AttemptID: private.AttemptID, Registry: &reg, Token: &tok})
+	noStore := "no_object_store"
+	c.expect("upload_request", 5*time.Second)
+	c.send(protocol.TypeUploadURLs, &protocol.UploadURLs{AttemptID: private.AttemptID, Reason: &noStore})
+	c.expect("commit", 5*time.Second)
+	image := "busybox@sha256:" + strings.Repeat("a", 64)
+	if readPrivateImages(h.prof.Dir)[image] != "token" {
+		t.Fatal("private image list not saved in the profile directory")
+	}
+
+	refused := h.fs.offer(h.prof.DeviceID, nil, nil) // same image, no token
+	c.send(protocol.TypeOffer, refused)
+	c.expect("accept", 5*time.Second)
+	abort := c.expect("abort", 5*time.Second)
+	if !strings.Contains(abort["detail"].(string), "another group") {
+		t.Fatalf("abort: %v", abort)
+	}
+	if len(checked) != 1 {
+		t.Fatalf("registry checked %d times, want 1", len(checked))
+	}
+
+	public = true // the same image turns out to be public: it runs, and is not checked again
+	allowed := h.fs.offer(h.prof.DeviceID, nil, nil)
+	c.send(protocol.TypeOffer, allowed)
+	c.expect("accept", 5*time.Second)
+	c.expect("upload_request", 5*time.Second)
+	c.send(protocol.TypeUploadURLs, &protocol.UploadURLs{AttemptID: allowed.AttemptID, Reason: &noStore})
+	c.expect("commit", 5*time.Second)
+	if readPrivateImages(h.prof.Dir)[image] != "public" {
+		t.Fatal("public image not remembered")
 	}
 }

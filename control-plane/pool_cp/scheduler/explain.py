@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pool_protocol import messages as pm
 
 from ..config import Settings
-from ..models import Attempt, Device, DeviceShare, Group, Job, Membership, Task, TaskLog, User
+from ..models import Attempt, AuditEvent, Device, DeviceShare, Group, Job, Membership, Task, TaskLog, User
 from ..timeutil import utcnow
 from .core import SHARE_ROLES
 
@@ -126,6 +126,13 @@ async def _last_failure(s: AsyncSession, job: Job) -> Reason | None:
         select(TaskLog.chunk).where(TaskLog.attempt_id == attempt.id, TaskLog.stream == "agent")
         .order_by(TaskLog.id.desc()).limit(1)
     )).scalar()
+    if not detail:  # it failed before it started (no log): the agent's reason is in its abort message
+        details = (await s.execute(
+            select(AuditEvent.details).where(AuditEvent.action == "attempt.abort",
+                                             AuditEvent.target_id == str(attempt.id))
+            .order_by(AuditEvent.id.desc()).limit(1)
+        )).scalar()
+        detail = (details or {}).get("detail")
     what = (attempt.end_reason or attempt.state).replace("_", " ")
     message = f"The last try on {device_name} ended: {what}."
     if detail:

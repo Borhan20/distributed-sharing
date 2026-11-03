@@ -128,3 +128,21 @@ spec:
     assert g in cli("groups", "deleted").output
     assert "restored" in cli("groups", "restore", g).output
     assert g in cli("groups", "list").output
+
+
+async def test_cli_stores_a_registry_token_from_stdin(cli, base_url, tmp_path):
+    from test_private_images import SECRET, USER, FakeRegistry
+    from typer.testing import CliRunner
+
+    reg = FakeRegistry()
+    try:
+        g = gname()
+        cli("groups", "create", g, "--template", "research-team")
+        res = CliRunner().invoke(app, ["registry", "set", reg.host, "--username", USER, "--group", g, "--token-stdin"],
+                                 input=SECRET + "\n", catch_exceptions=False)
+        assert res.exit_code == 0 and "stored encrypted" in res.output, res.output
+        listed = cli("registry", "list", g).output
+        assert reg.host in listed and USER in listed and SECRET not in listed
+        assert "removed" in cli("registry", "remove", reg.host, "--group", g).output
+    finally:
+        reg.close()

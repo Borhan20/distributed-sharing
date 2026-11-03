@@ -25,12 +25,14 @@ invite_app = typer.Typer(help="Invite links.", no_args_is_help=True)
 requests_app = typer.Typer(help="Join requests and votes.", no_args_is_help=True)
 devices_app = typer.Typer(help="Your devices: enroll, share, revoke, history.", no_args_is_help=True)
 jobs_app = typer.Typer(help="Jobs in a group.", no_args_is_help=True)
+registry_app = typer.Typer(help="Read-only registry tokens for a group's private images.", no_args_is_help=True)
 app.add_typer(groups_app, name="groups")
 app.add_typer(members_app, name="members")
 app.add_typer(invite_app, name="invite")
 app.add_typer(requests_app, name="requests")
 app.add_typer(devices_app, name="devices")
 app.add_typer(jobs_app, name="jobs")
+app.add_typer(registry_app, name="registry")
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
 
@@ -353,6 +355,31 @@ def sweep(file: Path = typer.Argument(..., exists=True), set_: list[str] = typer
         typer.echo(f"{count} tasks: {json.dumps(matrix)}")
         return
     _submit(data, group)
+
+
+@registry_app.command("list")
+def registry_list(group: str = typer.Argument(None)) -> None:
+    rows = api("GET", f"/api/v1/groups/{_group(group)}/registries")
+    table(rows, ["registry", "username", "updated_by", "updated_at"])
+
+
+@registry_app.command("set")
+def registry_set(registry: str, username: str = typer.Option(..., help="The read-only account"),
+                 group: str = typer.Option(None),
+                 token_stdin: bool = typer.Option(False, "--token-stdin", help="Read the token from standard input")
+                 ) -> None:
+    """Store a read-only token so the group's computers can pull its private images (coordinators, admins).
+    The token is never taken as a command-line argument, where it would end up in shell history."""
+    token = sys.stdin.readline().strip() if token_stdin else typer.prompt("Read-only token", hide_input=True)
+    r = api("PUT", f"/api/v1/groups/{_group(group)}/registries",
+            json={"registry": registry, "username": username, "token": token})
+    typer.echo(f"saved: {r['registry']} as {r['username']} (checked with the registry, stored encrypted)")
+
+
+@registry_app.command("remove")
+def registry_remove(registry: str, group: str = typer.Option(None)) -> None:
+    api("DELETE", f"/api/v1/groups/{_group(group)}/registries/{registry}")
+    typer.echo(f"removed the token for {registry}")
 
 
 @jobs_app.command("delete")

@@ -145,6 +145,21 @@ EXAMPLES: dict[str, dict] = {
         ],
         "reason": None,
     },
+    "pull_auth_request": {
+        "type": "pull_auth_request",
+        "msg_id": "m-14a",
+        "attempt_id": ATT,
+        "epoch": 2,
+    },
+    "pull_auth": {
+        "type": "pull_auth",
+        "msg_id": "m-14b",
+        "attempt_id": ATT,
+        "registry": "ghcr.io",
+        "token": "example-short-lived-bearer-token",
+        "expires_at": T1,
+        "reason": None,
+    },
     "commit": {
         "type": "commit",
         "msg_id": "m-15",

@@ -19,10 +19,11 @@ from sqlalchemy import select
 
 from pool_protocol import messages as pm
 
-from . import audit, storage
+from . import audit, registry, storage
 from .ca import CAError, LocalCA
-from .models import Device, RevokedCert
+from .models import Device, GroupRegistryCredential, RevokedCert
 from .scheduler import core
+from .secretbox import SecretBoxError
 from .storage import presign_put
 from .timeutil import utcnow
 
@@ -175,6 +176,27 @@ class _Revoked(Exception):
     pass
 
 
+async def _pull_auth(app, s, device_id: uuid.UUID, task, attempt_id: str) -> pm.PullAuth:
+    """A token that can pull this task's image only, from the group's stored registry credential."""
+    try:
+        ref = registry.parse_image(task.spec["image"])
+    except registry.RegistryError as exc:
+        return pm.PullAuth(attempt_id=attempt_id, reason=str(exc))
+    cred = await s.get(GroupRegistryCredential, (task.group_id, ref.registry))
+    if cred is None:
+        return pm.PullAuth(attempt_id=attempt_id, reason=f"this group has no credentials for {ref.registry}")
+    try:
+        secret = app.state.secretbox.open(cred.secret)
+        token, expires = await asyncio.to_thread(registry.pull_token, ref, cred.username, secret)
+    except (registry.RegistryError, SecretBoxError) as exc:
+        return pm.PullAuth(attempt_id=attempt_id, reason=str(exc))
+    await audit.record(s, actor_type="device", actor_id=device_id, action="image.pull_token", group_id=task.group_id,
+                       device_id=device_id, target_type="attempt", target_id=attempt_id,
+                       details={"registry": ref.registry, "repository": ref.repository})
+    await s.commit()
+    return pm.PullAuth(attempt_id=attempt_id, registry=ref.auth_key, token=token, expires_at=expires)
+
+
 async def _dispatch(app, device_id: uuid.UUID, msg) -> pm._Msg | list | None:  # noqa: C901
     settings = app.state.settings
     async with app.state.sessionmaker() as s:
@@ -219,6 +241,10 @@ async def _dispatch(app, device_id: uuid.UUID, msg) -> pm._Msg | list | None:  #
                     urls.append(pm.UploadURL(path=art.path, sha256=art.sha256, url=url, expires_at=expires))
                 await s.commit()
                 return pm.UploadURLs(attempt_id=msg.attempt_id, urls=urls)
+            case pm.PullAuthRequest():
+                # SECURITY-SENSITIVE: hands out registry access. Only for the device's own, current attempt.
+                f = await core.fence(s, device_id, msg.attempt_id, msg.epoch)
+                return await _pull_auth(app, s, device_id, f.task, msg.attempt_id)
             case pm.Commit():
                 ack = await core.handle_commit(s, settings, device_id, msg)
                 await s.commit()

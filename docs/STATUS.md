@@ -109,6 +109,15 @@ that were not available.
 | Remove a computer from a group / let it back in | Done | Coordinators and admins; the owner cannot override |
 | Server admins revoke any computer | Done | Lost or stolen computers; two-step sign-in |
 
+## Private images (decision of 3 November 2026)
+
+| Item | Status | Notes |
+|---|---|---|
+| Group registry tokens (read-only), encrypted at rest | Done | Images tab, `pool registry`, `PUT /api/v1/groups/{name}/registries`; checked with the registry like `docker login` |
+| Short-lived per-image pull tokens for agents | Done | Registry token protocol (GHCR, Docker Hub); offer flag `registry_auth`, messages `pull_auth_request`/`pull_auth`; audited |
+| No cross-group use of cached private images | Done | Agent's `private-images.json` and an anonymous registry check |
+| Tested | Done | Unit tests with a fake token registry; e2e with a real CNCF Distribution registry in token mode. **Not tested against ghcr.io or Docker Hub themselves** (needs real accounts) |
+
 ## Ahead of plan (Phase 2 and later pieces already built)
 
 | Item | Status | Notes |

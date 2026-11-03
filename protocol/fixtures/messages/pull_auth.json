@@ -1,0 +1,9 @@
+{
+  "attempt_id": "6f9e2c71-0d3b-4c8e-a1f5-3b2e9d7c6a10",
+  "expires_at": "2026-11-02T12:01:00Z",
+  "msg_id": "m-14b",
+  "reason": null,
+  "registry": "ghcr.io",
+  "token": "example-short-lived-bearer-token",
+  "type": "pull_auth"
+}

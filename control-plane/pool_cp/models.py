@@ -195,6 +195,22 @@ class DeviceShare(Base):
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now())
 
 
+class GroupRegistryCredential(Base):
+    """A group's read-only credential for one container registry (private images).
+
+    The secret is encrypted with the server's secrets key (secretbox.py) and never leaves the server:
+    agents only get short-lived pull tokens for one image (registry.py).
+    """
+
+    __tablename__ = "group_registry_credentials"
+    group_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True)
+    registry_host: Mapped[str] = mapped_column(String(255), primary_key=True)
+    username: Mapped[str] = mapped_column(String(255))
+    secret: Mapped[bytes] = mapped_column(LargeBinary)
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    updated_at: Mapped[datetime] = mapped_column(TS, server_default=func.now())
+
+
 class RunHistory(Base):
     """What ran on a device, kept for its owner after the job or group is deleted (plan §8.1 principle 5).
 

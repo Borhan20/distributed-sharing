@@ -20,6 +20,7 @@ import (
 	"pool/agent/enroll"
 	"pool/agent/policy"
 	"pool/agent/protocol"
+	"pool/agent/registry"
 	"pool/agent/sandbox"
 )
 
@@ -41,7 +42,30 @@ func (a *Agent) runAttempt(ctx context.Context, at *attempt) {
 		a.writeState()
 	}
 	logs := func(stream string, b []byte) { a.enqueueLog(at, stream, b) }
-	res, err := a.cfg.Runtime.Run(ctx, spec, onStart, logs)
+	var res sandbox.Result
+	var err error
+	if env.RegistryAuth {
+		spec.RegistryAuth, err = a.pullAuth(at)
+		if err == nil {
+			a.markPrivate(env.Spec.Image)
+		}
+	} else if a.isPrivate(env.Spec.Image) {
+		// This computer pulled the image for a group with a token. This group has
+		// none: it may use the local copy only if anyone could pull the image.
+		check := a.cfg.CheckPublic
+		if check == nil {
+			check = func(ctx context.Context, image string) error { return registry.CheckPublic(ctx, nil, image) }
+		}
+		if cerr := check(ctx, env.Spec.Image); cerr != nil {
+			err = fmt.Errorf("this image is private: this computer pulled it for another group, and this group "+
+				"has no access to it (%v)", cerr)
+		} else {
+			a.markPublic(env.Spec.Image)
+		}
+	}
+	if err == nil {
+		res, err = a.cfg.Runtime.Run(ctx, spec, onStart, logs)
+	}
 
 	a.mu.Lock()
 	dropped, reason := at.dropped, at.stopReason
@@ -118,6 +142,46 @@ func (a *Agent) enqueueLog(at *attempt, stream string, b []byte) {
 
 func (a *Agent) agentLog(at *attempt, text string) {
 	a.enqueueLog(at, "agent", []byte(text+"\n"))
+}
+
+// pullAuth asks the server for a short-lived token to pull a private image.
+// Without one the attempt fails: a private image is never pulled anonymously.
+func (a *Agent) pullAuth(at *attempt) (*sandbox.RegistryAuth, error) {
+	ch := make(chan protocol.PullAuth, 1)
+	a.mu.Lock()
+	connected := a.conn != nil
+	if connected {
+		a.pullWait[at.id] = ch
+	}
+	a.mu.Unlock()
+	if !connected {
+		return nil, errors.New("private image: not connected to the server to get a pull token")
+	}
+	if err := a.send(protocol.TypePullAuthReq, &protocol.PullAuthRequest{AttemptID: at.id, Epoch: at.epoch}); err != nil {
+		a.mu.Lock()
+		delete(a.pullWait, at.id)
+		a.mu.Unlock()
+		return nil, fmt.Errorf("private image: %w", err)
+	}
+	select {
+	case m, ok := <-ch:
+		if !ok {
+			return nil, errors.New("private image: disconnected before the pull token arrived")
+		}
+		if m.Token == nil || m.Registry == nil || *m.Token == "" {
+			reason := "no reason given"
+			if m.Reason != nil {
+				reason = *m.Reason
+			}
+			return nil, fmt.Errorf("private image: the server gave no pull token (%s)", reason)
+		}
+		return &sandbox.RegistryAuth{Key: *m.Registry, Token: *m.Token}, nil
+	case <-time.After(pullAuthTimeout):
+		a.mu.Lock()
+		delete(a.pullWait, at.id)
+		a.mu.Unlock()
+		return nil, errors.New("private image: no pull token from the server")
+	}
 }
 
 // upload asks for presigned URLs and PUTs every output. Outputs are listed

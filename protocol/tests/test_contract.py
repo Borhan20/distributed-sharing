@@ -15,7 +15,7 @@ from pool_protocol import messages as m
 
 FIX = Path(__file__).resolve().parent.parent / "fixtures"
 AGENT_TYPES = {"hello", "heartbeat", "ready", "accept", "decline", "started", "progress", "upload_request",
-               "commit", "abort", "renew_cert"}
+               "pull_auth_request", "commit", "abort", "renew_cert"}
 
 
 @pytest.mark.parametrize("path", sorted((FIX / "messages").glob("*.json")), ids=lambda p: p.stem)

@@ -10,8 +10,9 @@ import { JoinRequestsTab } from "./group/JoinRequestsTab";
 import { DevicesTab, UsageTab } from "./group/DevicesTab";
 import { AuditTab } from "./group/AuditTab";
 import { SettingsTab } from "./group/SettingsTab";
+import { ImagesTab } from "./group/ImagesTab";
 
-type TabId = "jobs" | "members" | "invites" | "requests" | "devices" | "usage" | "audit" | "settings";
+type TabId = "jobs" | "members" | "invites" | "requests" | "devices" | "images" | "usage" | "audit" | "settings";
 
 const MANAGERS = new Set(["coordinator", "admin"]);
 const VOTERS = new Set(["coordinator", "admin", "member"]);
@@ -35,7 +36,7 @@ export function GroupPage() {
   if (MANAGERS.has(role) || (VOTERS.has(role) && g.approval_rule !== "coordinator-only")) {
     tabs.push({ id: "requests", label: "Join requests" });
   }
-  tabs.push({ id: "devices", label: "Devices" }, { id: "usage", label: "Usage" });
+  tabs.push({ id: "devices", label: "Devices" }, { id: "images", label: "Images" }, { id: "usage", label: "Usage" });
   if (MANAGERS.has(role)) tabs.push({ id: "audit", label: "Audit log" });
   if (role === "coordinator") tabs.push({ id: "settings", label: "Settings" });
   const requested = params.get("tab") as TabId | null;
@@ -61,6 +62,7 @@ export function GroupPage() {
         {active === "invites" && <InvitesTab group={g} />}
         {active === "requests" && <JoinRequestsTab group={g} />}
         {active === "devices" && <DevicesTab group={g} />}
+        {active === "images" && <ImagesTab group={g} />}
         {active === "usage" && <UsageTab group={g} />}
         {active === "audit" && <AuditTab group={g} />}
         {active === "settings" && <SettingsTab group={g} />}
