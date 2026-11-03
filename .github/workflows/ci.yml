@@ -1,5 +1,6 @@
 # CI (plan §10): nothing is "done" until these pass.
-# Hardening: pin third-party actions by commit SHA once the repository is set up.
+# Hardening: third-party actions are pinned by commit SHA (setup-uv also publishes no major tags since v8);
+# GitHub's own actions/* use their major tags.
 name: ci
 
 on:
@@ -25,8 +26,8 @@ jobs:
     env:
       POOL_TEST_ADMIN_DSN: postgresql://postgres@127.0.0.1:55432/postgres
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
       - run: uv sync --all-packages --extra s3 --frozen
       - name: Lint
         run: uv run ruff check protocol control-plane cli scripts tests
@@ -53,10 +54,11 @@ jobs:
       run:
         working-directory: agent
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
       - run: go vet ./...
       - name: Unit and contract tests
         run: go test ./...
@@ -76,8 +78,8 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -102,11 +104,12 @@ jobs:
     env:
       POOL_TEST_ADMIN_DSN: postgresql://postgres@127.0.0.1:55432/postgres
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+      - uses: actions/setup-go@v7
         with:
           go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
       - run: uv sync --all-packages --extra s3 --frozen
       - run: cd agent && go build -o bin/pool-agent ./cmd/pool-agent
       - name: Agent end-to-end and chaos tests (invariants checked after each run)
