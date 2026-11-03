@@ -1,0 +1,42 @@
+# SECURITY-SENSITIVE: decides what is public. Needs security review (plan §8.10).
+# pool's single public address (deploy/compose.server.yaml). Values come from deploy/.env:
+#   POOL_ADDRESS  the server's name or IP address
+#   POOL_TLS      an email address: free certificates from Let's Encrypt, renewed automatically
+#                 "internal": Caddy's own CA (LAN and test servers; members must trust it)
+
+{
+	# Clients that connect to an IP address send no server name (SNI); serve them this site's certificate.
+	default_sni {$POOL_ADDRESS}
+}
+
+{$POOL_ADDRESS} {
+	tls {$POOL_TLS}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+
+	# Sign-in (Keycloak). Not under /auth: the web app's sign-in return address is /auth/callback.
+	# The admin console and the master realm stay private (SSH tunnel to 127.0.0.1:8080).
+	handle /idp/* {
+		@private path /idp/admin /idp/admin/* /idp/realms/master /idp/realms/master/*
+		respond @private "Not found" 404
+		reverse_proxy keycloak:8080
+	}
+
+	# Presigned up- and downloads. Host and path must reach the store unchanged: the signature covers them.
+	handle /pool-artifacts/* {
+		request_body {
+			max_size 10GB
+		}
+		reverse_proxy seaweedfs:8333
+	}
+
+	# API, agent WebSocket and web UI.
+	handle {
+		reverse_proxy api:8000
+	}
+}
