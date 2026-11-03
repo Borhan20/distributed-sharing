@@ -143,8 +143,7 @@ COPY pi.py /app/pi.py
 **Step 3. Build it and push it** to your group's organization on the GitHub
 container registry (ghcr.io) or Docker Hub. The image can stay **private**:
 you push with your own account, and the group's computers get access to it
-only for the tasks that need it (see [Private images](#private-images)).
-Replace `YOUR-ORG`:
+only for the tasks that need it. Replace `YOUR-ORG`:
 
 ```bash
 docker login ghcr.io                      # your own account; it needs write access to the organization
@@ -153,6 +152,13 @@ docker push ghcr.io/YOUR-ORG/pi-sweep:1
 docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/YOUR-ORG/pi-sweep:1
 # prints ghcr.io/YOUR-ORG/pi-sweep@sha256:...   <- use this as the image
 ```
+
+> **Private image? The group needs a read-only token first.** The job file
+> never contains a password. Instead, a coordinator or admin stores one
+> read-only token for the registry on the group's **Images** tab. They do
+> this once per group, not once per job. Without that token, the tasks fail
+> with `pull access denied`. The steps, and how to check that the token can
+> read your image, are under [Private images](#private-images).
 
 **Step 4. Describe the job.** Save as `pi-sweep.yaml`:
 
@@ -215,12 +221,40 @@ your code is not public:
    group's **Images** tab, or `pool registry set ghcr.io --username READER
    --group my-lab` (it asks for the token). Use a token that can only read,
    ideally from an account made for this:
-   - GitHub: a personal access token (classic) with only the `read:packages` scope.
-   - Docker Hub: an access token with read-only permission.
+   - **GitHub (ghcr.io):** a personal access token **(classic)** with only the
+     `read:packages` scope. Make it under **Settings → Developer settings →
+     Personal access tokens → Tokens (classic) → Generate new token (classic)**.
+     Fine-grained tokens do not work with ghcr.io.
+   - **Docker Hub:** a personal access token with the permission **Repo
+     Read-only**. Make it at app.docker.com under **your avatar → Account
+     settings → Personal access tokens → Generate new token**. Do not keep the
+     default permission *Repo Public Read-only*: it cannot read private images.
+
+   Both sites show the token only once, so copy it right away. Give it an
+   expiry date; when it expires, store a new one the same way. Both kinds of
+   token belong to the account that made them, and stop working if that
+   account loses access to the images.
 
    Check the registry's own documentation for the current steps. The server
    checks the token with the registry, stores it encrypted, and never shows it
    again.
+
+   The server can only check that the token is valid, not that it can read a
+   particular image. The account must also be allowed to read the image: on
+   ghcr.io, check the package's access settings in the organization. To be
+   sure, test the token on your own computer before the first job:
+
+   ```bash
+   export DOCKER_CONFIG=$(mktemp -d)   # a throwaway login, so your own login stays as it is
+   docker login ghcr.io -u READER      # paste the read-only token as the password (Docker Hub: docker login -u READER)
+   docker manifest inspect ghcr.io/YOUR-ORG/pi-sweep:1 > /dev/null && echo "OK: the group can pull it"
+   rm -rf "$DOCKER_CONFIG"; unset DOCKER_CONFIG
+   ```
+
+   `denied` means this account cannot read the image. Use `docker manifest
+   inspect` rather than `docker pull`: `docker pull` does not contact the
+   registry when the image is already on your computer, so it can succeed
+   even when the token has no access.
 3. **Nothing changes for jobs.** When a task needs a private image, the server
    exchanges the stored token for one that can pull only that image and expires
    within minutes, and gives the computer only that. Members' computers never

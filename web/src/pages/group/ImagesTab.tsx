@@ -127,9 +127,12 @@ export function ImagesTab({ group }: { group: Group }) {
             </label>
             <p className="muted small-text">
               Use a token that can only <em>read</em>, ideally from an account made for this purpose with read access to the
-              organization's images. GitHub: a personal access token (classic) with only <code>read:packages</code>.
-              Docker Hub: an access token with read-only permission. The token is checked with the registry, stored
-              encrypted, and never shown again.
+              organization's images. GitHub: a personal access token <em>(classic)</em> with only{" "}
+              <code>read:packages</code> (Settings → Developer settings → Personal access tokens → Tokens (classic));
+              fine-grained tokens do not work. Docker Hub: a personal access token with the permission{" "}
+              <em>Repo Read-only</em> (Account settings → Personal access tokens); the default,{" "}
+              <em>Repo Public Read-only</em>, cannot read private images. The token is checked with the registry,
+              stored encrypted, and never shown again.
             </p>
             <ErrorBox error={save.error} />
             <button type="submit" disabled={save.isPending || !username || !token}>

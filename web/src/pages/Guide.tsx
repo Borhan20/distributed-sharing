@@ -156,8 +156,10 @@ export function GuidePage() {
             <ul>
               <li>
                 <code>image</code>: the container image with your code, pinned by digest so every task runs exactly the
-                same software. It can be private, in your group's organization on ghcr.io or Docker Hub (see the
-                group's <em>Images</em> tab). To find the digest of an image you use:{" "}
+                same software. It can be private, in your group's organization on ghcr.io or Docker Hub. For a
+                private image, a coordinator or admin first stores one read-only token for its registry on the
+                group's <em>Images</em> tab. This is done once per group; the job itself never contains a password.
+                To find the digest of an image you use:{" "}
                 <code>docker pull python:3.12 && docker inspect --format "{"{{index .RepoDigests 0}}"}" python:3.12</code>
               </li>
               <li>
