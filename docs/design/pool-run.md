@@ -8,9 +8,11 @@
 
 ## 1. Goal
 
-Run what you already run on your own computer (an app in any framework, a
-training script, a whole stack from a Compose file) the same way, with `pool`
-in front. It runs on a computer of your group that has the CPU, memory or GPU
+Run what you already run on your own computer (an app in any language or
+framework, a training program, a whole stack from a Compose file) the same way,
+with `pool` in front. pool never looks inside the program: it sees a Linux
+container, a command and the ports it listens on. Python, Java, Go, C++, Node,
+Rust, .NET, Ruby or PHP are all the same to it. It runs on a computer of your group that has the CPU, memory or GPU
 you lack, and it feels like your own machine:
 
 - the app's ports open at `localhost` on your computer,
@@ -41,6 +43,7 @@ second way in, for programs you work with interactively.
 | Keeping a database's data after the app stops (v1) | Volumes live on the borrowed computer and are deleted with the app | Export what you need to `/out` |
 | Mobile apps in an emulator | The Android emulator needs hardware virtualization (KVM), which the sandbox must not give | Test on your own device or emulator, against the app's API through pool |
 | Load tests through the tunnel | The tunnel is for one person using the app | Run the load generator (e.g. k6) as a service in the stack |
+| Apps that run only on Windows or macOS (Win32, WPF, .NET Framework, Cocoa) | Members' computers run Linux containers | Cross-platform builds (.NET on Linux, Qt, Java) work; Windows-native jobs are a later plan item (T0) |
 
 ## 2. What it is like
 
@@ -84,7 +87,11 @@ computer, you replace `docker` with `pool`:
 job with your own Docker and pool's rules: no network, read-only file system,
 an unprivileged user, `/out` as the only writable folder, and the size limits.
 Something that would fail on a member's computer fails here first, with the
-same message, before you wait for a computer:
+same message, before you wait for a computer. The hints come from the operating
+system's own error texts ("Read-only file system", "Network is unreachable",
+"Permission denied"). Programs in any language usually pass these on (Go and
+Node in lower case, so they are matched without regard to case), so the hints
+work for Python, Java, Go, C++ or Node alike:
 
 ```text
 $ pool run --local -- python train.py
@@ -92,7 +99,10 @@ $ pool run --local -- python train.py
 pool: the container's file system is read-only. Write to /out (kept) or /tmp (scratch).
 ```
 
-### 2.1 A script or a training run
+### 2.1 A program or a training run
+
+Any program that runs in a container and ends: a Python training script, a C++
+simulation, a Go or Rust batch tool, a Java data job.
 
 ```text
 $ cd my-training
@@ -107,8 +117,9 @@ Done in 41 min. 3 files saved to ./pool-out/  (model.pt, metrics.json, log.txt)
 - **Ctrl-C** stops it, after asking once.
 - **`--detach`** leaves it running; `pool attach APP` shows the output again.
 - A second run uploads only what changed: Docker sends only the image layers that changed, which for a code edit is the small layer with your code.
+- For a compiled language (C++, Go, Rust, Java), the Dockerfile builds the program, usually in two stages, so the image holds only the result: `pool run --memory 8Gi -- ./simulate --steps 1e6`.
 
-### 2.2 A web app, any framework
+### 2.2 An app in any language
 
 ```text
 $ cd my-api
@@ -118,13 +129,24 @@ Running on lab-pc (8 CPU, 32 GiB). Open http://localhost:8000  (only you can rea
 [app] INFO:     127.0.0.1 - "GET /docs HTTP/1.1" 200
 ```
 
-The same works for any app that listens on a port: `npm start` (port 3000),
-`java -jar app.jar`, `python manage.py runserver 0.0.0.0:8000`, Streamlit,
-Gradio, Jupyter or TensorBoard. pool does not need to know the framework. It
-forwards TCP connections, so HTTP, WebSockets and gRPC all work.
+The same works for any program that listens on a port. pool forwards TCP
+connections, so HTTP, WebSockets, gRPC and plain TCP protocols all work:
 
-The app must listen on `0.0.0.0` (all addresses) inside the container, not on
-`127.0.0.1`, or pool cannot reach it. `pool run` checks this and says so.
+| Language | Example command | Its Dockerfile |
+|---|---|---|
+| Python | `uvicorn main:app --host 0.0.0.0 --port 8000`, `gunicorn`, `python manage.py runserver 0.0.0.0:8000`, Streamlit, Jupyter | `FROM python:3.12-slim`, install requirements, copy the code |
+| Java / Kotlin | `java -jar app.jar` (Spring Boot, Quarkus, Micronaut) | Build with Maven or Gradle in a first stage, run on a JRE image |
+| Go | `./server` | Build in `golang`, copy the one binary into a small image |
+| C / C++ | `./server --port 8080` (Drogon, Crow, Boost.Beast, gRPC) | Build with CMake in a first stage, copy the binary and its libraries |
+| Rust | `./server` (Axum, Actix) | `cargo build --release` in a first stage |
+| Node.js | `node server.js`, `npm start` (Express, Next.js, NestJS) | `FROM node`, `npm ci`, copy the code |
+| .NET | `dotnet App.dll` (ASP.NET Core) | Build with the SDK image, run on the ASP.NET runtime image |
+| Ruby, PHP | `rails server -b 0.0.0.0`, `php -S 0.0.0.0:8000`, `php-fpm` behind nginx in a stack | Their official images |
+
+Two rules hold in every language:
+
+- **Listen on all addresses** (`0.0.0.0`) inside the container, not only on `127.0.0.1`, or pool cannot reach the port. When the port does not answer, `pool run` says so.
+- **The memory limit is the container's.** Runtimes with their own heap size (the JVM, Node, .NET) should size it from the container: current JVMs do this by themselves (`-XX:MaxRAMPercentage` to tune), and Node takes `--max-old-space-size`.
 
 ### 2.3 A full stack from a Compose file
 
@@ -148,8 +170,8 @@ same short form as job files, plus `port` and `replicas`:
 
 ```yaml
 name: my-api
-command: uvicorn main:app --host 0.0.0.0 --port 8000
-port: 8000
+command: java -jar /app/app.jar --server.port=8080
+port: 8080
 cpu: 4
 memory: 8Gi
 time_limit: 8h
@@ -298,7 +320,8 @@ What it costs:
 
 The gVisor code path is built but untested here (no `runsc` on the test
 machine). Step 3 starts with a spike on the test VM: PostgreSQL, Redis, a
-FastAPI app and Playwright under `runsc`, measured against T1.
+FastAPI app, a Spring Boot (Java) app, a Go server and Playwright under `runsc`,
+measured against T1.
 
 **Resources** are the sum of the services' limits, or the `--cpu`/`--memory`
 given to `pool up`. The whole stack must fit on one computer.
@@ -339,14 +362,14 @@ copy has its own memory and files.
 | Agent | One internal network per app; several containers per app under gVisor; health checks; the `--desktop` sidecar; tunnel client; `--allow-apps` and `--app-hours` in the policy |
 | Web | Running apps on the job page and the computer's page; Stop |
 | Deploy | The registry in `compose.yaml` and the server installer; `runsc` in the agent's Linux installer |
-| Docs | User guide section "Run your app", examples (a FastAPI app, a Node app, a web + PostgreSQL + Redis stack with Playwright tests, a desktop app), admin notes |
+| Docs | User guide section "Run your app", examples in several languages (Python FastAPI, Java Spring Boot, Go, C++ with CMake, Node), a web + PostgreSQL + Redis stack with Playwright tests, a desktop app; admin notes |
 
 ## 5. Delivery order and acceptance checks
 
 | Step | Scope | Done when (measured) |
 |---|---|---|
 | 1. `pool run` for programs without ports | Local build, built-in registry, run, live output, Ctrl-C, `/out` back, `pool.yaml`; `docker run` flags (refused ones explained); `pool run --local`; `pool attach` for any job, also one started in the browser | A Dockerfile project's script runs on another computer with one command; a code-only change uploads only the changed layer; Ctrl-C stops the container within 10 s; a program that writes outside `/out` fails the same way with `--local` and on a member's computer; a job submitted in the browser can be attached from the terminal (tests) |
-| 2. One app with ports | App shape and the `port:` field in job files, owner opt-in, internal network, tunnel, moving on owner return | A FastAPI app and a Node app on another computer answer at `localhost`; another user cannot open the tunnel; the app cannot reach the owner's services or the internet (tests) |
+| 2. One app with ports | App shape and the `port:` field in job files, owner opt-in, internal network, tunnel, moving on owner return | A Python (FastAPI), a Java (Spring Boot), a Go and a C++ server, each on another computer, answer at `localhost`; another user cannot open the tunnel; the app cannot reach the owner's services or the internet (tests) |
 | 3. Compose stacks and testing | gVisor spike first; `pool up/down/test`, app spec, refused options | The spike's numbers are in the design; a web + PostgreSQL + Redis example stack runs under gVisor on one computer; `pool test` passes and fails with the tests service's exit code; every refused option has a test |
 | 3b. Desktop apps | `--desktop` sidecar | A Tkinter and a Qt example app can be used in the browser at `localhost:6080` |
 | 4. Replicas | Several copies, connection spreading, replacement | Three copies serve one local port; stopping one computer keeps the port answering (test) |
