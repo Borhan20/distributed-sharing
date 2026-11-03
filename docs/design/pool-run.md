@@ -25,6 +25,9 @@ second way in, for programs you work with interactively.
 - **Only the person who starts an app can open it.** Not the group, not the computer's owner, not the internet.
 - **The environment comes from your Dockerfile.** Compose files are supported too, for apps that are a full stack (web, database, cache, worker).
 - **Order:** a single app with a port first, then Compose, then several copies (replicas). Step 1 below lays the base for these steps.
+- **Strong isolation for apps:** apps and stacks run under gVisor (T2), so images that start as root (PostgreSQL, Redis) work unchanged and still cannot touch the owner's kernel ([§3.5](#35-compose-stacks)).
+- **Registry clean-up after 30 days unused**, adjustable by the server admin and per group ([§3.1](#31-images-built-on-your-computer-kept-by-the-server)).
+- **Apps must be testable, with or without a UI** ([§2.7](#27-testing-an-app-with-or-without-a-ui)).
 
 ### What it cannot do
 
@@ -35,6 +38,8 @@ second way in, for programs you work with interactively.
 | Internet access from the app while it runs | Tasks have no network, to protect owners' networks | Put dependencies and models in the image; data inputs are a separate design |
 | Replicas that share in-memory state or a local SQLite file | Copies run on different computers | A Compose stack with its own database, on one computer |
 | Keeping a database's data after the app stops (v1) | Volumes live on the borrowed computer and are deleted with the app | Export what you need to `/out` |
+| Mobile apps in an emulator | The Android emulator needs hardware virtualization (KVM), which the sandbox must not give | Test on your own device or emulator, against the app's API through pool |
+| Load tests through the tunnel | The tunnel is for one person using the app | Run the load generator (e.g. k6) as a service in the stack |
 
 ## 2. What it is like
 
@@ -119,6 +124,30 @@ The job page lists your running apps with their computer, time left, a
 Opening an app directly in the browser through the server needs a separate
 address per app (a domain name with wildcard DNS). That comes later.
 
+### 2.7 Testing an app, with or without a UI
+
+The app runs on a member's computer; the server only passes the connection on.
+pool does not need to know whether a program has a UI: the flags say what to
+open.
+
+| Program | Start it | Try it yourself | Test it automatically |
+|---|---|---|---|
+| Script or training, no UI | `pool run -- python train.py` | Output in your terminal | Exit code; reports in `/out` |
+| API or backend (REST, gRPC, WebSocket) | `pool run --port 8000 -- ...` | `curl`, Postman or a browser at `localhost:8000` | Your tests on your computer against `localhost:8000`, or a test service in the stack |
+| Web app with a UI | `pool run --port 3000 -- ...` or `pool up` | Your own browser at `http://localhost:3000` | A `tests` service in the stack (Playwright, Cypress, Selenium); screenshots, videos and reports come back from `/out` |
+| Desktop GUI app (Qt, Tkinter, Electron, Java Swing) | `pool run --desktop -- python app.py` | Its window in your browser at `localhost:6080`: a virtual screen you click and type in | Headless UI tests on the same virtual screen; screenshots come back |
+
+**`pool test`** starts a stack, runs its `tests` service against it, and
+reports pass or fail with the service's exit code, like `docker compose up
+--exit-code-from tests`. The reports land in `./pool-out/`. Large test suites
+can still be split over computers with `parts`.
+
+**`--desktop`** adds a virtual screen to the app's container network: a
+sidecar container with Xvfb, a VNC server and noVNC (a VNC client in the
+browser), whose port 6080 is forwarded like any other. The app draws on that
+screen (`DISPLAY` is set), so its image needs no extra packages. There is no
+GPU-accelerated graphics; drawing is done in software.
+
 ## 3. How it works
 
 ```text
@@ -146,7 +175,7 @@ The registry:
 - **Storage:** the server's existing file store (SeaweedFS).
 - **Sign-in:** pool's server issues the registry's short-lived tokens, the same token-auth mode the e2e test uses.
 - **Names:** repositories are `<group>/<user>/<app>`. A member can push only under their own name. Computers get a pull token only for the image of the app they run.
-- **Clean-up:** images that no app or job has used for 30 days are deleted. Each group has a storage quota.
+- **Clean-up:** images that no app or job has used for 30 days are deleted. The server admin sets the default (`POOL_REGISTRY_RETENTION_DAYS`), and a coordinator can change it for the group on the **Images** tab. Each group has a storage quota, set the same way.
 
 ### 3.2 An app is a job of a new shape
 
@@ -204,15 +233,23 @@ more than pool allows:
 | `environment`, `env_file` (values are sent to the computer; not for real secrets, §3.8) | `network_mode`, `pid` or `ipc` set to `host`, extra networks |
 | `depends_on` (also "healthy"), `healthcheck`, `restart` | Host folders mounted (`./data:/data`): put files in the image, or use data inputs later |
 | Named volumes, `tmpfs` (inside the disk limit, deleted with the stack) | Ports published on the member's computer (`ports:` is forwarded to you instead) |
-| `ports` (forwarded to your `localhost`), `deploy.resources.limits` | Services running as root (see the next paragraph) |
+| `ports` (forwarded to your `localhost`), `deploy.resources.limits` | – |
 
-**Root inside containers.** Batch tasks run as an unprivileged user. Many
-database images start as root and then drop to their own user (PostgreSQL,
-Redis). v1 runs every service as a non-root user, either the image's own
-`USER` or `user:` in the Compose file. Which common images work that way
-(PostgreSQL, MySQL, Redis, nginx's unprivileged image) is checked in step 3,
-and the guide lists them. Root inside a container is possible only with
-gVisor (T2), which is built but untested here.
+**Strong isolation (decided 3 November 2026).** Apps and stacks run under
+gVisor (T2). gVisor puts a kernel of its own, written in user space, between the
+containers and the owner's computer, so a service may run as root inside its
+container: PostgreSQL, Redis and other images that start as root and drop to
+their own user work unchanged. Batch tasks keep T1 (a hardened container,
+unprivileged user).
+
+What it costs:
+- **Fewer computers:** apps go only to computers with gVisor (`runsc`). The Linux installer adds it; inside WSL2 it is not yet known to work (plan spike S3).
+- **Speed:** disk- and network-heavy services, such as databases, run slower.
+- **GPUs:** an app that needs a GPU depends on gVisor's GPU support (plan spike S1).
+
+The gVisor code path is built but untested here (no `runsc` on the test
+machine). Step 3 starts with a spike on the test VM: PostgreSQL, Redis, a
+FastAPI app and Playwright under `runsc`, measured against T1.
 
 **Resources** are the sum of the services' limits, or the `--cpu`/`--memory`
 given to `pool up`. The whole stack must fit on one computer.
@@ -238,6 +275,7 @@ copy has its own memory and files.
 | Someone else opens my app | Tunnel only for the person who started it; the device side only for the current attempt; tested |
 | One app reaches another | One network per app or stack |
 | Compose asks for host access | The agent creates containers itself; refused options (§3.5) |
+| A container escape from a service running as root | gVisor (T2) for every app and stack (§3.5) |
 | A malicious image | Pinned digests; registry namespaces per person; the usual sandbox |
 | Secrets in `environment` | The computer's owner can read them (`docker inspect`). Warned at `pool up`. Real secret delivery is a separate plan item |
 | Using the server as a free proxy | No outbound internet from apps; caps and records per person |
@@ -247,12 +285,12 @@ copy has its own memory and files.
 
 | Part | New |
 |---|---|
-| `pool` command | `run`, `up`, `down`, `attach`, `logs`, `ps`; reading `pool.yaml`; local build and push; tunnel listener |
+| `pool` command | `run`, `up`, `down`, `test`, `attach`, `logs`, `ps`; reading `pool.yaml`; local build and push; tunnel listener |
 | Server | Built-in registry service and its token issuer; app shape and app spec checks; tunnel endpoints for user and agent; placement only on computers that allow apps |
-| Agent | One internal network per app; several containers per app; health checks; tunnel client; `--allow-apps` and `--app-hours` in the policy |
+| Agent | One internal network per app; several containers per app under gVisor; health checks; the `--desktop` sidecar; tunnel client; `--allow-apps` and `--app-hours` in the policy |
 | Web | Running apps on the job page and the computer's page; Stop |
-| Deploy | The registry in `compose.yaml` and the installer |
-| Docs | User guide section "Run your app", examples (a FastAPI app, a Node app, a web + PostgreSQL + Redis stack), admin notes |
+| Deploy | The registry in `compose.yaml` and the server installer; `runsc` in the agent's Linux installer |
+| Docs | User guide section "Run your app", examples (a FastAPI app, a Node app, a web + PostgreSQL + Redis stack with Playwright tests, a desktop app), admin notes |
 
 ## 5. Delivery order and acceptance checks
 
@@ -260,7 +298,8 @@ copy has its own memory and files.
 |---|---|---|
 | 1. `pool run` for programs without ports | Local build, built-in registry, run, live output, Ctrl-C, `/out` back, `pool.yaml` | A Dockerfile project's script runs on another computer with one command; a code-only change uploads only the changed layer; Ctrl-C stops the container within 10 s (tests) |
 | 2. One app with ports | App shape, owner opt-in, internal network, tunnel, moving on owner return | A FastAPI app and a Node app on another computer answer at `localhost`; another user cannot open the tunnel; the app cannot reach the owner's services or the internet (tests) |
-| 3. Compose stacks | `pool up/down`, app spec, refused options, non-root services | A web + PostgreSQL + Redis example stack runs on one computer; every refused option has a test |
+| 3. Compose stacks and testing | gVisor spike first; `pool up/down/test`, app spec, refused options | The spike's numbers are in the design; a web + PostgreSQL + Redis example stack runs under gVisor on one computer; `pool test` passes and fails with the tests service's exit code; every refused option has a test |
+| 3b. Desktop apps | `--desktop` sidecar | A Tkinter and a Qt example app can be used in the browser at `localhost:6080` |
 | 4. Replicas | Several copies, connection spreading, replacement | Three copies serve one local port; stopping one computer keeps the port answering (test) |
 
 Each step ships with its guide section, an example that is run for real, and
@@ -268,8 +307,8 @@ end-to-end tests with the real agent.
 
 ## 6. Open questions
 
-1. **Root in Compose services:** is non-root enough for the stacks your group uses, or is gVisor (T2) needed early?
-2. **Registry quota and clean-up:** how much storage per group, and is deleting after 30 days unused right?
+1. **gVisor on Windows (WSL2):** if it does not work there, Windows computers run batch tasks only.
+2. **Registry quota:** the default storage per group (clean-up is decided: 30 days unused, adjustable).
 3. **Opening apps in the browser:** needs a domain name with wildcard DNS; when one exists, `https://APP.pool.example.org` only for you.
 4. **Data inputs** for large datasets and model weights: a separate design, since they matter for training as much as for apps.
 5. **Sharing an app with group members**, later: the plan's services were meant to be reachable inside the group.
