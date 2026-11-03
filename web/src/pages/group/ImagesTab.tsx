@@ -3,11 +3,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { client, unwrap, type Group } from "../../api/client";
 import { ConfirmDialog, Empty, ErrorBox, Loading } from "../../components/ui";
 import { fmtTime } from "../../lib/format";
+import { TokenSteps } from "../../components/TokenSteps";
+import { Link } from "react-router-dom";
 
 const MANAGERS = new Set(["coordinator", "admin"]);
 
 /**
- * Private images (docs/user-guide.md §4): the group keeps one read-only registry credential per registry
+ * Private images (docs/user-guide.md §6): the group keeps one read-only registry credential per registry
  * on the server; computers only get short-lived access to the one image a task needs.
  */
 export function ImagesTab({ group }: { group: Group }) {
@@ -57,6 +59,10 @@ export function ImagesTab({ group }: { group: Group }) {
           Each person pushes with their own account. The computers that run your jobs never get a password: for each
           task, this server gives them access to that one image for a few minutes, using a read-only token stored
           here.
+        </p>
+        <p className="muted">
+          An image in someone's personal account? Its owner adds their own token under{" "}
+          <Link to="/images">My images</Link> instead; it is used only for their jobs.
         </p>
         {list.isLoading && <Loading />}
         <ErrorBox error={list.error} />
@@ -125,14 +131,13 @@ export function ImagesTab({ group }: { group: Group }) {
               <input type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="new-password"
                      required />
             </label>
+            <p>
+              <strong>How to make a read-only token</strong> (ideally from an account made for this purpose, with read
+              access to the organization's images):
+            </p>
+            <TokenSteps registry={registry === "other" ? "other" : registry} />
             <p className="muted small-text">
-              Use a token that can only <em>read</em>, ideally from an account made for this purpose with read access to the
-              organization's images. GitHub: a personal access token <em>(classic)</em> with only{" "}
-              <code>read:packages</code> (Settings → Developer settings → Personal access tokens → Tokens (classic));
-              fine-grained tokens do not work. Docker Hub: a personal access token with the permission{" "}
-              <em>Repo Read-only</em> (Account settings → Personal access tokens); the default,{" "}
-              <em>Repo Public Read-only</em>, cannot read private images. The token is checked with the registry,
-              stored encrypted, and never shown again.
+              The token is checked with the registry, stored encrypted, and never shown again.
             </p>
             <ErrorBox error={save.error} />
             <button type="submit" disabled={save.isPending || !username || !token}>

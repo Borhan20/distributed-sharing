@@ -1,0 +1,19 @@
+# Estimate pi in parallel without building an image: a public Python image, split into parts.
+# Each part uses its number (POOL_TASK_INDEX) as its random seed and writes /out/result.json;
+# the job page then shows all parts in one results table.
+name: monte-carlo-pi
+image: python:3.12-slim
+command: |
+  python -c "
+  import json, os, random
+  part = int(os.environ['POOL_TASK_INDEX'])
+  random.seed(part)
+  n = 2_000_000
+  inside = sum(random.random() ** 2 + random.random() ** 2 <= 1 for _ in range(n))
+  json.dump({'part': part, 'samples': n, 'pi': 4 * inside / n}, open('/out/result.json', 'w'))
+  print('part', part, 'done')
+  "
+parts: auto
+cpu: 1
+memory: 256Mi
+time_limit: 15m

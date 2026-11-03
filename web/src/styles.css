@@ -67,7 +67,16 @@ code { background: var(--code-bg); padding: 1px 4px; border-radius: 4px; font-si
 
 label { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; font-weight: 500; }
 label.check { flex-direction: row; align-items: center; font-weight: 400; }
-input, select, textarea { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
+fieldset.choices { border: 1px solid var(--border); border-radius: 8px; margin: 12px 0; padding: 4px 12px 8px; }
+fieldset.choices legend { font-weight: 600; padding: 0 4px; }
+fieldset.choices label.check { align-items: flex-start; }
+fieldset.choices label.check input { margin-top: 4px; }
+.indent { margin-left: 24px; }
+label.grow { flex: 1; min-width: 200px; }
+details { margin: 8px 0; }
+details summary { cursor: pointer; color: var(--accent); }
+ul.warn { padding-left: 24px; }
+input, select, textarea { max-width: 100%; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
 textarea.code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85rem; }
 input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 

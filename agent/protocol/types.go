@@ -242,6 +242,8 @@ type TaskSpec struct {
 	Image       string            `json:"image"`
 	Command     []string          `json:"command"`
 	Env         map[string]string `json:"env"`
+	TaskIndex   int               `json:"task_index"`
+	TaskCount   int               `json:"task_count"`
 	Resources   TaskResources     `json:"resources"`
 	MinTier     Tier              `json:"min_tier"`
 	Network     TaskNetwork       `json:"network"`

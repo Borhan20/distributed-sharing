@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { client, unwrap, type Group } from "../../api/client";
 import { AuditTable } from "../../components/AuditTable";
 import { Empty, ErrorBox, Loading } from "../../components/ui";
-import { downloadJson } from "../../lib/download";
+import { downloadFile } from "../../lib/download";
 
 export function AuditTab({ group }: { group: Group }) {
   const [exportError, setExportError] = useState<unknown>(null);
@@ -20,7 +20,7 @@ export function AuditTab({ group }: { group: Group }) {
           className="secondary"
           onClick={() => {
             setExportError(null);
-            downloadJson(`/api/v1/groups/${encodeURIComponent(group.name)}/audit/export`, `audit-${group.name}.json`).catch(setExportError);
+            downloadFile(`/api/v1/groups/${encodeURIComponent(group.name)}/audit/export`, `audit-${group.name}.json`).catch(setExportError);
           }}
         >
           Export JSON

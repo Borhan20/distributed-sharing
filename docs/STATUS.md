@@ -118,6 +118,22 @@ that were not available.
 | No cross-group use of cached private images | Done | Agent's `private-images.json` and an anonymous registry check |
 | Tested | Done | Unit tests with a fake token registry; e2e with a real CNCF Distribution registry in token mode. **Not tested against ghcr.io or Docker Hub themselves** (needs real accounts) |
 
+## Simple jobs and results (decisions of 3 November 2026)
+
+| Item | Status | Notes |
+|---|---|---|
+| Images by tag | Done | The server pins `name:tag` to `name:tag@sha256:...` at submit time (manifest HEAD, which Docker Hub does not count as a pull: checked with its rate-limit headers). Computers still only get digests. Checked against Docker Hub and GHCR |
+| Short job files | Done | `name, image, command, parts, sweep, cpu, memory, disk, gpu, time_limit, ...`; the full form still works. Plain-language errors that name the field |
+| Split into parts, `parts: auto` | Done | `{{index}}`/`{{count}}` and `POOL_TASK_INDEX`/`POOL_TASK_COUNT` in every task; auto counts the places on available (else shared) computers that fit the task |
+| Optional command | Done | Empty: the image's own ENTRYPOINT/CMD, same hardening |
+| Submit form in the browser | Done | Once / Split into parts (Auto) / For each value, sizes, "Show as job file"; "Run again with changes" on every job page |
+| My images (personal registry tokens) | Done | Used only for the submitter's own jobs, before the group's token. **Needs security review** |
+| Pull tokens checked before use | Done | The server checks that a pull token really reads the image (closes a gap: a token with no access plus a locally cached image) |
+| Registry address guard | Done | Only public addresses unless `POOL_REGISTRY_PRIVATE_NETWORKS`; never link-local/metadata; same-host redirects only. DNS rebinding not covered. **Needs security review** |
+| Results in one place | Done | Job page and `GET /jobs/{id}/results.zip` (streamed: files, logs, `tasks.csv`, `results.csv`, merged CSVs), results table and CSV, log download; `pool download --all`, `pool results`. **Needs security review** |
+| Examples for every kind of work | Done | `examples/`: random runs, sweep, many files, test suite; each run under the agent's container restrictions (3 November 2026); all parse in CI |
+| Tested | Done | Unit and API tests (fake registry, fake file store), Go tests incl. Docker, web tests, e2e with a real agent and SeaweedFS (`parts: auto`, env vars, zip, CLI) |
+
 ## Ahead of plan (Phase 2 and later pieces already built)
 
 | Item | Status | Notes |

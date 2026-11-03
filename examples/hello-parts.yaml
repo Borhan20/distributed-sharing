@@ -1,0 +1,14 @@
+# The short form of a job file: split one command into parts.
+# parts: auto lets the server pick as many parts as the group's computers can run at once.
+# Each part gets its number as {{index}} (0, 1, 2, ...) and the number of parts as {{count}};
+# inside the container they are also in POOL_TASK_INDEX and POOL_TASK_COUNT.
+name: hello
+image: busybox:1.36
+# A command with ": " or "#" in it goes on the next line, after >- (YAML would misread it otherwise).
+command: >-
+  sh -c 'echo "part {{index}} of {{count}}"; echo "{\"part\": {{index}}}" > /out/result.json'
+parts: auto
+cpu: 0.5
+memory: 256Mi
+disk: 64Mi
+time_limit: 10m

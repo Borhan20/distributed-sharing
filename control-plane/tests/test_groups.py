@@ -160,11 +160,14 @@ async def test_job_validation_and_rate_limit(user):
     name = gname()
     await c.post("/api/v1/groups", {"name": name, "display_name": "x",
                                     "registry_allowlist": ["registry.example.org/"]}, expect=201)
-    bad = job_spec(image="python:3.12")
+    bad = job_spec(image="python 3.12")
     r = await c.post(f"/api/v1/groups/{name}/jobs", bad, expect=422)
-    assert "digest" in r.text
+    assert "image name" in r.text
     other = job_spec(image="evil.example.com/x@sha256:" + "a" * 64)
     await c.post(f"/api/v1/groups/{name}/jobs", other, expect=422)
+    # A tag outside the allowlist is refused before the server contacts any registry.
+    r = await c.post(f"/api/v1/groups/{name}/jobs", job_spec(image="python:3.12"), expect=422)
+    assert "allowlist" in r.text
     arr = job_spec(shape="array", matrix={"seed": list(range(10)), "ds": ["a", "b", "c"]},
                    command=["run", "{{seed}}", "{{ds}}"])
     j = (await c.post(f"/api/v1/groups/{name}/jobs", arr, expect=201)).json()

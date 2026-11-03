@@ -15,16 +15,19 @@ from pydantic import BaseModel
 from sqlalchemy import func, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pool_protocol.jobspec import JobSpecError, load_job_spec
+from pool_protocol.jobspec import JobSpecError, is_pinned, load_job_spec
 from pool_protocol.messages import TIER_RANK
 
 from .. import audit, storage
 from ..auth import Principal, current_principal, get_session
 from ..authz import ANY_MEMBER, MANAGERS, SUBMITTERS, load_group, membership, not_found, require_role
 from ..deletion import archive_runs_of_job, outputs_only_in_job
+from ..image_access import credential_for
 from ..models import Attempt, AuditEvent, Group, Job, Task, TaskLog, UsageLedger, User
+from ..registry import RegistryError, parse_image, resolve_digest
 from ..scheduler.core import cancel_tasks
-from ..scheduler.explain import explain_waiting
+from ..scheduler.explain import auto_parts, explain_waiting
+from ..secretbox import SecretBoxError
 from ..timeutil import utcnow
 from .notify import notify_stops
 
@@ -68,6 +71,20 @@ async def _job_out(s: AsyncSession, job: Job, with_spec: bool = False) -> JobOut
     )
 
 
+async def _pin_image(s: AsyncSession, request: Request, p: Principal, g: Group, image: str) -> str:
+    """A tag becomes tag@digest: the version it names now, looked up with the submitter's or the group's
+    token if one is stored (else anonymously). Every task of the job then runs exactly this image."""
+    settings = request.app.state.settings
+    try:
+        ref = parse_image(image)
+        cred = await credential_for(s, request.app.state.secretbox, user_id=p.user.id, group_id=g.id,
+                                    registry=ref.registry)
+        return await asyncio.to_thread(resolve_digest, image, cred[:2] if cred else None,
+                                       allow_private=settings.registry_private_networks)
+    except (RegistryError, SecretBoxError) as exc:
+        raise HTTPException(422, f"image: {exc}") from None
+
+
 @router.post("/groups/{name}/jobs", response_model=JobOut, status_code=201)
 async def submit_job(
     name: str,
@@ -76,17 +93,17 @@ async def submit_job(
     p: Principal = Depends(current_principal),
     s: AsyncSession = Depends(get_session),
 ):
+    """Submit a job in the full or the short form. Tags are pinned to a digest and `parts: auto` becomes a
+    number here; the stored spec keeps what was asked for under `as_submitted`."""
     g = await load_group(s, name)
-    await require_role(s, g, p, SUBMITTERS)
+    m = await require_role(s, g, p, SUBMITTERS)
     settings = request.app.state.settings
     try:
         js = load_job_spec(spec)
     except JobSpecError as exc:
         raise HTTPException(422, str(exc)) from None
     if js.metadata.group and js.metadata.group != g.name:
-        raise HTTPException(422, "metadata.group does not match the URL")
-    if g.registry_allowlist and not any(js.spec.image.startswith(prefix) for prefix in g.registry_allowlist):
-        raise HTTPException(422, "image registry is not on this group's allowlist")
+        raise HTTPException(422, f"the job names group {js.metadata.group!r} but is submitted to {g.name!r}")
     recent = (
         await s.execute(
             select(func.count())
@@ -98,13 +115,18 @@ async def submit_job(
     ).scalar_one()
     if recent >= settings.submit_rate_per_minute:  # plan §7.7: stop accidental floods
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "submission rate limit reached; try again shortly")
+    # The allowlist is checked first, so the server never contacts a registry outside it.
+    if g.registry_allowlist and not any(js.spec.image.startswith(prefix) for prefix in g.registry_allowlist):
+        raise HTTPException(422, "image registry is not on this group's allowlist")
+    as_submitted: dict[str, Any] = {"image": js.spec.image, "parts": js.spec.parts}
+    if not is_pinned(js.spec.image):
+        js.spec.image = await _pin_image(s, request, p, g, js.spec.image)
     res = js.resources()
     job = Job(
         group_id=g.id,
         submitter_id=p.user.id,
         name=js.metadata.name,
         shape=js.spec.shape,
-        spec=js.model_dump(mode="json"),
         image=js.spec.image,
         cpu=res.cpu,
         memory_mb=res.memory_mb,
@@ -117,9 +139,16 @@ async def submit_job(
         egress=js.spec.network.egress != "none",
         max_retries=js.spec.retries,
     )
+    if js.spec.parts == "auto":
+        on_probation = m.probation_until is not None and m.probation_until > utcnow()
+        js.spec.parts, as_submitted["note"] = await auto_parts(s, settings, job, p.user.handle, on_probation)
+    stored = js.model_dump(mode="json")
+    stored["as_submitted"] = as_submitted
+    job.spec = stored
     s.add(job)
     await s.flush()
     params = js.task_params()
+    count = len(params)
     rows = [
         {
             "id": uuid.uuid4(),
@@ -127,7 +156,7 @@ async def submit_job(
             "group_id": g.id,
             "index": i,
             "params": prm,
-            "spec": js.render_task(prm).model_dump(mode="json"),
+            "spec": js.render_task(prm, i, count).model_dump(mode="json"),
             "state": "pending",
             "epoch": 0,
             "attempts_count": 0,

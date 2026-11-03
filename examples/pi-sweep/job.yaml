@@ -1,0 +1,11 @@
+# One task for each combination: 5 seeds x 2 sample sizes = 10 tasks.
+name: pi-sweep
+image: ghcr.io/your-org/pi-sweep:1
+command: python /app/pi.py --seed {{seed}} --samples {{samples}}
+sweep:
+  seed: 0..4
+  samples: [1000000, 10000000]
+cpu: 1
+memory: 512Mi
+time_limit: 30m
+retries: 2

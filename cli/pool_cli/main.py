@@ -14,7 +14,7 @@ import httpx
 import typer
 import yaml
 
-from pool_protocol.jobspec import JobSpecError, load_job_spec
+from pool_protocol.jobspec import JobSpecError, is_short_form, load_job_spec, parse_values, result_folder
 
 from .config import Config
 
@@ -47,7 +47,8 @@ def _client(cfg: Config | None = None) -> tuple[httpx.Client, Config]:
     return httpx.Client(base_url=cfg.server, headers=headers, timeout=30), cfg
 
 
-def api(method: str, path: str, **kw) -> Any:
+def api(method: str, path: str, raw: bool = False, **kw) -> Any:
+    """Call the server; the JSON answer, or with raw=True the body as text."""
     client, _ = _client()
     with client:
         try:
@@ -62,6 +63,8 @@ def api(method: str, path: str, **kw) -> Any:
         except ValueError:
             detail = r.text
         raise ApiError(f"{r.status_code}: {detail}")
+    if raw:
+        return r.text
     return r.json() if r.content else None
 
 
@@ -311,74 +314,77 @@ def _submit(data: dict, group: str | None) -> dict:
 @app.command()
 def submit(file: Path = typer.Argument(..., exists=True, readable=True), group: str = typer.Option(None),
            wait: bool = typer.Option(False, help="Wait until the job finishes")) -> None:
-    """Submit a job spec (YAML, plan §6.5)."""
+    """Submit a job file (YAML): the short form (image, command, parts or sweep, ...) or the full form."""
     job = _submit(_load_spec(file), group)
     if wait:
         _wait(job["id"])
-
-
-def _parse_values(text: str) -> list:
-    """'0..9' -> [0..9], 'a,b,c' -> ['a','b','c'], numbers become ints/floats."""
-    if ".." in text and "," not in text:
-        lo, hi = text.split("..", 1)
-        return list(range(int(lo), int(hi) + 1))
-    out: list = []
-    for v in text.split(","):
-        v = v.strip()
-        try:
-            out.append(int(v))
-        except ValueError:
-            try:
-                out.append(float(v))
-            except ValueError:
-                out.append(v)
-    return out
 
 
 @app.command()
 def sweep(file: Path = typer.Argument(..., exists=True), set_: list[str] = typer.Option(
         [], "--set", help="key=values, e.g. --set seed=0..9 --set dataset=imdb,ag_news"),
         group: str = typer.Option(None), dry_run: bool = typer.Option(False, "--dry-run")) -> None:
-    """Submit an array job, overriding matrix values from the command line."""
+    """Submit a job with sweep values set or replaced from the command line."""
     data = _load_spec(file)
-    matrix = dict(data["spec"].get("matrix") or {})
+    short = is_short_form(data)
+    target = data if short else data.setdefault("spec", {})
+    key_name = "sweep" if short else "matrix"
+    matrix = {k: parse_values(v) for k, v in (target.get(key_name) or target.get("matrix") or {}).items()}
     for item in set_:
         key, _, values = item.partition("=")
         if not key or not values:
             raise ApiError(f"bad --set {item!r}; use key=values")
-        matrix[key] = _parse_values(values)
-    data["spec"]["matrix"] = matrix
-    data["spec"]["shape"] = "array"
+        try:
+            matrix[key] = parse_values(values)
+        except JobSpecError as exc:
+            raise ApiError(str(exc)) from None
+    target.pop("matrix", None)
+    target[key_name] = matrix
+    target.pop("parts", None)
+    if not short:
+        target["shape"] = "array"
     count = len(list(itertools.product(*matrix.values()))) if matrix else 0
     if dry_run:
-        load_job_spec(data)
+        try:
+            load_job_spec(data)
+        except JobSpecError as exc:
+            raise ApiError(f"invalid job spec: {exc}") from None
         typer.echo(f"{count} tasks: {json.dumps(matrix)}")
         return
     _submit(data, group)
 
 
+def _registries_path(group: str | None, mine: bool) -> str:
+    return "/api/v1/me/registries" if mine else f"/api/v1/groups/{_group(group)}/registries"
+
+
 @registry_app.command("list")
-def registry_list(group: str = typer.Argument(None)) -> None:
-    rows = api("GET", f"/api/v1/groups/{_group(group)}/registries")
-    table(rows, ["registry", "username", "updated_by", "updated_at"])
+def registry_list(group: str = typer.Argument(None),
+                  mine: bool = typer.Option(False, "--mine", help="My own tokens instead of the group's")) -> None:
+    rows = api("GET", _registries_path(group, mine))
+    cols = ["registry", "username", "updated_at"] if mine else ["registry", "username", "updated_by", "updated_at"]
+    table(rows, cols)
 
 
 @registry_app.command("set")
 def registry_set(registry: str, username: str = typer.Option(..., help="The read-only account"),
                  group: str = typer.Option(None),
+                 mine: bool = typer.Option(False, "--mine", help="Store it for my own jobs only, in every group"),
                  token_stdin: bool = typer.Option(False, "--token-stdin", help="Read the token from standard input")
                  ) -> None:
-    """Store a read-only token so the group's computers can pull its private images (coordinators, admins).
-    The token is never taken as a command-line argument, where it would end up in shell history."""
+    """Store a read-only token so computers can pull private images: the group's (coordinators, admins), or
+    with --mine your own, used only for jobs you submit. The token is never taken as a command-line argument,
+    where it would end up in shell history."""
     token = sys.stdin.readline().strip() if token_stdin else typer.prompt("Read-only token", hide_input=True)
-    r = api("PUT", f"/api/v1/groups/{_group(group)}/registries",
-            json={"registry": registry, "username": username, "token": token})
-    typer.echo(f"saved: {r['registry']} as {r['username']} (checked with the registry, stored encrypted)")
+    r = api("PUT", _registries_path(group, mine), json={"registry": registry, "username": username, "token": token})
+    whose = "for your own jobs" if mine else "for the group"
+    typer.echo(f"saved {whose}: {r['registry']} as {r['username']} (checked with the registry, stored encrypted)")
 
 
 @registry_app.command("remove")
-def registry_remove(registry: str, group: str = typer.Option(None)) -> None:
-    api("DELETE", f"/api/v1/groups/{_group(group)}/registries/{registry}")
+def registry_remove(registry: str, group: str = typer.Option(None),
+                    mine: bool = typer.Option(False, "--mine", help="Remove my own token")) -> None:
+    api("DELETE", f"{_registries_path(group, mine)}/{registry}")
     typer.echo(f"removed the token for {registry}")
 
 
@@ -439,12 +445,44 @@ def safe_target(out_dir: Path, rel: str) -> Path:
     return target
 
 
+def _fetch(job_id: str, index: int, o: dict, target: Path) -> None:
+    """Download one output file to target, keeping it only if its SHA-256 matches what the computer reported."""
+    link = api("GET", f"/api/v1/jobs/{job_id}/tasks/{index}/download", params={"path": o["path"]})
+    digest = hashlib.sha256()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(target.name + ".part")
+    with httpx.stream("GET", link["url"], timeout=60) as r:
+        if r.status_code != 200:
+            raise ApiError(f"download of {o['path']} failed: HTTP {r.status_code}")
+        with open(tmp, "wb") as f:
+            for chunk in r.iter_bytes():
+                digest.update(chunk)
+                f.write(chunk)
+    if digest.hexdigest() != o["sha256"]:
+        tmp.unlink(missing_ok=True)
+        raise ApiError(f"{o['path']}: checksum does not match; file not saved")
+    tmp.replace(target)
+
+
 @app.command()
 def download(job_id: str, task: int = typer.Option(0, help="Task index"),
              path: str = typer.Option(None, help="One output file (default: all of the task's outputs)"),
+             all_tasks: bool = typer.Option(False, "--all", help="Every task's files, one folder per task"),
              out: Path = typer.Option(Path("."), "--out", "-o", help="Folder to save into")) -> None:
-    """Download a finished task's output files and check their SHA-256."""
+    """Download output files and check their SHA-256: one task's, or with --all every task's, each in its own
+    folder (task-000, or task-000_seed=0 for a sweep), the same layout as Download all in the browser."""
     tasks = api("GET", f"/api/v1/jobs/{job_id}/tasks")
+    if all_tasks:
+        saved = 0
+        for row in tasks:
+            folder = out / result_folder(row["index"], len(tasks), row.get("params") or {})
+            for o in (row.get("result") or {}).get("outputs") or []:
+                if path and o["path"] != path:
+                    continue
+                _fetch(job_id, row["index"], o, safe_target(folder, o["path"]))
+                saved += 1
+        typer.echo(f"saved {saved} file(s) from {len(tasks)} task(s) under {out} (sha256 ok)")
+        return
     row = next((t for t in tasks if t["index"] == task), None)
     if row is None:
         raise ApiError(f"job has no task {task}")
@@ -455,22 +493,19 @@ def download(job_id: str, task: int = typer.Option(0, help="Task index"),
         raise ApiError("no output files for that task" + (f" named {path!r}" if path else " yet"))
     for o in outputs:
         target = safe_target(out, o["path"])
-        link = api("GET", f"/api/v1/jobs/{job_id}/tasks/{task}/download", params={"path": o["path"]})
-        digest = hashlib.sha256()
-        target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_name(target.name + ".part")
-        with httpx.stream("GET", link["url"], timeout=60) as r:
-            if r.status_code != 200:
-                raise ApiError(f"download of {o['path']} failed: HTTP {r.status_code}")
-            with open(tmp, "wb") as f:
-                for chunk in r.iter_bytes():
-                    digest.update(chunk)
-                    f.write(chunk)
-        if digest.hexdigest() != o["sha256"]:
-            tmp.unlink(missing_ok=True)
-            raise ApiError(f"{o['path']}: checksum does not match; file not saved")
-        tmp.replace(target)
+        _fetch(job_id, task, o, target)
         typer.echo(f"saved {target} ({o['size']} bytes, sha256 ok)")
+
+
+@app.command()
+def results(job_id: str, out: Path = typer.Option(None, "--out", "-o", help="Save as this CSV file")) -> None:
+    """Every task's result.json in one table (CSV), with the task's sweep values."""
+    text = api("GET", f"/api/v1/jobs/{job_id}/results.csv", raw=True)
+    if out:
+        out.write_text(text)
+        typer.echo(f"saved {out} ({max(text.count(chr(10)) - 1, 0)} row(s))")
+    else:
+        typer.echo(text, nl=False)
 
 
 @app.command()

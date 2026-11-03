@@ -141,6 +141,8 @@ tested end to end yet):
 - **Who creates groups:** `POOL_GROUP_CREATORS=admins` in `.env` (installer default) or `anyone`. Restart with `docker compose up -d` after changing it.
 - **Server admins:** the handles in `POOL_SERVER_ADMINS`. Add yours there to make another person a server admin. They can revoke any computer (lost or stolen) from a group's Devices tab, and restore any deleted group during its 7 days.
 - **Deleted groups** are purged automatically by the scheduler 7 days after deletion (`POOL_GROUP_DELETE_GRACE_DAYS`): jobs, logs, members and stored files go; the audit log and owners' "what ran here" lines stay.
+- **Container registries:** the server contacts a registry when someone submits a job with an image tag (to fix the exact version) or stores a registry token. It only contacts public internet addresses, never cloud metadata addresses, and follows redirects only on the same host. For a registry inside your own network, set `POOL_REGISTRY_PRIVATE_NETWORKS=true` in `.env`; that also lets members make the server contact other addresses in that network.
+- **Download all:** one job's zip is at most 2 GiB of files (`POOL_RESULTS_ZIP_MAX_MB`); members use `pool download --all` for more. The zip streams to the browser, so it needs no disk or memory of that size on the server. `parts: auto` makes at most 1000 parts (`POOL_AUTO_PARTS_MAX`).
 - **Secrets on disk:** `.env` and the file store's keys are readable only by root and, for the keys, the container's own user (uid 1000). On many cloud images uid 1000 is the default login user.
 - **Not yet reviewed:** pool has not had its security review (plan §8.10). Do not use it for confidential data yet.
 

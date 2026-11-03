@@ -211,6 +211,8 @@ ENVELOPE_EXAMPLE = {
         "image": "registry.example.org/research/probe@sha256:" + "b" * 64,
         "command": ["python", "train_probe.py", "--seed", "3", "--dataset", "imdb"],
         "env": {"PYTHONUNBUFFERED": "1"},
+        "task_index": 3,
+        "task_count": 30,
         "resources": {
             "cpu": 4,
             "memory_mb": 16384,

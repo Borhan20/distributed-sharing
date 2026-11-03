@@ -6,14 +6,25 @@ A group stores one read-only credential per registry (GHCR, Docker Hub, ...). Fo
 exchanges it at the registry's token service for a bearer token that can only pull that one repository
 and expires within minutes, and gives the agent only that token (protocol message pull_auth).
 This is the registry token protocol Docker itself uses (`WWW-Authenticate: Bearer realm=...`).
+
+Images named by a tag are pinned to a digest at submit time (`resolve_digest`), with a manifest HEAD request,
+which Docker Hub does not count as a pull.
+
+Every request goes through `_get`, which only contacts public addresses unless the server admin allows
+private networks (POOL_REGISTRY_PRIVATE_NETWORKS; default on in dev mode): submitters choose the registry
+host, so without this check they could make the server probe its own network. Redirects are followed only
+on the same host, so credentials never travel to another one. The address is checked before connecting; a
+DNS answer that changes between the check and the connection (rebinding) is not caught.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import ipaddress
 import json
 import re
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -85,24 +96,73 @@ def parse_image(image: str) -> ImageRef:
     return ImageRef(registry=registry, repository=path, api=api, auth_key=auth_key)
 
 
-def _get(url: str, headers: dict[str, str], timeout: float) -> tuple[int, dict[str, str], bytes]:
-    if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
+_MAX_BODY = 4 * 1024 * 1024  # token answers and manifests are small
+_MANIFEST_TYPES = ", ".join((
+    "application/vnd.oci.image.index.v1+json",
+    "application/vnd.docker.distribution.manifest.list.v2+json",
+    "application/vnd.oci.image.manifest.v1+json",
+    "application/vnd.docker.distribution.manifest.v2+json",
+))
+_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+def _check_address(url: str, allow_private: bool) -> None:
+    """Refuse addresses the server should not be made to contact (see the module docstring)."""
+    split = urllib.parse.urlsplit(url)
+    if split.scheme not in ("http", "https") or not split.hostname:
         raise RegistryError("the registry sent an unusable address")
-    req = urllib.request.Request(url, headers=headers)  # noqa: S310 (scheme checked above)
+    if split.scheme == "http" and not _is_loopback(split.netloc):
+        raise RegistryError("registries must use https (plain http only for one on this machine)")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
-            return r.status, dict(r.headers), r.read()
+        port = split.port or (443 if split.scheme == "https" else 80)
+    except ValueError:
+        raise RegistryError("the registry address has a bad port number") from None
+    try:
+        infos = socket.getaddrinfo(split.hostname, port, type=socket.SOCK_STREAM)
+    except (socket.gaierror, UnicodeError):
+        raise RegistryError(f"cannot find the registry {split.hostname}") from None
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0].split("%", 1)[0])
+        if ip.is_link_local or ip.is_multicast or ip.is_unspecified:
+            raise RegistryError(f"{split.hostname} is not a registry address this server contacts")
+        if not ip.is_global and not allow_private:
+            raise RegistryError(f"{split.hostname} is on a private network. A server admin can allow registries "
+                                "there with POOL_REGISTRY_PRIVATE_NETWORKS=true")
+
+
+class _SameHostRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, ANN201
+        if urllib.parse.urlsplit(newurl).netloc != urllib.parse.urlsplit(req.full_url).netloc:
+            raise RegistryError("the registry redirected to another host")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_opener = urllib.request.build_opener(_SameHostRedirects)
+
+
+def _get(url: str, headers: dict[str, str], timeout: float, *, allow_private: bool = False,
+         method: str = "GET") -> tuple[int, dict[str, str], bytes]:
+    _check_address(url, allow_private)
+    req = urllib.request.Request(url, headers=headers, method=method)  # noqa: S310 (scheme checked above)
+    try:
+        with _opener.open(req, timeout=timeout) as r:
+            return r.status, dict(r.headers), r.read(_MAX_BODY + 1)[:_MAX_BODY]
     except urllib.error.HTTPError as exc:
-        return exc.code, dict(exc.headers or {}), exc.read() or b""
+        return exc.code, dict(exc.headers or {}), (exc.read(_MAX_BODY) if exc.fp else b"") or b""
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise RegistryError(f"cannot reach the registry: {getattr(exc, 'reason', exc)}") from None
 
 
-def _challenge(api: str, timeout: float) -> dict[str, str]:
-    status, headers, _ = _get(f"{api}/v2/", {}, timeout)
+def _header(headers: dict[str, str], name: str) -> str:
+    return next((v for k, v in headers.items() if k.lower() == name), "")
+
+
+def _challenge(api: str, timeout: float, allow_private: bool = False) -> dict[str, str] | None:
+    """The token service's parameters (realm, service), or None if the registry needs no credentials."""
+    status, headers, _ = _get(f"{api}/v2/", {}, timeout, allow_private=allow_private)
     if status == 200:
-        raise RegistryError("this registry does not ask for credentials; its images are public")
-    header = next((v for k, v in headers.items() if k.lower() == "www-authenticate"), "")
+        return None
+    header = _header(headers, "www-authenticate")
     if status != 401 or not header.lower().startswith("bearer "):
         raise RegistryError("this registry does not use token authentication (supported: GHCR, Docker Hub, "
                             "and registries that work like them)")
@@ -114,41 +174,123 @@ def _challenge(api: str, timeout: float) -> dict[str, str]:
     return params
 
 
-def pull_token(ref: ImageRef, username: str, secret: str, *, timeout: float = 15) -> tuple[str, datetime]:
-    """A bearer token that can pull ref.repository only, and its expiry. Blocking; run it in a thread."""
-    params = _challenge(ref.api, timeout)
-    query = {"scope": f"repository:{ref.repository}:pull"}
+def _token_request(ref: ImageRef, params: dict[str, str], query: dict[str, str], basic: str | None,
+                   timeout: float, allow_private: bool) -> tuple[int, bytes]:
     if params.get("service"):
-        query["service"] = params["service"]
-    basic = base64.b64encode(f"{username}:{secret}".encode()).decode()
-    status, _, body = _get(f"{params['realm']}?{urllib.parse.urlencode(query)}",
-                           {"Authorization": f"Basic {basic}"}, timeout)
-    if status in (401, 403):
-        raise RegistryError(f"{ref.registry} refused the group's stored credentials")
-    if status != 200:
-        raise RegistryError(f"{ref.registry}'s token service answered {status}")
+        query = {**query, "service": params["service"]}
+    headers = {"Authorization": f"Basic {basic}"} if basic else {}
+    status, _, body = _get(f"{params['realm']}?{urllib.parse.urlencode(query)}", headers, timeout,
+                           allow_private=allow_private)
+    return status, body
+
+
+def _basic(username: str, secret: str) -> str:
+    return base64.b64encode(f"{username}:{secret}".encode()).decode()
+
+
+def _read_token(ref: ImageRef, body: bytes) -> tuple[str, datetime]:
     try:
         data = json.loads(body)
     except ValueError:
         raise RegistryError(f"{ref.registry}'s token service sent an unreadable answer") from None
-    token = data.get("token") or data.get("access_token")
-    if not token:
+    token = data.get("token") or data.get("access_token") if isinstance(data, dict) else None
+    if not token or not isinstance(token, str):
         raise RegistryError(f"{ref.registry}'s token service sent no token")
-    lifetime = int(data.get("expires_in") or 60)
+    try:
+        lifetime = int(data.get("expires_in") or 60)
+    except (TypeError, ValueError):
+        lifetime = 60
     return token, utcnow() + timedelta(seconds=max(30, min(lifetime, 3600)))
 
 
-def check_credentials(registry: str, username: str, secret: str, *, timeout: float = 15) -> None:
+def pull_token(ref: ImageRef, username: str, secret: str, *, timeout: float = 15,
+               allow_private: bool = False) -> tuple[str, datetime]:
+    """A bearer token that can pull ref.repository only, and its expiry. Blocking; run it in a thread."""
+    params = _challenge(ref.api, timeout, allow_private)
+    if params is None:
+        raise RegistryError("this registry does not ask for credentials; its images are public")
+    status, body = _token_request(ref, params, {"scope": f"repository:{ref.repository}:pull"},
+                                  _basic(username, secret), timeout, allow_private)
+    if status in (401, 403):
+        raise RegistryError(f"{ref.registry} refused the stored credentials")
+    if status != 200:
+        raise RegistryError(f"{ref.registry}'s token service answered {status}")
+    return _read_token(ref, body)
+
+
+def _manifest(ref: ImageRef, reference: str, token: str | None, timeout: float, allow_private: bool,
+              method: str) -> tuple[int, dict[str, str], bytes]:
+    headers = {"Accept": _MANIFEST_TYPES}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return _get(f"{ref.api}/v2/{ref.repository}/manifests/{urllib.parse.quote(reference, safe=':')}", headers,
+                timeout, allow_private=allow_private, method=method)
+
+
+def can_read(ref: ImageRef, digest: str, token: str, *, timeout: float = 15, allow_private: bool = False) -> bool:
+    """Whether this pull token really reads this image. Token services may hand out a token with no access
+    instead of refusing, and an agent that already has the image locally would not notice (Docker 29 does
+    not ask the registry for content it has), so the server checks before giving the token to a computer."""
+    status, _, _ = _manifest(ref, digest, token, timeout, allow_private, "HEAD")
+    return status == 200
+
+
+def resolve_digest(image: str, credentials: tuple[str, str] | None, *, timeout: float = 15,
+                   allow_private: bool = False) -> str:
+    """Pin a tag: 'ghcr.io/lab/app:1' -> 'ghcr.io/lab/app:1@sha256:...', the version the tag names right now.
+
+    `credentials` (username, secret) are used when the registry asks for them; without them the lookup is
+    anonymous, which works for public images. Blocking; run it in a thread.
+    """
+    ref = parse_image(image)
+    name = image.split("@", 1)[0]
+    last = name.rsplit("/", 1)[-1]
+    tag = last.split(":", 1)[1] if ":" in last else "latest"
+    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}", tag):
+        raise RegistryError(f"{tag!r} is not a valid tag")
+    if ":" not in last:
+        name = f"{name}:latest"
+    params = _challenge(ref.api, timeout, allow_private)
+    token = None
+    if params is not None:
+        status, body = _token_request(ref, params, {"scope": f"repository:{ref.repository}:pull"},
+                                      _basic(*credentials) if credentials else None, timeout, allow_private)
+        if status in (401, 403):
+            raise RegistryError(f"{ref.registry} refused the stored credentials" if credentials else
+                                f"{ref.registry} wants credentials to look up {name}")
+        if status != 200:
+            raise RegistryError(f"{ref.registry}'s token service answered {status}")
+        token, _ = _read_token(ref, body)
+    status, headers, _ = _manifest(ref, tag, token, timeout, allow_private, "HEAD")
+    if status in (401, 403, 404):
+        if credentials:
+            raise RegistryError(f"{name} was not found, or the stored token cannot read it. Check the name and "
+                                "tag, and that the token's account can read this image.")
+        raise RegistryError(f"{name} was not found, or it is private. Check the name and tag. If the image is "
+                            f"private, add a read-only token for {ref.registry} under My images.")
+    if status != 200:
+        raise RegistryError(f"{ref.registry} answered {status} when looking up {name}")
+    digest = _header(headers, "docker-content-digest")
+    if not _DIGEST_RE.match(digest):
+        # Some registries leave the header out of HEAD answers: fetch the manifest and hash it (that is what
+        # the digest is). Docker Hub always sends it, so this GET never counts as a Docker Hub pull here.
+        status, _, body = _manifest(ref, tag, token, timeout, allow_private, "GET")
+        if status != 200 or not body:
+            raise RegistryError(f"{ref.registry} sent no digest for {name}")
+        digest = "sha256:" + hashlib.sha256(body).hexdigest()
+    return f"{name}@{digest}"
+
+
+def check_credentials(registry: str, username: str, secret: str, *, timeout: float = 15,
+                      allow_private: bool = False) -> None:
     """Raise RegistryError if the registry refuses these credentials, the way `docker login` checks them:
     ask the token service with the credentials and no repository scope."""
     api, _ = _endpoints(registry)
-    params = _challenge(api, timeout)
-    query = {"account": username}
-    if params.get("service"):
-        query["service"] = params["service"]
-    basic = base64.b64encode(f"{username}:{secret}".encode()).decode()
-    status, _, _ = _get(f"{params['realm']}?{urllib.parse.urlencode(query)}", {"Authorization": f"Basic {basic}"},
-                        timeout)
+    params = _challenge(api, timeout, allow_private)
+    if params is None:
+        raise RegistryError("this registry does not ask for credentials; its images are public")
+    ref = ImageRef(registry=registry, repository="", api=api, auth_key="")
+    status, _ = _token_request(ref, params, {"account": username}, _basic(username, secret), timeout, allow_private)
     if status in (401, 403):
         raise RegistryError(f"{registry} refused these credentials")
     if status != 200:

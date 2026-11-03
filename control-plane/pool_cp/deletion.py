@@ -1,4 +1,4 @@
-"""Deleting jobs and groups (docs/user-guide.md §8; decisions of 3 November 2026).
+"""Deleting jobs and groups (docs/user-guide.md §10; decisions of 3 November 2026).
 
 SECURITY-SENSITIVE: data deletion. Needs security review (plan §8.10).
 

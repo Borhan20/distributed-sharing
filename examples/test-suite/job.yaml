@@ -1,0 +1,13 @@
+# Run a test suite in parts: part i of n runs every n-th test file (a part with no files has nothing to do).
+# -p no:cacheprovider: the container's file system is read-only, so pytest keeps no cache.
+name: tests
+image: ghcr.io/your-org/app-tests:1
+command: >-
+  sh -c 'files=$(ls tests/test_*.py | awk -v n="$POOL_TASK_COUNT" -v i="$POOL_TASK_INDEX" "(NR - 1) % n == i");
+  [ -n "$files" ] || exit 0;
+  pytest -q -p no:cacheprovider --junitxml=/out/junit.xml $files'
+parts: 3
+cpu: 1
+memory: 1Gi
+time_limit: 30m
+retries: 0

@@ -1491,6 +1491,7 @@
           "jobs"
         ],
         "summary": "Submit Job",
+        "description": "Submit a job in the full or the short form. Tags are pinned to a digest and `parts: auto` becomes a\nnumber here; the stored spec keeps what was asked for under `as_submitted`.",
         "operationId": "submit_job_api_v1_groups__name__jobs_post",
         "parameters": [
           {
@@ -2363,6 +2364,287 @@
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/registries": {
+      "get": {
+        "tags": [
+          "registries"
+        ],
+        "summary": "List My Registries",
+        "operationId": "list_my_registries_api_v1_me_registries_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MyRegistryOut"
+                  },
+                  "type": "array",
+                  "title": "Response List My Registries Api V1 Me Registries Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "registries"
+        ],
+        "summary": "Set My Registry",
+        "description": "Store my own read-only token. It is used only for jobs I submit, in any of my groups.",
+        "operationId": "set_my_registry_api_v1_me_registries_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegistryCredentialIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyRegistryOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/registries/{registry}": {
+      "delete": {
+        "tags": [
+          "registries"
+        ],
+        "summary": "Remove My Registry",
+        "operationId": "remove_my_registry_api_v1_me_registries__registry__delete",
+        "parameters": [
+          {
+            "name": "registry",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Registry"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job_id}/results": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "Results Table",
+        "description": "Every task's /out/result.json as one table, with the task's sweep values (group members only).",
+        "operationId": "results_table_api_v1_jobs__job_id__results_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultsTable"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job_id}/results.csv": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "Results Csv",
+        "description": "The results table as CSV.",
+        "operationId": "results_csv_api_v1_jobs__job_id__results_csv_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job_id}/tasks/{index}/log.txt": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "Task Log File",
+        "description": "The task's whole log (its latest run) as a text file.",
+        "operationId": "task_log_file_api_v1_jobs__job_id__tasks__index__log_txt_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Index"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job_id}/results.zip": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "Results Zip",
+        "description": "Every task's output files and log, tasks.csv, results.csv and merged CSVs, as one zip.",
+        "operationId": "results_zip_api_v1_jobs__job_id__results_zip_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -3835,6 +4117,30 @@
         ],
         "title": "MemberOut"
       },
+      "MyRegistryOut": {
+        "properties": {
+          "registry": {
+            "type": "string",
+            "title": "Registry"
+          },
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "registry",
+          "username",
+          "updated_at"
+        ],
+        "title": "MyRegistryOut"
+      },
       "RegistryCredentialIn": {
         "properties": {
           "registry": {
@@ -3938,6 +4244,36 @@
           "removed_at"
         ],
         "title": "RemovedDeviceOut"
+      },
+      "ResultsTable": {
+        "properties": {
+          "columns": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Columns"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Rows"
+          },
+          "missing": {
+            "type": "integer",
+            "title": "Missing"
+          }
+        },
+        "type": "object",
+        "required": [
+          "columns",
+          "rows",
+          "missing"
+        ],
+        "title": "ResultsTable"
       },
       "RoleChange": {
         "properties": {

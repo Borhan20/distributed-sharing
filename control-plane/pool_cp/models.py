@@ -211,6 +211,18 @@ class GroupRegistryCredential(Base):
     updated_at: Mapped[datetime] = mapped_column(TS, server_default=func.now())
 
 
+class UserRegistryCredential(Base):
+    """A member's own read-only credential for one registry, used only for jobs that member submits
+    (for images in a personal account). Encrypted like the group's credentials; never returned."""
+
+    __tablename__ = "user_registry_credentials"
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    registry_host: Mapped[str] = mapped_column(String(255), primary_key=True)
+    username: Mapped[str] = mapped_column(String(255))
+    secret: Mapped[bytes] = mapped_column(LargeBinary)
+    updated_at: Mapped[datetime] = mapped_column(TS, server_default=func.now())
+
+
 class RunHistory(Base):
     """What ran on a device, kept for its owner after the job or group is deleted (plan §8.1 principle 5).
 

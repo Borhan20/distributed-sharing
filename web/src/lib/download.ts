@@ -1,8 +1,8 @@
 import { getToken } from "../auth/token";
 import { ApiError, formatApiError } from "../api/errors";
 
-/** Fetch an authenticated URL and save the response body as a file. */
-export async function downloadJson(path: string, filename: string): Promise<void> {
+/** Fetch an authenticated URL and save the response body as a file (any type: JSON, CSV, zip, text). */
+export async function downloadFile(path: string, filename: string): Promise<void> {
   const headers: Record<string, string> = {};
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;

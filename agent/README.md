@@ -154,9 +154,11 @@ Decline reasons are the ones listed in the design doc §3.3.
 - **Only mount:** `/out`. It is bind-mounted from
   `work/mounts/<attempt>/out` (mode 0777 inside a 0700 parent).
 - **Command:** the job's `command` replaces the image `ENTRYPOINT`, as with a
-  Kubernetes `command`.
+  Kubernetes `command`. A job without a command runs the image's own
+  `ENTRYPOINT` and `CMD`, with the same restrictions.
 - **Environment:** the agent adds `POOL_ATTEMPT_ID`, `POOL_TASK_ID`,
-  `POOL_EPOCH` and `POOL_OUTPUT_DIR`.
+  `POOL_EPOCH`, `POOL_OUTPUT_DIR`, and the task's number in its job:
+  `POOL_TASK_INDEX` (0 … count−1) and `POOL_TASK_COUNT`.
 
 **After the container stops:**
 
