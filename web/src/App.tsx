@@ -5,6 +5,7 @@ import { ErrorBox, Loading } from "./components/ui";
 import { AcceptInvitePage } from "./pages/AcceptInvite";
 import { DevicePage } from "./pages/DevicePage";
 import { DevicesPage } from "./pages/Devices";
+import { GuidePage } from "./pages/Guide";
 import { GroupPage } from "./pages/GroupPage";
 import { GroupsPage } from "./pages/Groups";
 import { JobPage } from "./pages/JobPage";
@@ -30,6 +31,7 @@ export function App() {
   let body;
   if (location.pathname === "/auth/callback") body = <OidcCallback />;
   else if (location.pathname === "/invite") body = <AcceptInvitePage />;
+  else if (location.pathname === "/guide") body = <GuidePage />; // readable before signing in
   else if (!token) body = <Login returnTo={location.pathname} />;
   else if (loading && !me) body = <Loading />;
   else
@@ -60,10 +62,13 @@ export function App() {
             <NavLink to="/" end>
               Groups
             </NavLink>
-            <NavLink to="/devices">My devices</NavLink>
+            <NavLink to="/devices">My computers</NavLink>
           </nav>
         )}
         <div className="spacer" />
+        <NavLink to="/guide" className="help-link">
+          Guide
+        </NavLink>
         {token && (
           <div className="user">
             <span>

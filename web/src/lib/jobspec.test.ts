@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import exampleYaml from "../../../examples/hello-array.yaml?raw";
 import { EXAMPLE_JOB, JobParseError, parseJobText, taskCount } from "./jobspec";
 
 const DIGEST = "registry.example.org/x/app@sha256:" + "a".repeat(64);
@@ -9,6 +10,14 @@ describe("parseJobText", () => {
     expect(doc.metadata.name).toBe("seed-sweep");
     expect(doc.kind).toBe("Job");
     expect(taskCount(doc)).toBe(3);
+  });
+
+  it("starts the form with a job that can really run (same pinned image as examples/)", () => {
+    const doc = parseJobText(EXAMPLE_JOB);
+    const image = String(doc.spec.image);
+    expect(image).toMatch(/@sha256:[0-9a-f]{64}$/);
+    expect(image).not.toContain("example.org");
+    expect(exampleYaml).toContain(`image: ${image}`);
   });
 
   it("accepts JSON as well as YAML", () => {

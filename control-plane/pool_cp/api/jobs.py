@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timedelta
+from pathlib import PurePosixPath
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
@@ -15,11 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pool_protocol.jobspec import JobSpecError, load_job_spec
 from pool_protocol.messages import TIER_RANK
 
-from .. import audit
+from .. import audit, storage
 from ..auth import Principal, current_principal, get_session
 from ..authz import ANY_MEMBER, MANAGERS, SUBMITTERS, load_group, membership, not_found, require_role
 from ..models import Attempt, AuditEvent, Group, Job, Task, TaskLog, UsageLedger, User
 from ..scheduler.core import cancel_tasks
+from ..scheduler.explain import explain_waiting
 from ..timeutil import utcnow
 from .notify import notify_stops
 
@@ -184,6 +187,60 @@ async def _load_job(s: AsyncSession, job_id: uuid.UUID, p: Principal) -> tuple[J
 async def get_job(job_id: uuid.UUID, p: Principal = Depends(current_principal), s: AsyncSession = Depends(get_session)):
     job, _, _ = await _load_job(s, job_id, p)
     return await _job_out(s, job, with_spec=True)
+
+
+class WaitingReason(BaseModel):
+    code: str
+    message: str
+    hint: str | None = None
+
+
+class JobWaitingOut(BaseModel):
+    pending_tasks: int
+    reasons: list[WaitingReason]
+
+
+@router.get("/jobs/{job_id}/waiting", response_model=JobWaitingOut)
+async def job_waiting(job_id: uuid.UUID, request: Request, p: Principal = Depends(current_principal),
+                      s: AsyncSession = Depends(get_session)):
+    """Why tasks of this job are waiting, in plain language. Empty when nothing waits."""
+    job, _, _ = await _load_job(s, job_id, p)
+    pending, reasons = await explain_waiting(s, request.app.state.settings, job)
+    return JobWaitingOut(pending_tasks=pending, reasons=[WaitingReason(**r.__dict__) for r in reasons])
+
+
+class DownloadOut(BaseModel):
+    path: str
+    size: int
+    url: str
+    expires_at: datetime
+
+
+# SECURITY-SENSITIVE: access control for job outputs. Needs security review (plan §8.10).
+@router.get("/jobs/{job_id}/tasks/{index}/download", response_model=DownloadOut)
+async def download_output(job_id: uuid.UUID, index: int, path: str, request: Request,
+                          p: Principal = Depends(current_principal), s: AsyncSession = Depends(get_session)):
+    """A short-lived link to download one output file of a finished task (group members only)."""
+    job, g, _ = await _load_job(s, job_id, p)
+    task = (await s.execute(select(Task).where(Task.job_id == job.id, Task.index == index))).scalar_one_or_none()
+    outputs = ((task.result or {}).get("outputs") or []) if task is not None else []
+    out = next((o for o in outputs if o.get("path") == path), None)
+    if out is None:
+        raise not_found("output")
+    settings = request.app.state.settings
+    if not storage.enabled(settings):
+        raise HTTPException(status.HTTP_409_CONFLICT, "This server has no file store, so output files stay on the "
+                                                      "computer that ran the task.")
+    try:
+        exists = await asyncio.to_thread(storage.object_exists, settings, g.id, out["sha256"])
+    except Exception as exc:  # store down or misconfigured: say so instead of a broken link
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "The file store is not reachable right now.") from exc
+    if not exists:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "This file was not uploaded: the file store was not available "
+                                                       "when the task finished. Its log says more.")
+    url = storage.presign_get(settings, g.id, out["sha256"], filename=PurePosixPath(path).name)
+    return DownloadOut(path=path, size=out.get("size", 0), url=url,
+                       expires_at=utcnow() + timedelta(seconds=settings.presign_ttl_s))
 
 
 class TaskOut(BaseModel):

@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pool_protocol import messages as pm
@@ -81,6 +82,45 @@ async def eligible_groups(session: AsyncSession, device: Device) -> list[tuple[G
     )).scalars().all()
     by_name = {g.name: g for g in rows}
     return [(by_name[s["group"]], s) for s in reported if s["group"] in by_name]
+
+
+# SECURITY-SENSITIVE: grants a device access to group work. Needs security review (plan §8.10).
+async def sync_shares_from_policy(session: AsyncSession, device: Device) -> list[str]:
+    """One-step sharing: record a server-side share for each group the device's local policy offers.
+
+    Only for active groups where the owner is a member with a role that may
+    share, and only when no share row exists yet. A share the owner turned off
+    in the web UI keeps its row (enabled = false) and therefore stays off.
+    Returns the names of the groups that were newly shared.
+    """
+    if device.state != "active":
+        return []
+    names = sorted({s["group"] for s in device.reported_shares or [] if isinstance(s.get("group"), str)})
+    if not names:
+        return []
+    candidates = (await session.execute(
+        select(Group.id, Group.name)
+        .join(Membership, (Membership.group_id == Group.id) & (Membership.user_id == device.owner_id))
+        .outerjoin(DeviceShare, (DeviceShare.group_id == Group.id) & (DeviceShare.device_id == device.id))
+        .where(Group.name.in_(names), Group.state == "active", Membership.role.in_(SHARE_ROLES),
+               DeviceShare.device_id.is_(None))
+    )).all()
+    created = []
+    for group_id, name in candidates:
+        # ON CONFLICT: a hello and a heartbeat from the same device may race.
+        inserted = (await session.execute(
+            pg_insert(DeviceShare).values(device_id=device.id, group_id=group_id, enabled=True)
+            .on_conflict_do_nothing().returning(DeviceShare.group_id)
+        )).scalar()
+        if inserted is None:
+            continue
+        await audit.record(session, actor_type="device", actor_id=device.id, action="device.share",
+                           group_id=group_id, device_id=device.id, target_type="device", target_id=device.id,
+                           details={"source": "local_policy"})
+        created.append(name)
+    if created:
+        log.info("device %s shared with %s from its local policy", device.id, ", ".join(created))
+    return created
 
 
 def _tier_rank(tiers: list[str]) -> int:

@@ -32,6 +32,10 @@ const usage = `pool-agent: share this computer with trusted groups (pool, protoc
 Usage:
   pool-agent enroll --server URL --code CODE [--profile NAME] [--name DEVICE-NAME] [--server-ca FILE] [--insecure-http]
   pool-agent run    [--profile NAME | --all] [--policy FILE]
+  pool-agent share GROUP [--cpu-percent N] [--memory 8Gi] [--disk 20Gi] [--gpu] [--only-when-idle 10m] [--profile NAME]
+                        share this computer with a group (or change how much), without editing the policy file
+  pool-agent unshare GROUP [--profile NAME]
+                        stop sharing with a group; its running jobs stop within seconds
   pool-agent kill       stop every job now and refuse new work (kill switch)
   pool-agent resume     release the kill switch
   pool-agent status     show what is running on this computer and who sent it
@@ -52,6 +56,10 @@ func main() {
 		err = cmdEnroll(os.Args[2:])
 	case "run":
 		err = cmdRun(os.Args[2:])
+	case "share":
+		err = cmdShare(os.Args[2:], os.Stdout)
+	case "unshare":
+		err = cmdUnshare(os.Args[2:], os.Stdout)
 	case "kill":
 		err = cmdKill(os.Args[2:])
 	case "resume":
@@ -111,12 +119,17 @@ func cmdEnroll(args []string) error {
 	}
 	fmt.Printf("Enrolled device %s with %s (profile %q).\n", p.DeviceID, p.Server, p.Name)
 	fmt.Printf("Certificate valid until %s; it renews automatically while the agent runs.\n", p.CertNotAfter.Format(time.RFC3339))
+	profArg := ""
+	if p.Name != "default" {
+		profArg = " --profile " + p.Name
+	}
 	if wrote {
-		fmt.Printf("\nThis device shares NOTHING yet. To share it, edit the local policy:\n  %s\n", polPath)
+		fmt.Printf("\nThis device shares NOTHING yet. To share it with a group you belong to:\n")
+		fmt.Printf("  pool-agent share%s GROUP\n(or edit the local policy by hand: %s)\n", profArg, polPath)
 	} else {
 		fmt.Printf("\nUsing the existing local policy: %s\n", polPath)
 	}
-	fmt.Printf("Then start the agent:  pool-agent run --profile %s\n", p.Name)
+	fmt.Printf("Then start the agent:  pool-agent run%s\n", profArg)
 	return nil
 }
 

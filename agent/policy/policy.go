@@ -34,8 +34,9 @@ const (
 // device with no group: the owner must opt in by adding a share.
 const DefaultYAML = `# pool agent local sharing policy (plan §6.4).
 #
-# This device is NOT shared with any group yet. To share it, add an entry
-# under "shares", for example:
+# This device is shared only with the groups listed under "shares" (none at
+# first). To share it, run:  pool-agent share GROUP
+# or add an entry by hand, for example:
 #
 # shares:
 #   - group: research-team

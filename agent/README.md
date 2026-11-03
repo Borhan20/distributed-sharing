@@ -32,7 +32,11 @@ the engine is not rootless. Docker Desktop is **not** supported (plan §5.2).
 # 1. In the web UI, the owner creates a one-time code (valid 10 minutes).
 pool-agent enroll --server https://pool.example.org --code ABCDE-FGHJK --name lab-ws-01
 
-# 2. Edit the local policy. A new device shares NOTHING until the owner adds a share.
+# 2. Share with a group. A new device shares NOTHING until the owner adds a share.
+pool-agent share ml-test-lab                  # half the CPU and RAM, 20Gi disk, no GPU, at any time
+pool-agent share ml-test-lab --cpu-percent 25 --gpu --only-when-idle 10m   # change only these settings
+pool-agent unshare ml-test-lab                # stop; that group's running jobs stop within seconds
+#    Or edit the local policy by hand (all options: "Local policy reference" below):
 $EDITOR ~/.config/pool-agent/profiles/default/policy.yaml
 
 # 3. Run (as a systemd service in production).
@@ -107,6 +111,13 @@ Rules:
     built. Shares with `only_when_idle` therefore never run there.
 - **Policy reloads:** the file is re-read when it changes. If the new file is
   invalid, the previous policy stays in force.
+- **`share` / `unshare`:** these commands edit the same file. They keep its
+  comments and any settings they were not asked to change, refuse a change
+  that would make the policy invalid, and replace the file atomically (mode
+  0600), so a running agent never reads a half-written file. A new share gets:
+  `cpu_percent: 50`, half the RAM (whole GiB, at least 1Gi), `disk: 20Gi`,
+  `gpu: false`, `accept_from: all-members`, no time window and no idle
+  requirement. The group is appended to `priority`.
 - **What the server sees:** the agent reports its shares and the policy's
   SHA-256 in `hello` and `heartbeat`. The server uses this only to avoid
   useless offers. The agent re-checks every offer, whatever the server says.

@@ -60,7 +60,8 @@ export function DevicePage() {
   if (!device.data) return <ErrorBox error={device.error ?? new Error("device not found")} />;
   const d = device.data;
   const shareable = (groups.data ?? []).filter(
-    (g) => g.state === "active" && SHARERS.has(g.my_role ?? "") && !d.shared_with.includes(g.name),
+    (g) =>
+      g.state === "active" && SHARERS.has(g.my_role ?? "") && !d.shared_with.includes(g.name) && !d.turned_off.includes(g.name),
   );
   const caps = d.capabilities as { cpu_cores?: number; memory_mb?: number; tiers?: string[]; gpus?: unknown[] };
   const reported = d.reported_shares as { group: string; active_now?: boolean }[];
@@ -69,7 +70,7 @@ export function DevicePage() {
     <>
       <header className="page-head">
         <p className="muted">
-          <Link to="/devices">My devices</Link> / device
+          <Link to="/devices">My computers</Link> / device
         </p>
         <h1>
           {d.name} <StateBadge state={d.state} />
@@ -120,10 +121,11 @@ export function DevicePage() {
         <section className="card">
           <h2>Sharing</h2>
           <p className="muted">
-            A group gets work from this device only when you share it here <em>and</em> the agent's local policy file
-            allows that group. The agent always has the final say.
+            To share this computer with a group, run <code>pool-agent share GROUP</code> on it; the group appears here by
+            itself. <em>Turn off</em> stops a group from here without touching the computer. The computer's own settings
+            always have the final say.
           </p>
-          {d.shared_with.length === 0 && <Empty>Not shared with any group.</Empty>}
+          {d.shared_with.length === 0 && d.turned_off.length === 0 && <Empty>Not shared with any group.</Empty>}
           <ul className="plain">
             {d.shared_with.map((g) => {
               const r = reported.find((x) => x.group === g);
@@ -132,15 +134,31 @@ export function DevicePage() {
                   <span>
                     <Link to={`/groups/${g}`}>{g}</Link>{" "}
                     <span className="muted">
-                      {r ? (r.active_now ? "· local policy: accepting now" : "· local policy: not now") : "· not in local policy"}
+                      {r ? (
+                        r.active_now ? "· accepting work now" : "· not right now (outside sharing hours or you are using it)"
+                      ) : (
+                        <>
+                          · the computer does not offer this group yet: run <code>pool-agent share {g}</code> on it
+                        </>
+                      )}
                     </span>
                   </span>
                   <button type="button" className="secondary small" disabled={unshare.isPending} onClick={() => unshare.mutate(g)}>
-                    Stop sharing
+                    Turn off
                   </button>
                 </li>
               );
             })}
+            {d.turned_off.map((g) => (
+              <li key={g} className="row between">
+                <span>
+                  <Link to={`/groups/${g}`}>{g}</Link> <span className="muted">· turned off here</span>
+                </span>
+                <button type="button" className="small" disabled={!active || share.isPending} onClick={() => share.mutate(g)}>
+                  Turn on
+                </button>
+              </li>
+            ))}
           </ul>
           {active && shareable.length > 0 && (
             <form

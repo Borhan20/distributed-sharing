@@ -58,18 +58,23 @@ export function taskCount(doc: JobDocument): number {
   return Object.values(matrix).reduce((n, v) => n * (Array.isArray(v) ? v.length : 0), 1);
 }
 
+/**
+ * The job the form starts with. It must run as-is on any shared Linux computer,
+ * so a new user's first job succeeds. The image digest matches examples/hello-array.yaml.
+ */
 export const EXAMPLE_JOB = `apiVersion: pool/v1alpha1
 kind: Job
 metadata:
   name: seed-sweep
 spec:
   shape: array
-  image: registry.example.org/research/probe@sha256:${"0".repeat(64)}
-  command: ["python", "train_probe.py", "--seed", "{{seed}}"]
+  # A tiny public image, pinned by digest. Replace it with your own image.
+  image: docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+  # {{seed}} is replaced by each value below, so this job runs 3 tasks.
+  command: ["sh", "-c", "echo running seed {{seed}}; echo 'result for seed {{seed}}' > /out/result.txt"]
   matrix:
     seed: [0, 1, 2]
-  resources: { cpu: 2, memory: 4Gi }
-  isolation: { min_tier: T1 }
+  resources: { cpu: 0.5, memory: 256Mi, disk: 64Mi }
   retries: 2
-  max_runtime: 1h
+  max_runtime: 10m
 `;

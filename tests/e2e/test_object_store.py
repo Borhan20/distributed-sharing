@@ -24,7 +24,9 @@ import uuid
 
 import httpx
 import pytest
+from typer.testing import CliRunner
 
+from pool_cli.main import app as cli_app
 from pool_cp import storage
 from pool_cp.config import Settings
 
@@ -153,6 +155,22 @@ async def test_api_creates_bucket_and_agent_uploads_outputs(seaweedfs, control_p
     stored = client.get_object(Bucket=BUCKET, Key=storage.object_key(uuid.UUID(group_id), out["sha256"]))
     assert stored["Body"].read() == content
 
+    # Members download it through a short-lived link on the public address, saved under its own name.
+    link = (await http.get(f"/api/v1/jobs/{job_id}/tasks/0/download", params={"path": "result.txt"})).json()
+    assert link["url"].startswith(seaweedfs.public + "/") and link["size"] == len(content)
+    async with httpx.AsyncClient(timeout=10) as c:
+        got = await c.get(link["url"])
+    assert got.status_code == 200 and got.content == content
+    assert 'filename="result.txt"' in got.headers.get("content-disposition", ""), got.headers
+
+    # And with the CLI, which also checks the SHA-256.
+    runner = CliRunner(env={"POOL_CONFIG_DIR": str(tmp_path / "cli"), "POOL_TOKEN": None, "POOL_SERVER": None})
+    login = runner.invoke(cli_app, ["login", "--server", cp.url, "--dev-user", "e2e-researcher"])
+    assert login.exit_code == 0, login.output
+    res = runner.invoke(cli_app, ["download", job_id, "-o", str(tmp_path / "dl")])
+    assert res.exit_code == 0 and "sha256 ok" in res.output, (res.output, res.exception)
+    assert (tmp_path / "dl" / "result.txt").read_bytes() == content
+
 
 async def test_store_rejects_body_that_does_not_match_the_signed_hash(seaweedfs):
     settings = seaweedfs.settings()
@@ -185,3 +203,5 @@ async def test_unreachable_store_does_not_block_jobs(control_plane_factory, tmp_
     assert j["state"] == "succeeded", j
     text = await logs(http, job_id, 0)
     assert "server: object_store_not_ready" in text, text
+    r = await http.get(f"/api/v1/jobs/{job_id}/tasks/0/download", params={"path": "result.txt"})
+    assert r.status_code == 503 and "not reachable" in r.json()["detail"], r.text

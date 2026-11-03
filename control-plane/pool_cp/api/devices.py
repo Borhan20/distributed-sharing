@@ -123,19 +123,23 @@ class DeviceOut(BaseModel):
     reported_shares: list[dict[str, Any]]
     policy_digest: str
     shared_with: list[str]
+    turned_off: list[str] = Field(description="Groups the owner switched off on the server")
     cert_not_after: datetime
     last_seen_at: datetime | None
 
 
 async def _device_out(s: AsyncSession, d: Device, hb: int) -> DeviceOut:
     owner = await s.get(User, d.owner_id)
-    shared = (await s.execute(select(Group.name).join(DeviceShare, DeviceShare.group_id == Group.id)
-                              .where(DeviceShare.device_id == d.id, DeviceShare.enabled.is_(True)))).scalars().all()
+    rows = (await s.execute(select(Group.name, DeviceShare.enabled).join(DeviceShare, DeviceShare.group_id == Group.id)
+                            .where(DeviceShare.device_id == d.id))).all()
+    shared = [name for name, enabled in rows if enabled]
+    turned_off = sorted(name for name, enabled in rows if not enabled)
     return DeviceOut(id=d.id, name=d.name, owner=owner.handle, os=d.os, arch=d.arch, agent_version=d.agent_version,
                      state=d.state, online=online(d, hb), owner_active=d.owner_active, always_on=d.always_on,
                      org_owned_dedicated=d.org_owned_dedicated, reliability=round(d.reliability, 3),
                      capabilities=d.capabilities or {}, reported_shares=d.reported_shares or [],
-                     policy_digest=d.policy_digest, shared_with=sorted(shared), cert_not_after=d.cert_not_after,
+                     policy_digest=d.policy_digest, shared_with=sorted(shared), turned_off=turned_off,
+                     cert_not_after=d.cert_not_after,
                      last_seen_at=d.last_seen_at)
 
 
@@ -238,9 +242,11 @@ async def unshare_device(device_id: uuid.UUID, group_name: str, request: Request
     d = await _own_device(s, device_id, p)
     g = (await s.execute(select(Group).where(Group.name == group_name))).scalar_one_or_none()
     share = await s.get(DeviceShare, (d.id, g.id)) if g else None
-    if share is None:
+    if share is None or not share.enabled:
         raise not_found("share")
-    await s.delete(share)
+    # Keep the row, switched off: the agent's local policy may still offer this group, and
+    # sync_shares_from_policy only creates missing rows, so the owner's "off" here stays off.
+    share.enabled = False
     stops = []
     active = (await s.execute(
         select(Attempt).join(Task, Task.id == Attempt.task_id)

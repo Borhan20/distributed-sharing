@@ -1380,6 +1380,112 @@
         }
       }
     },
+    "/api/v1/jobs/{job_id}/waiting": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Job Waiting",
+        "description": "Why tasks of this job are waiting, in plain language. Empty when nothing waits.",
+        "operationId": "job_waiting_api_v1_jobs__job_id__waiting_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobWaitingOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job_id}/tasks/{index}/download": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Download Output",
+        "description": "A short-lived link to download one output file of a finished task (group members only).",
+        "operationId": "download_output_api_v1_jobs__job_id__tasks__index__download_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Index"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/jobs/{job_id}/tasks": {
       "get": {
         "tags": [
@@ -2098,6 +2204,14 @@
             "type": "array",
             "title": "Shared With"
           },
+          "turned_off": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Turned Off",
+            "description": "Groups the owner switched off on the server"
+          },
           "cert_not_after": {
             "type": "string",
             "format": "date-time",
@@ -2134,6 +2248,7 @@
           "reported_shares",
           "policy_digest",
           "shared_with",
+          "turned_off",
           "cert_not_after",
           "last_seen_at"
         ],
@@ -2166,6 +2281,35 @@
         },
         "type": "object",
         "title": "DevicePatch"
+      },
+      "DownloadOut": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "size",
+          "url",
+          "expires_at"
+        ],
+        "title": "DownloadOut"
       },
       "EnrollRequest": {
         "properties": {
@@ -2966,6 +3110,27 @@
         ],
         "title": "JobOut"
       },
+      "JobWaitingOut": {
+        "properties": {
+          "pending_tasks": {
+            "type": "integer",
+            "title": "Pending Tasks"
+          },
+          "reasons": {
+            "items": {
+              "$ref": "#/components/schemas/WaitingReason"
+            },
+            "type": "array",
+            "title": "Reasons"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pending_tasks",
+          "reasons"
+        ],
+        "title": "JobWaitingOut"
+      },
       "JoinRequestCreate": {
         "properties": {
           "message": {
@@ -3294,6 +3459,35 @@
           "decision"
         ],
         "title": "Vote"
+      },
+      "WaitingReason": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hint"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "WaitingReason"
       }
     }
   }
