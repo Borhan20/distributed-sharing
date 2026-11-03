@@ -766,6 +766,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/groups/{name}/registry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Group Registry
+         * @description Where I push images for this group, and how long unused images are kept.
+         */
+        get: operations["group_registry_api_v1_groups__name__registry_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/jobs/{job_id}/results": {
         parameters: {
             query?: never;
@@ -1182,6 +1202,8 @@ export interface components {
             expires_at: string | null;
             /** Registry Allowlist */
             registry_allowlist: string[];
+            /** Registry Retention Days */
+            registry_retention_days?: number | null;
             /** State */
             state: string;
             /**
@@ -1191,6 +1213,21 @@ export interface components {
             created_at: string;
             /** My Role */
             my_role?: string | null;
+        };
+        /** GroupRegistryOut */
+        GroupRegistryOut: {
+            /** Enabled */
+            enabled: boolean;
+            /** Address */
+            address?: string | null;
+            /** Repository Prefix */
+            repository_prefix?: string | null;
+            /** Retention Days */
+            retention_days: number;
+            /** Group Retention Days */
+            group_retention_days?: number | null;
+            /** Default Retention Days */
+            default_retention_days: number;
         };
         /** GroupUpdate */
         GroupUpdate: {
@@ -1208,6 +1245,8 @@ export interface components {
             expires_at?: string | null;
             /** Registry Allowlist */
             registry_allowlist?: string[] | null;
+            /** Registry Retention Days */
+            registry_retention_days?: number | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -3225,6 +3264,37 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    group_registry_api_v1_groups__name__registry_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupRegistryOut"];
+                };
             };
             /** @description Validation Error */
             422: {

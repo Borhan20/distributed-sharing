@@ -79,6 +79,18 @@ class Settings(BaseSettings):
     # the server only contacts public addresses unless this is on. Default: on in dev mode.
     registry_private_networks: bool | None = None
     auto_parts_max: int = 1000  # upper bound for `parts: auto`
+
+    # The built-in container registry (docs/design/pool-run.md §3.1). registry_address is the name members'
+    # and computers' Docker use (e.g. pool.example.org, or 127.0.0.1:5000 for a dev stack); unset: no
+    # built-in registry. registry_internal_url is how the server reaches it (default: http://<address>).
+    registry_address: str | None = None
+    registry_internal_url: str | None = None
+    registry_service: str = "pool-registry"
+    registry_issuer: str = "pool-server"
+    registry_key_file: Path | None = None
+    registry_cert_file: Path | None = None
+    registry_retention_days: int = 30  # images unused this long are deleted; a group may set its own
+    registry_scan_interval_s: int = 3600
     results_zip_max_mb: int = 2048  # largest "Download all" zip; bigger jobs use `pool download --all`
 
     @model_validator(mode="after")
@@ -93,6 +105,10 @@ class Settings(BaseSettings):
         self.ca_cert_file = self.ca_cert_file or self.data_dir / "ca.crt"
         self.signing_key_file = self.signing_key_file or self.data_dir / "signing.key"
         self.secrets_key_file = self.secrets_key_file or self.data_dir / "secrets.key"
+        self.registry_key_file = self.registry_key_file or self.data_dir / "registry.key"
+        self.registry_cert_file = self.registry_cert_file or self.data_dir / "registry.crt"
+        if self.registry_address == "":
+            self.registry_address = None
         if not self.dev_mode and not (self.oidc_issuer and self.oidc_audience):
             raise ValueError("POOL_OIDC_ISSUER and POOL_OIDC_AUDIENCE are required unless POOL_DEV_MODE=true")
         self._check_object_store()

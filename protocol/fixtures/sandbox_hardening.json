@@ -1,0 +1,37 @@
+{
+  "about": "Container flags every task gets, on a member's computer (agent/sandbox CreateArgs) and with `pool run --local` (cli/pool_cli/run.py). Generated from pool_protocol/sandbox.py by `python -m pool_protocol.export`; the Go tests read it.",
+  "flags": [
+    [
+      "--user",
+      "65534:65534"
+    ],
+    [
+      "--cap-drop",
+      "ALL"
+    ],
+    [
+      "--security-opt",
+      "no-new-privileges"
+    ],
+    [
+      "--read-only"
+    ],
+    [
+      "--network",
+      "none"
+    ],
+    [
+      "--ipc",
+      "private"
+    ],
+    [
+      "--pids-limit",
+      "512"
+    ],
+    [
+      "--tmpfs",
+      "/tmp:rw,noexec,nosuid,size=256m"
+    ]
+  ],
+  "outputs_path": "/out"
+}

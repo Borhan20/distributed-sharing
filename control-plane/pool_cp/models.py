@@ -65,6 +65,7 @@ class Group(Base):
     expires_at: Mapped[datetime | None] = mapped_column(TS)
     retention_days: Mapped[int] = mapped_column(Integer, default=30)
     registry_allowlist: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
+    registry_retention_days: Mapped[int | None] = mapped_column(Integer)  # None: the server's default
     state: Mapped[str] = mapped_column(String(16), default="active")  # active | expired | closed | deleted
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now())
     closed_at: Mapped[datetime | None] = mapped_column(TS)
@@ -221,6 +222,18 @@ class UserRegistryCredential(Base):
     username: Mapped[str] = mapped_column(String(255))
     secret: Mapped[bytes] = mapped_column(LargeBinary)
     updated_at: Mapped[datetime] = mapped_column(TS, server_default=func.now())
+
+
+class RegistryImage(Base):
+    """An image in the built-in registry, for clean-up: deleted after the group's retention without use."""
+
+    __tablename__ = "registry_images"
+    repository: Mapped[str] = mapped_column(String(255), primary_key=True)  # <group>/<handle>/<name>
+    digest: Mapped[str] = mapped_column(String(80), primary_key=True)
+    tag: Mapped[str | None] = mapped_column(String(128))  # the tag it was pushed with, so scans skip a lookup
+    group_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("groups.id", ondelete="SET NULL"))
+    first_seen_at: Mapped[datetime] = mapped_column(TS, server_default=func.now())
+    last_used_at: Mapped[datetime | None] = mapped_column(TS)
 
 
 class RunHistory(Base):

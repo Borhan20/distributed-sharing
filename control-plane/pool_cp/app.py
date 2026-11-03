@@ -18,8 +18,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
-from . import agent_ws, storage
-from .api import devices, groups, jobs, registries, results
+from . import agent_ws, builtin_registry, storage
+from .api import devices, groups, jobs, registries, registry_api, results
 from .auth import TokenVerifier
 from .auth.dev_idp import DEV_AUDIENCE, DEV_ISSUER, DevIdP
 from .auth.dev_idp import router as dev_router
@@ -68,6 +68,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                            create=bool(settings.autocreate_keys))
     app.state.signer = EnvelopeSigner(settings.signing_key_file, create=bool(settings.autocreate_keys))
     app.state.secretbox = SecretBox(settings.secrets_key_file, create=bool(settings.autocreate_keys))
+    app.state.registry_issuer = (
+        # Created on the first start even when other keys are not: it only signs registry tokens, and the
+        # registry trusts whatever certificate is there.
+        builtin_registry.Issuer(settings.registry_key_file, settings.registry_cert_file, settings.registry_issuer,
+                                settings.registry_service, create=True)
+        if builtin_registry.enabled(settings) else None)
     app.state.agent_conns = {}
     # Dependencies that do not gate readiness. The object store is optional: jobs run
     # without it and outputs stay on the devices.
@@ -88,6 +94,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(devices.router)
     app.include_router(jobs.router)
     app.include_router(registries.router)
+    app.include_router(registry_api.router)
     app.include_router(results.router)
     app.include_router(agent_ws.router)
 

@@ -80,6 +80,8 @@ class GroupUpdate(BaseModel):
     retention_days: int | None = Field(default=None, ge=1, le=3650)
     expires_at: datetime | None = None
     registry_allowlist: list[str] | None = Field(default=None, max_length=50)
+    # Days the built-in registry keeps an image nobody uses; null: the server's default.
+    registry_retention_days: int | None = Field(default=None, ge=1, le=3650)
 
 
 class GroupOut(BaseModel):
@@ -93,6 +95,7 @@ class GroupOut(BaseModel):
     retention_days: int
     expires_at: datetime | None
     registry_allowlist: list[str]
+    registry_retention_days: int | None = None
     state: str
     created_at: datetime
     my_role: str | None = None
@@ -102,7 +105,8 @@ def _group_out(g: Group, role: str | None) -> GroupOut:
     return GroupOut(id=g.id, name=g.name, display_name=g.display_name, template=g.template,
                     approval_rule=g.approval_rule, approval_k=g.approval_k, probation_days=g.probation_days,
                     retention_days=g.retention_days, expires_at=g.expires_at,
-                    registry_allowlist=list(g.registry_allowlist or []), state=g.state, created_at=g.created_at,
+                    registry_allowlist=list(g.registry_allowlist or []),
+                    registry_retention_days=g.registry_retention_days, state=g.state, created_at=g.created_at,
                     my_role=role)
 
 

@@ -21,3 +21,5 @@ coverage/
 deploy/keycloak/pool-realm.server.json
 deploy/pool-ca.crt
 deploy/.first-admin
+# `pool run` saves a job's /out files here
+pool-out/

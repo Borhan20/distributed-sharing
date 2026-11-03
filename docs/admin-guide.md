@@ -118,7 +118,7 @@ Run these in `/opt/pool/deploy` as root:
 | Task | Command |
 |---|---|
 | What is running | `docker compose ps` |
-| Logs | `docker compose logs -f api` (or `scheduler`, `keycloak`, `caddy`, `seaweedfs`) |
+| Logs | `docker compose logs -f api` (or `scheduler`, `keycloak`, `caddy`, `seaweedfs`, `registry`) |
 | Restart everything | `docker compose restart` |
 | Stop / start | `docker compose down` / `docker compose up -d` (data is kept) |
 | Upgrade | Run the installer again. Settings and data are kept; the database is migrated. |
@@ -128,7 +128,55 @@ tested end to end yet):
 
 - `/opt/pool/deploy/.env`: every password. Without it, the rest cannot be read.
 - **The database:** `docker compose exec -T postgres pg_dumpall -U pool > pool-db.sql`. It holds groups, jobs, accounts (Keycloak), and the audit log.
-- **The Docker volumes** `pool_pool-keys` (the device CA, the signing key, and `secrets.key`, which encrypts groups' registry tokens: lose it and every computer must enroll again and every token must be re-entered), `pool_seaweed-data` (job output files) and `pool_caddy-data` (certificates and, without a domain, the CA).
+- **The Docker volumes** `pool_pool-keys` (the device CA, the signing key, `secrets.key`, which encrypts groups' registry tokens, and `registry.key`, which signs the registry's tokens: lose them and every computer must enroll again and every token must be re-entered), `pool_seaweed-data` (job output files), `pool_registry-data` (members' images from `pool run`; they can push them again) and `pool_caddy-data` (certificates and, without a domain, the CA).
+
+### The built-in registry
+
+`pool run` needs a place for members' images. The server has its own registry
+for this.
+
+| | |
+|---|---|
+| Service | `registry` (CNCF Distribution) |
+| Address | `https://POOL_ADDRESS/v2/` |
+| Image names | `POOL_ADDRESS/GROUP/USER/NAME` |
+| Data | the Docker volume `pool_registry-data` |
+| Trust | the volume `pool_registry-trust` holds only the certificate it trusts; it never sees the server's keys |
+| Sign-in | through the API, with the member's pool account |
+
+Who can do what:
+
+- A member can push and pull only their own images.
+- A computer gets access to one image, for one task.
+
+**Clean-up.** The scheduler deletes images that nobody used for 30 days. It
+also deletes the images of groups that no longer exist. It never deletes an
+image that a waiting or running job needs.
+
+- Change the number of days with `POOL_REGISTRY_RETENTION_DAYS` in `.env`.
+- A coordinator can set a different number for their group, on the
+  **Images** tab.
+
+**Free the disk space.** Deleting an image does not free its disk space at
+once. The registry's garbage collection does that. Run it at a quiet time:
+
+1. Stop the registry, so no push happens meanwhile:
+   `docker compose stop registry`
+2. Collect the garbage:
+   `docker compose run --rm registry garbage-collect /etc/docker/registry/config.yml`
+3. Start the registry again:
+   `docker compose start registry`
+
+**A server without a domain name** (`POOL_TLS=internal`) uses Caddy's own
+certificate authority. Then Docker must trust it on two kinds of computers:
+members' computers (for `pool run`) and shared computers (to pull images).
+
+1. Take the certificate. The installer saved it as
+   `/opt/pool/deploy/pool-ca.crt`.
+2. On each of those computers (Linux), copy it to
+   `/etc/docker/certs.d/POOL_ADDRESS/ca.crt`.
+
+With a domain name and Let's Encrypt, you do not need this.
 
 ## 7. Security notes
 

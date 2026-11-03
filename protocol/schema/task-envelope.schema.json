@@ -122,6 +122,14 @@
     },
     "TaskSpec": {
       "properties": {
+        "args": {
+          "description": "Arguments after the command, or for the image's own ENTRYPOINT when command is empty (like `docker run IMAGE ARGS`); empty: the image's CMD",
+          "items": {
+            "type": "string"
+          },
+          "title": "Args",
+          "type": "array"
+        },
         "checkpoint": {
           "anyOf": [
             {
@@ -134,7 +142,7 @@
           "default": null
         },
         "command": {
-          "description": "Empty: run the image's own default command",
+          "description": "Replaces the image's ENTRYPOINT; empty: keep it",
           "items": {
             "type": "string"
           },
@@ -209,6 +217,19 @@
           "minimum": 0,
           "title": "Task Index",
           "type": "integer"
+        },
+        "workdir": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Working directory inside the container",
+          "title": "Workdir"
         }
       },
       "required": [

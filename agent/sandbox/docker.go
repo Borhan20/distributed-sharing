@@ -464,6 +464,31 @@ func (d *Docker) pullWithConfig(ctx context.Context, image string, auths map[str
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), cfg, 0o600); err != nil {
 		return err
 	}
-	_, err = d.output(ctx, "--config", dir, "pull", "--quiet", image)
-	return err
+	cmd := d.command(ctx, "--config", dir, "pull", "--quiet", image)
+	// A config folder of its own has no Docker contexts: keep talking to the daemon the owner's Docker
+	// uses now (Docker Desktop, colima, rootless), unless DOCKER_HOST already says which.
+	if os.Getenv("DOCKER_HOST") == "" {
+		if host := d.contextHost(ctx); host != "" {
+			cmd.Env = append(cmd.Env, "DOCKER_HOST="+host)
+		}
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if len(msg) > 500 {
+			msg = msg[:500]
+		}
+		return fmt.Errorf("docker pull: %w: %s", err, msg)
+	}
+	return nil
+}
+
+// contextHost is the daemon address of the current Docker context ("" if Docker cannot say).
+func (d *Docker) contextHost(ctx context.Context) string {
+	out, err := d.output(ctx, "context", "inspect", "--format", "{{.Endpoints.docker.Host}}")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
 }

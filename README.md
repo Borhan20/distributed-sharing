@@ -103,9 +103,10 @@ cd agent && go build -o bin/pool-agent ./cmd/pool-agent
 ./bin/pool-agent share research-team        # also lists the computer in the group
 ./bin/pool-agent run
 
-# 4. Submit a job (images must be pinned by digest)
+# 4. Submit a job, or run a program of your own like `docker run` (builds its Dockerfile)
 uv run pool submit examples/hello-array.yaml --wait
 uv run pool logs <job-id> --task 0
+cd examples/run/go-primes && uv run pool run     # output here, files in ./pool-out
 ```
 
 `--insecure-http` is accepted only for `localhost` and `127.0.0.1`. A shared

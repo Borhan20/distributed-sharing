@@ -134,6 +134,23 @@ that were not available.
 | Examples for every kind of work | Done | `examples/`: random runs, sweep, many files, test suite; each run under the agent's container restrictions (3 November 2026); all parse in CI |
 | Tested | Done | Unit and API tests (fake registry, fake file store), Go tests incl. Docker, web tests, e2e with a real agent and SeaweedFS (`parts: auto`, env vars, zip, CLI) |
 
+## `pool run`, step 1: programs without ports (docs/design/pool-run.md, 4 November 2026)
+
+| Item | Status | Notes |
+|---|---|---|
+| `pool run` with `docker run`'s flags | Done | `-e`, `--env-file`, `--cpus`, `-m`, `--disk`, `--gpus`, `-w`, `--entrypoint`, `-d`; refused flags say why; `-p`/`-it` wait for step 2 |
+| Build on your computer, push to the built-in registry | Done | CNCF Distribution 2.8.3 in token mode, sign-in through `/api/v1/registry/token` with the member's pool token; `<group>/<user>/...` only; a code change uploads only the changed layer (measured in e2e) |
+| Computers pull with a server-signed token for one image | Done | Also the second check that the image is the submitter's own |
+| `args` and `workdir` in jobs | Done | `args` go to the image's ENTRYPOINT like `docker run IMAGE ARGS` (protocol, agent, CLI) |
+| `pool run --local` | Done | The same rules as the agent, from one list (`pool_protocol/sandbox.py` → `fixtures/sandbox_hardening.json`, tested in Go and Python); hints from OS error texts |
+| `pool attach` for any job | Done | Live output (one task) or progress, Ctrl-C stops, files into `./pool-out` |
+| `pool.yaml` | Done | A job file plus `build` and `platform` |
+| Registry clean-up | Done | 30 days unused (`POOL_REGISTRY_RETENTION_DAYS`, per group on the Images tab); images of groups that no longer exist. Never an image a waiting or running job needs, or one used during the scan. Runs apart from the scheduler's main loop. Blob garbage collection is an admin command (admin guide) |
+| Registry container | Done | Sees only its certificate (own volume), no capabilities, read-only image (also in the e2e test). Computers' pull tokens last 30 minutes, members' 5 |
+| Examples | Done | `examples/run/` in Python, Go and C++; each run with `pool run --local` |
+| Tested | Done | API tests with a registry fake that checks token signatures and access; CLI tests with a fake computer; e2e with the real registry, agent and SeaweedFS (build, push, layer reuse, refused push into another member's space, real delete, `--local`, Ctrl-C stops the container within 10 s, attach). **Needs security review** (registry sign-in and pull tokens) |
+| Not yet | – | Ports and the tunnel (step 2), Compose (step 3), replicas (step 4); matching computers to the image's platform; registry storage in SeaweedFS (a volume for now); a storage quota per member; a push-only credential for Docker instead of the member's pool token |
+
 ## Ahead of plan (Phase 2 and later pieces already built)
 
 | Item | Status | Notes |

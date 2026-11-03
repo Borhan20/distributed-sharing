@@ -15,6 +15,7 @@ from pathlib import Path
 from pydantic import TypeAdapter
 
 from . import messages as m
+from . import sandbox
 from .jobspec import JobSpec
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -210,6 +211,8 @@ ENVELOPE_EXAMPLE = {
     "spec": {
         "image": "registry.example.org/research/probe@sha256:" + "b" * 64,
         "command": ["python", "train_probe.py", "--seed", "3", "--dataset", "imdb"],
+        "args": ["--epochs", "20"],
+        "workdir": "/app",
         "env": {"PYTHONUNBUFFERED": "1"},
         "task_index": 3,
         "task_count": 30,
@@ -272,6 +275,7 @@ def write_fixtures(force_signature: bool) -> None:
         (msg_dir / f"{name}.json").write_text(_dump(example))
     m.TaskEnvelope.model_validate(ENVELOPE_EXAMPLE)
     (FIXTURE_DIR / "task_envelope.json").write_text(_dump(ENVELOPE_EXAMPLE))
+    (FIXTURE_DIR / "sandbox_hardening.json").write_text(_dump(sandbox.fixture()))
 
     sig_path = FIXTURE_DIR / "signed_envelope.json"
     if sig_path.exists() and not force_signature:
@@ -301,7 +305,11 @@ def main() -> int:
     ap.add_argument("--force-signature", action="store_true")
     args = ap.parse_args()
     if args.check:
-        return 0 if write_schema(check=True) else 1
+        hardening = FIXTURE_DIR / "sandbox_hardening.json"
+        hardening_ok = hardening.exists() and hardening.read_text() == _dump(sandbox.fixture())
+        if not hardening_ok:
+            print(f"out of date: {hardening.relative_to(ROOT)}")
+        return 0 if (write_schema(check=True) and hardening_ok) else 1
     write_schema(check=False)
     write_fixtures(args.force_signature)
     print(f"wrote {SCHEMA_DIR.relative_to(ROOT)}/ and {FIXTURE_DIR.relative_to(ROOT)}/")

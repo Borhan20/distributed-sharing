@@ -19,10 +19,11 @@ from sqlalchemy import select
 
 from pool_protocol import messages as pm
 
-from . import audit, registry, storage
+from . import audit, builtin_registry, registry, storage
 from .ca import CAError, LocalCA
 from .image_access import credential_for
-from .models import Device, Job, RevokedCert
+from .models import Device, Group, Job, RevokedCert, User
+from .registry_cleanup import mark_used
 from .scheduler import core
 from .secretbox import SecretBoxError
 from .storage import presign_put
@@ -186,6 +187,8 @@ async def _pull_auth(app, s, device_id: uuid.UUID, task, attempt_id: str) -> pm.
         ref = registry.parse_image(image)
     except registry.RegistryError as exc:
         return pm.PullAuth(attempt_id=attempt_id, reason=str(exc))
+    if builtin_registry.is_builtin(settings, image):
+        return await _builtin_pull_auth(app, s, device_id, task, attempt_id, ref)
     submitter_id = (await s.execute(select(Job.submitter_id).where(Job.id == task.job_id))).scalar_one()
     try:
         cred = await credential_for(s, app.state.secretbox, user_id=submitter_id, group_id=task.group_id,
@@ -210,6 +213,33 @@ async def _pull_auth(app, s, device_id: uuid.UUID, task, attempt_id: str) -> pm.
     await audit.record(s, actor_type="device", actor_id=device_id, action="image.pull_token", group_id=task.group_id,
                        device_id=device_id, target_type="attempt", target_id=attempt_id,
                        details={"registry": ref.registry, "repository": ref.repository, "credential": whose})
+    await s.commit()
+    return pm.PullAuth(attempt_id=attempt_id, registry=ref.auth_key, token=token, expires_at=expires)
+
+
+async def _builtin_pull_auth(app, s, device_id: uuid.UUID, task, attempt_id: str, ref) -> pm.PullAuth:
+    """An image in the built-in registry: the server signs a token for pulling exactly this repository. Only for
+    the submitter's own images in the task's group (submit checks it too; this is the second check)."""
+    issuer = app.state.registry_issuer
+    group, handle = (await s.execute(select(Group.name, User.handle).select_from(Job)
+                                     .join(Group, Group.id == Job.group_id).join(User, User.id == Job.submitter_id)
+                                     .where(Job.id == task.job_id))).one()
+    try:
+        mine = builtin_registry.namespace(group, handle)
+    except registry.RegistryError as exc:
+        return pm.PullAuth(attempt_id=attempt_id, reason=str(exc))
+    if issuer is None or not builtin_registry.valid_repository(ref.repository) \
+            or not ref.repository.startswith(mine + "/"):
+        return pm.PullAuth(attempt_id=attempt_id, reason="this image belongs to someone else's space in the "
+                                                         "group's registry")
+    token, expires = issuer.token(f"device:{device_id}",
+                                  [{"type": "repository", "name": ref.repository, "actions": ["pull"]}],
+                                  ttl_s=builtin_registry.DEVICE_PULL_TTL_S)
+    await mark_used(s, ref.repository, task.spec["image"].rsplit("@", 1)[1], task.group_id,
+                    builtin_registry.tag_of(task.spec["image"]))
+    await audit.record(s, actor_type="device", actor_id=device_id, action="image.pull_token", group_id=task.group_id,
+                       device_id=device_id, target_type="attempt", target_id=attempt_id,
+                       details={"registry": ref.registry, "repository": ref.repository, "credential": "builtin"})
     await s.commit()
     return pm.PullAuth(attempt_id=attempt_id, registry=ref.auth_key, token=token, expires_at=expires)
 

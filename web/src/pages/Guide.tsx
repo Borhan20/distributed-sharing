@@ -190,6 +190,29 @@ export function GuidePage() {
             at any time, and delete it (with its logs and files) with <em>Delete job</em>.
           </li>
         </ol>
+        <p>
+          <strong>From your terminal:</strong> <code>pool run</code> works like <code>docker run</code>, but on a
+          computer of your group.
+        </p>
+        <ul>
+          <li>
+            In a folder with a Dockerfile, run <code>pool run -- ARGS</code>. It builds the image on your computer and
+            runs it on the group.
+          </li>
+          <li>
+            The output shows in your terminal. The files come back to <code>./pool-out</code>.
+          </li>
+          <li>
+            It takes docker's flags: <code>-e</code>, <code>--cpus</code>, <code>-m</code>, <code>--gpus</code>. It
+            works for any language.
+          </li>
+          <li>
+            <code>pool run --local</code> checks it on your computer first, with the same rules.
+          </li>
+          <li>
+            <code>pool attach JOB</code> follows any job, also one you submitted here.
+          </li>
+        </ul>
         <details>
           <summary>The example job, as a job file</summary>
           <pre>{formToYaml(EXAMPLE_FORM)}</pre>

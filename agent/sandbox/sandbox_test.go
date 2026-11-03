@@ -6,6 +6,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -119,6 +120,57 @@ func TestCreateArgsTaskNumberAndDefaultCommand(t *testing.T) {
 	}
 	if !has(args, "--env", "POOL_TASK_INDEX=0") || !has(args, "--env", "POOL_TASK_COUNT=1") {
 		t.Errorf("a single task is number 0 of 1: %v", args)
+	}
+}
+
+func TestCreateArgsArgsAndWorkdir(t *testing.T) {
+	img := "busybox@sha256:" + strings.Repeat("a", 64)
+	// docker run IMAGE ARGS: the image's ENTRYPOINT stays, the arguments replace its CMD.
+	s := spec()
+	s.Command, s.Args, s.Workdir = nil, []string{"--port", "8080"}, "/app"
+	args, err := CreateArgs(s, "/o")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if has(args, "--entrypoint") || !has(args, img, "--port", "8080") || !has(args, "--workdir", "/app") {
+		t.Errorf("args for the image's entrypoint: %v", args)
+	}
+	// docker run --entrypoint sh IMAGE -c ...: the command, then the arguments.
+	s = spec()
+	s.Command, s.Args = []string{"sh"}, []string{"-c", "echo hi"}
+	args, _ = CreateArgs(s, "/o")
+	if !has(args, "--entrypoint", "sh", img, "-c", "echo hi") {
+		t.Errorf("command then args: %v", args)
+	}
+	for _, bad := range []string{"app", "/app/../etc", "/a\x00b"} {
+		s = spec()
+		s.Workdir = bad
+		if _, err := CreateArgs(s, "/o"); err == nil {
+			t.Errorf("workdir %q accepted", bad)
+		}
+	}
+}
+
+// The flags in protocol/fixtures/sandbox_hardening.json are what `pool run --local` applies too.
+func TestCreateArgsMatchTheSharedHardeningList(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "protocol", "fixtures", "sandbox_hardening.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var shared struct {
+		Flags [][]string `json:"flags"`
+	}
+	if err := json.Unmarshal(raw, &shared); err != nil || len(shared.Flags) == 0 {
+		t.Fatalf("fixture: %v", err)
+	}
+	args, err := CreateArgs(spec(), "/o")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range shared.Flags {
+		if !has(args, f...) {
+			t.Errorf("CreateArgs lacks %v from the shared hardening list", f)
+		}
 	}
 }
 
