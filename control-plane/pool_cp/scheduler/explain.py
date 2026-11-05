@@ -315,6 +315,7 @@ async def explain_waiting(s: AsyncSession, settings: Settings, job: Job) -> tupl
 
 
 QUIET_S = 30 * 60  # a running task that printed nothing for this long gets a note
+LOG_STREAMS = ("stdout", "stderr", "agent")
 
 
 def _time(seconds: float) -> str:
@@ -345,8 +346,9 @@ async def progress(s: AsyncSession, settings: Settings, job: Job) -> dict[str, A
     per_task = None
     if walls:
         per_task = sum(float(w) for w in walls) / len(walls)
-    elif sizing.get("runs") and not sizing.get("first_run") and job.max_runtime_s:
-        per_task = job.max_runtime_s / 3  # learned limits are 3 × the longest run
+    elif "time" in (sizing.get("auto") or []) and sizing.get("runs") and not sizing.get("first_run") \
+            and job.max_runtime_s:
+        per_task = job.max_runtime_s / 3  # a limit pool learned is 3 × the longest run (not one you set)
     # How many run at once: the places on the computers able to run it now.
     group = await s.get(Group, job.group_id)
     submitter, probation_until = (await s.execute(
@@ -360,20 +362,26 @@ async def progress(s: AsyncSession, settings: Settings, job: Job) -> dict[str, A
         sh = _reported(d, group.name)
         if sh and sh.get("active_now") and _blocker(job, d, sh, submitter, on_probation) is None:
             slots += _places(job, d, sh)
-    at_once = max(min(slots, remaining), running, 1)
-    if per_task:
+    at_once = max(min(slots, remaining), running)
+    if per_task and at_once:  # nothing can run it now: the reasons say why, a time would mislead
         rounds = -(-remaining // at_once)
         out["eta_s"] = int(per_task * rounds)
         out["eta"] = (f"about {_time(per_task * rounds)} more: {remaining} task(s) of about {_time(per_task)}, "
                       f"{at_once} at a time")
-    # Tasks that printed nothing for a long time.
+    # Tasks that printed nothing for a long time: each stream's last line, found through the log's unique
+    # index (attempt, stream, seq), so the cost does not grow with the length of the logs.
+    def last_line(stream: str):  # noqa: ANN202
+        return (select(TaskLog.created_at).where(TaskLog.attempt_id == Attempt.id, TaskLog.stream == stream)
+                .order_by(TaskLog.seq.desc()).limit(1).scalar_subquery())
+
     quiet = (await s.execute(
-        select(Task.index, Attempt.started_at, func.max(TaskLog.created_at))
+        select(Task.index, Attempt.started_at, *[last_line(x) for x in LOG_STREAMS])
         .join(Attempt, Attempt.id == Task.current_attempt_id)
-        .outerjoin(TaskLog, TaskLog.attempt_id == Attempt.id)
-        .where(Task.job_id == job.id, Task.state == "running", Attempt.started_at.isnot(None))
-        .group_by(Task.index, Attempt.started_at).order_by(Task.index).limit(1000))).all()
-    for index, started, last in quiet:
+        .where(Task.job_id == job.id, Task.state == "running", Attempt.started_at.isnot(None),
+               Attempt.started_at < now - timedelta(seconds=QUIET_S))
+        .order_by(Task.index).limit(1000))).all()
+    for index, started, *lasts in quiet:
+        last = max((t for t in lasts if t is not None), default=None)
         silent = (now - (last or started)).total_seconds()
         if silent >= QUIET_S:
             out["notes"].append(f"Task {index} has printed nothing for {_time(silent)}. A program that prints "

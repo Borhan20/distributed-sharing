@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import hashlib
 import io
 import json
 import logging
@@ -21,6 +22,7 @@ import queue
 import threading
 import uuid
 import zipfile
+from collections import OrderedDict
 from collections.abc import AsyncIterator
 from datetime import datetime
 from pathlib import PurePosixPath
@@ -92,21 +94,70 @@ async def _rows(s: AsyncSession, job: Job) -> list[_Row]:
     return [_Row(t, a, d, start, end, outs, usage) for t, a, d, start, end, outs, usage in rows]
 
 
-MAX_REPORT_FILES = 2000
+MAX_REPORT_FILES = 500  # files read for one report (each read counts, also one that fails)
+MAX_REPORT_READ_BYTES = 64 * 1024 * 1024  # bytes read for one report
+REPORT_BUILDS = 2  # reports built at once on this server
+REPORT_CACHE = 64  # reports kept
+_build_slots = threading.BoundedSemaphore(REPORT_BUILDS)
+_cache: OrderedDict[str, junit.Report] = OrderedDict()
+_cache_lock = threading.Lock()
+
+
+def _report_key(job: Job, rows: list[_Row]) -> str:
+    """Changes whenever a task's latest run or its files change, so a kept report is never out of date."""
+    h = hashlib.sha256(str(job.id).encode())
+    for r in rows:
+        h.update(f"{r.task.index}:{r.attempt_id}:{r.task.state}:".encode())
+        h.update(",".join(str(o.get("sha256")) for o in r.report_outputs).encode())
+    return h.hexdigest()
+
+
+def _cached(key: str) -> junit.Report | None:
+    with _cache_lock:
+        report = _cache.get(key)
+        if report is not None:
+            _cache.move_to_end(key)
+        return report
 
 
 def _tests(settings, job: Job, rows: list[_Row]) -> junit.Report:  # noqa: ANN001
-    """Every task's JUnit XML files, merged (docs/design/pool-decides.md §4.8)."""
-    files: list[tuple[int, str, bytes]] = []
-    for r in rows:
-        for o in r.report_outputs:
-            if len(files) >= MAX_REPORT_FILES:
-                break
-            if junit.looks_like_junit(str(o.get("path", "")), int(o.get("size") or 0)):
-                data = _read_small(settings, job.group_id, o, junit.MAX_REPORT_BYTES)
-                if data is not None:
-                    files.append((r.task.index, o["path"], data))
-    return junit.merge(files)
+    """Every task's JUnit XML files, merged (docs/design/pool-decides.md §4.8). Runs in a thread.
+
+    The files come from the tasks, so the work is bounded: one file in memory at a time, at most
+    MAX_REPORT_FILES reads and MAX_REPORT_READ_BYTES in all, each stored file parsed once (tasks that wrote the
+    same file share it), REPORT_BUILDS reports built at once, and a built report is kept until the job's
+    tasks change."""
+    key = _report_key(job, rows)
+    if (report := _cached(key)) is not None:
+        return report
+    with _build_slots:
+        if (report := _cached(key)) is not None:  # built by another request while this one waited
+            return report
+        report = junit.Report()
+        parsed: dict[str, list[junit.Case] | None] = {}
+        reads = read_bytes = skipped = 0
+        for r in rows:
+            for o in r.report_outputs:
+                path, sha = str(o.get("path", "")), str(o.get("sha256", ""))
+                if not junit.looks_like_junit(path, int(o.get("size") or 0)):
+                    continue
+                if sha not in parsed:
+                    if reads >= MAX_REPORT_FILES or read_bytes >= MAX_REPORT_READ_BYTES:
+                        skipped += 1
+                        continue
+                    reads += 1
+                    data = _read_small(settings, job.group_id, o, junit.MAX_REPORT_BYTES)
+                    read_bytes += len(data or b"")
+                    parsed[sha] = junit.parse(data) if data is not None else None
+                report.add(r.task.index, path, parsed[sha])
+        if skipped:
+            report.unreadable.insert(0, f"{skipped} more file(s) were not read: one report reads at most "
+                                        f"{MAX_REPORT_FILES} files and {MAX_REPORT_READ_BYTES // (1024 * 1024)} MiB")
+        with _cache_lock:
+            _cache[key] = report
+            while len(_cache) > REPORT_CACHE:
+                _cache.popitem(last=False)
+        return report
 
 
 def _summary_md(job: Job, rows: list[_Row], show_reasons: bool, tests: dict[str, Any] | None) -> str:
@@ -129,7 +180,7 @@ def _summary_md(job: Job, rows: list[_Row], show_reasons: bool, tests: dict[str,
     for r in rows[:MAX_TABLE_TASKS]:
         u = r.usage or {}
         cpu = "" if u.get("avg_cpu") is None else f"{u['avg_cpu']:g}"
-        lines.append(f"| {r.task.index} | {r.task.state} | {r.device or '-'} | {r.task.attempts_count} | "
+        lines.append(f"| {r.task.index} | {r.task.state} | {junit.cell(r.device) or '-'} | {r.task.attempts_count} | "
                      f"{r.seconds if r.seconds is not None else '-'} | {u.get('peak_memory_mb', '-')} | {cpu or '-'} |")
     failed = [r for r in rows if r.task.state == "failed"]
     if failed:
@@ -137,7 +188,7 @@ def _summary_md(job: Job, rows: list[_Row], show_reasons: bool, tests: dict[str,
         for r in failed[:200]:
             res = r.task.result or {}
             why = res.get("error") or res.get("reason") or f"exit {res.get('exit_code', '?')}"
-            lines.append(f"- Task {r.task.index}: {str(why)[:300]}")
+            lines.append(f"- Task {r.task.index}: {junit.cell(why)[:300]}")  # from the computer: one plain line
     return "\n".join(lines) + "\n"
 
 
@@ -162,8 +213,18 @@ async def test_report(job_id: uuid.UUID, request: Request, p: Principal = Depend
     job, _, _ = await _load_job(s, job_id, p)
     _need_store(request)
     rows = await _rows(s, job)
-    report = await asyncio.to_thread(_tests, request.app.state.settings, job, rows)
+    report = _cached(_report_key(job, rows))
+    if report is None:
+        async with _async_slots(request):  # waiting requests do not hold the server's worker threads
+            report = await asyncio.to_thread(_tests, request.app.state.settings, job, rows)
     return TestReport(**report.summary())
+
+
+def _async_slots(request: Request) -> asyncio.Semaphore:
+    state = request.app.state
+    if not hasattr(state, "report_slots"):
+        state.report_slots = asyncio.Semaphore(REPORT_BUILDS)
+    return state.report_slots
 
 
 def _need_store(request: Request) -> None:
@@ -340,8 +401,8 @@ def _readme(job: Job, notes: list[str], has_table: bool) -> str:
     lines.append("combined/      CSV files of the same name from all tasks, merged (when their columns match)")
     lines.append("summary.md     the run: what ran where, the size given and used, failed tasks")
     lines.append("tests.md       every task's JUnit XML test report merged into one (when there are any)")
-    if notes:
-        lines += ["", "Not included:", *[f"- {n}" for n in notes]]
+    if notes:  # file names come from the tasks: one line each
+        lines += ["", "Not included:", *[f"- {junit.one_line(n, 1000)}" for n in notes]]
     return "\n".join(lines) + "\n"
 
 
@@ -451,11 +512,20 @@ def _write_zip(settings, job: Job, rows: list[_Row], logs: dict[int, str], logs_
         if table:
             z.writestr("results.csv", _csv(columns, table))
         _merge_csvs(settings, job, rows, z, notes)
-        tests = _tests(settings, job, rows).summary()
-        if tests["tests"]:
+        try:
+            tests = _tests(settings, job, rows).summary()
+        except Exception:  # noqa: BLE001 (the task files and logs above matter more than the test report)
+            log.exception("test report for job %s failed", job.id)
+            notes.append("tests.md: the test report could not be built")
+            tests = None
+        if tests and tests["tests"]:
             z.writestr("tests.md", junit.markdown(tests))
             notes.extend(f"tests: {u} is not a JUnit report pool can read" for u in tests["unreadable"])
-        z.writestr("summary.md", _summary_md(job, rows, show_reasons, tests))
+        try:
+            z.writestr("summary.md", _summary_md(job, rows, show_reasons, tests))
+        except Exception:  # noqa: BLE001
+            log.exception("summary for job %s failed", job.id)
+            notes.append("summary.md: the summary could not be built")
         z.writestr("README.txt", _readme(job, notes, bool(table)))
     out.finish()
 

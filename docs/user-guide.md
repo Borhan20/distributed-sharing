@@ -511,6 +511,12 @@ the job page shows a **Tests** section, `pool tests JOB-ID` prints it, the zip
 has `tests.md`, and `pool run` ends with `Tests: 120 passed, 2 failed`. Reports
 of failed tasks count too.
 
+| Limit for test reports | Value |
+|---|---|
+| File | UTF-8 XML, no DOCTYPE, at most 10 MiB |
+| Tests | 50,000 per job |
+| Files read for one job | 500, or 64 MiB in all (the rest are listed as not read) |
+
 **When will it be done?** While a job runs, the job page and `pool attach`
 say how long it will probably take, from its finished tasks (or your earlier
 runs): `about 25 min more: 40 task(s) of about 5 min, 8 at a time`. A task that
