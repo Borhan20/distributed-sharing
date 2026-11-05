@@ -169,7 +169,8 @@ that were not available.
 | Chaos test (agent kills, network cuts, server restarts) | Done | Protocol-level agents; plus a real-agent SIGKILL test |
 | Group expiry and templates | Partial | Expiry stops jobs; data deletion after retention not built |
 | Data classes | Partial | `confidential` → org-owned dedicated device and T2+ only |
-| Backup copies of slow tasks, credits, per-group caches | Not started | Designs: credits in `docs/design/credits.md` (proposal), slow-task copies in `docs/design/pool-decides.md` §4.6 (accepted) |
+| Credits | Done | `docs/design/credits.md`: earn by sharing, spend by using; start credits, coordinator grants, member requests, giving, moving earned credits between groups; out of credits = lowest priority (or wait); earn while waiting (off by default); hourly charging of long tasks. Tested: API tests incl. two gives at once, e2e with two members' real agents. **Needs security review** (credits are value) |
+| Backup copies of slow tasks, per-group caches | Not started | Slow-task copies: `docs/design/pool-decides.md` §4.6 |
 | Secrets, services, overlay network, Kata, T0, gang jobs | Not started (Phases 3–4) | Rejected at submit time with a clear message |
 | Fuzzing | Started | Two Go fuzz targets; CI runs them briefly |
 | Signed releases, SBOM, pen test | Not started (Phase 5) | |

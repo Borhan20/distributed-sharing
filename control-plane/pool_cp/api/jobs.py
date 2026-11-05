@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pool_protocol.jobspec import JobSpecError, is_pinned, load_job_spec, parse_duration_s
 from pool_protocol.messages import TIER_RANK
 
-from .. import audit, builtin_registry, storage
+from .. import audit, builtin_registry, credits, storage
 from ..auth import Principal, current_principal, get_session
 from ..authz import ANY_MEMBER, MANAGERS, SUBMITTERS, load_group, membership, not_found, require_role
 from ..deletion import archive_runs_of_job, outputs_only_in_job
@@ -55,6 +55,8 @@ class JobOut(BaseModel):
     used: dict[str, Any] | None = None
     # How the sizes were chosen: which ones pool chose, first run, growth steps, and a reason for each.
     sizing: dict[str, Any] | None = None
+    # With credits on: the expected and the highest cost, and what it cost so far (docs/design/credits.md §2).
+    credits: dict[str, Any] | None = None
 
 
 def _requested(job: Job) -> dict[str, Any]:
@@ -70,7 +72,8 @@ def _requested(job: Job) -> dict[str, Any]:
             "gpus": job.gpus, "time_limit_s": limit, "first_run": first_run}
 
 
-async def _job_out(s: AsyncSession, job: Job, with_spec: bool = False, show_reasons: bool = True) -> JobOut:
+async def _job_out(s: AsyncSession, job: Job, with_spec: bool = False, show_reasons: bool = True,
+                   with_credits: bool | None = None) -> JobOut:
     counts = dict(
         (await s.execute(select(Task.state, func.count()).where(Task.job_id == job.id).group_by(Task.state))).all()
     )
@@ -94,6 +97,7 @@ async def _job_out(s: AsyncSession, job: Job, with_spec: bool = False, show_reas
         sizing=job.sizing if show_reasons or not job.sizing else
         {k: v for k, v in job.sizing.items() if k in ("auto", "first_run", "steps")},
         used=summary_from_row((await s.execute(text(SUMMARY_SQL), {"job": job.id})).first()) if with_spec else None,
+        credits=await credits.job_credits(s, job, g) if (with_spec if with_credits is None else with_credits) else None,
     )
 
 
@@ -253,7 +257,7 @@ async def submit_job(
         },
     )
     await s.commit()
-    return await _job_out(s, job)
+    return await _job_out(s, job, with_credits=True)  # the cost estimate, for `pool run` and `pool submit`
 
 
 @router.get("/groups/{name}/jobs", response_model=list[JobOut])

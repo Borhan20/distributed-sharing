@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposal. The rules decided on 6 November 2026 are in [§1](#1-goal). The defaults in [§8](#8-defaults-to-confirm) need a yes or a change. Nothing is built. |
+| **Status** | Built on 6 November 2026 (see [§9](#9-as-built)). The rules decided by the user are in [§1](#1-goal). The defaults in [§8](#8-defaults-to-confirm) were used as proposed; the user can still change them. |
 | **Date** | 6 November 2026 |
 | **Builds on** | Plan §7.7 ("optional credit mode") and §8.2 (threat 12, resource abuse), fair share in the scheduler, the usage ledger, [pool decides](pool-decides.md) |
 
@@ -245,3 +245,29 @@ These are my proposals. Each can be changed.
 4. **Earn while waiting:** off by default, and the coordinator can turn it on. (My reading of "all cases make sense".)
 5. **Out of credits:** "lowest priority" by default, with "wait" as the other setting. (Also my reading of "all cases make sense".)
 6. **Moving credits between groups:** allowed by default. Each group can turn it off.
+
+## 9. As built
+
+Built on 6 November 2026 with the defaults of §8.
+
+| Topic | Choice | Why |
+|---|---|---|
+| Storage | `credit_entries` (append-only, one row per change), `credit_balances` (one row per member and group: balance, and how much of it is free), `credit_requests` | The balance row is what gets locked, so the same credits are never spent twice. |
+| Numbers | Decimal with 4 places (`Numeric(18,4)`) | No rounding drift from floats. |
+| Charging | When an attempt ends, where usage is recorded: the submitter's `spend` row and the owner's `earn` row, in one transaction. Long tasks every hour (scheduler loop), settled at the end. | §3.2. |
+| Locks | Both balance rows are locked in one fixed order before a charge, a gift or a move | Two transfers in opposite directions cannot deadlock. |
+| Cost of a size pool chose | Measured average CPU and highest memory, never more than the size the attempt held | §3.2: a first run costs what it used. |
+| Pool's too-small tries | Charged like any run. When a bigger try of the same task succeeds, pool pays the person back (`pool_retry` row); the owner keeps what they earned. | §3.2 said "not charged", but then a member and an owner could make credits by failing on purpose (found in the security review of step B). |
+| Not charged | Aborts for the owner, the kill switch, policy or shutdown, and lost leases (hourly charges come back) | §3.2, §3.3. |
+| Cancelled jobs | Charged for the time they ran | The computer did that work. |
+| Start credits | Given the first time a balance is needed (a job runs, the Credits tab opens), and to every member when credits are turned on | No change is needed in the places where people join. |
+| Scheduler | One more join (`credit_balances`) in the job query: "wait" leaves members with 0 or less out; otherwise they sort after members with credits | §3.7, §3.8. |
+| Earn while waiting | Scheduler loop: owners of online, available, idle computers earn `standby_percent` of the CPU rate for the cores they share; at most 2 minutes back after a pause | §3.3. Off by default. |
+| Who may | Give, ask, see own: any member. Every member's balance: coordinators and admins. Grant, approve, decline: the coordinator (two-step sign-in when the server asks for it). | §3.4, §7. |
+| Estimate | Before a run: "at most" (every task for its whole time limit) and, with earlier runs, "about" (a third of the learned limit, the memory used) | Learned limits are 3 × the longest run. |
+
+Not built: credits earned per computer on the computer's page and in
+`pool-agent status`; flagging use far above the same person's other runs
+(§7, dishonest agents). The numbers a device reports are already capped at
+the task's limits.
+

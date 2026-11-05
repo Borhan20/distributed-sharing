@@ -8,6 +8,7 @@ import { ConfirmDialog, CopyButton, ErrorBox, Loading, RichText, StateBadge } fr
 import { TERMINAL, fmtTime } from "../lib/format";
 import { downloadFile } from "../lib/download";
 import { commandText, splitImage } from "../lib/jobspec";
+import { jobCostText } from "../lib/credits";
 import { oversizeHint, requestedText, taskUsageText, usedText, type JobUsed, type Requested, type TaskUsage } from "../lib/usage";
 import { TaskCounts } from "./group/JobsTab";
 import type { RerunState } from "./group/SubmitJob";
@@ -160,6 +161,12 @@ export function JobPage() {
                   <div className="muted small-text">{oversizeHint(j.requested as Requested | null, j.used as JobUsed | null)}</div>
                 )}
               </dd>
+            </>
+          )}
+          {jobCostText(j.credits as Parameters<typeof jobCostText>[0]) && (
+            <>
+              <dt>Credits</dt>
+              <dd>{jobCostText(j.credits as Parameters<typeof jobCostText>[0])}</dd>
             </>
           )}
           <dt>Isolation</dt>

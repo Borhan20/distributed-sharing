@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import audit
+from .. import audit, credits
 from ..auth import Principal, current_principal, get_session
 from ..authz import (
     ANY_MEMBER,
@@ -72,6 +72,12 @@ class GroupCreate(BaseModel):
         return v
 
 
+class CreditRates(BaseModel):
+    cpu_hour: float = Field(default=1, gt=0, le=1000)  # credits for one CPU core for one hour
+    gib_hours_per_credit: float = Field(default=4, gt=0, le=1_000_000)  # GiB of memory held one hour per credit
+    gpu_hour: float = Field(default=10, ge=0, le=100_000)  # credits for one GPU for one hour
+
+
 class GroupUpdate(BaseModel):
     display_name: str | None = Field(default=None, min_length=1, max_length=128)
     approval_rule: Rule | None = None
@@ -84,6 +90,14 @@ class GroupUpdate(BaseModel):
     registry_retention_days: int | None = Field(default=None, ge=1, le=3650)
     # The time limit of a task on its first run, when nobody set one (docs/design/pool-decides.md §10).
     default_time_limit_s: int | None = Field(default=None, ge=60, le=7 * 24 * 3600)
+    # Credits (docs/design/credits.md §3).
+    credits_enabled: bool | None = None
+    credit_start: float | None = Field(default=None, ge=0, le=1_000_000)
+    credit_rates: CreditRates | None = None
+    out_of_credits: Literal["lowest", "wait"] | None = None
+    standby_percent: int | None = Field(default=None, ge=0, le=100)
+    credits_in: bool | None = None
+    credits_out: bool | None = None
 
 
 class GroupOut(BaseModel):
@@ -99,6 +113,13 @@ class GroupOut(BaseModel):
     registry_allowlist: list[str]
     registry_retention_days: int | None = None
     default_time_limit_s: int = 14400
+    credits_enabled: bool = False
+    credit_start: float = 20
+    credit_rates: dict[str, float] = Field(default_factory=dict)
+    out_of_credits: str = "lowest"
+    standby_percent: int = 0
+    credits_in: bool = True
+    credits_out: bool = True
     state: str
     created_at: datetime
     my_role: str | None = None
@@ -110,7 +131,11 @@ def _group_out(g: Group, role: str | None) -> GroupOut:
                     retention_days=g.retention_days, expires_at=g.expires_at,
                     registry_allowlist=list(g.registry_allowlist or []),
                     registry_retention_days=g.registry_retention_days,
-                    default_time_limit_s=g.default_time_limit_s or 14400, state=g.state, created_at=g.created_at,
+                    default_time_limit_s=g.default_time_limit_s or 14400,
+                    credits_enabled=bool(g.credits_enabled), credit_start=float(g.credit_start or 0),
+                    credit_rates=credits.rates(g), out_of_credits=g.out_of_credits or "lowest",
+                    standby_percent=g.standby_percent or 0, credits_in=g.credits_in is not False,
+                    credits_out=g.credits_out is not False, state=g.state, created_at=g.created_at,
                     my_role=role)
 
 
@@ -144,7 +169,9 @@ async def create_group(body: GroupCreate, request: Request, p: Principal = Depen
     expires_at = body.expires_at
     if expires_at is None and defaults["expires_in_days"]:
         expires_at = utcnow() + timedelta(days=defaults["expires_in_days"])
+    credits_on, credit_start = credits.TEMPLATE_CREDITS.get(body.template or "research-team", (False, 20))
     g = Group(name=body.name, display_name=body.display_name, template=body.template,
+              credits_enabled=credits_on, credit_start=credit_start,
               approval_rule=body.approval_rule or defaults["approval_rule"],
               approval_k=body.approval_k or defaults["approval_k"],
               probation_days=body.probation_days if body.probation_days is not None else defaults["probation_days"],
@@ -179,8 +206,16 @@ async def update_group(name: str, body: GroupUpdate, request: Request, p: Princi
     changes = body.model_dump(exclude_unset=True)
     if "default_time_limit_s" in changes and changes["default_time_limit_s"] is None:
         raise HTTPException(422, "default_time_limit_s needs a number of seconds (60 to 604800)")
+    nulls = [k for k in ("credits_enabled", "credit_start", "credit_rates", "out_of_credits", "standby_percent",
+                         "credits_in", "credits_out") if k in changes and changes[k] is None]
+    if nulls:
+        raise HTTPException(422, f"{', '.join(nulls)} cannot be empty")
+    turning_on = changes.get("credits_enabled") is True and not g.credits_enabled
     for k, v in changes.items():
         setattr(g, k, v)
+    if turning_on:  # every member gets their start credits now (credits.md §3.4)
+        members = (await s.execute(select(Membership.user_id).where(Membership.group_id == g.id))).scalars().all()
+        await credits.start_all(s, g, list(members))
     await audit.record(s, actor_type="user", actor_id=p.user.id, action="group.update", group_id=g.id,
                        target_type="group", target_id=g.id, details=changes)
     await s.commit()

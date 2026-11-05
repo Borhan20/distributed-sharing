@@ -14,7 +14,7 @@ import signal
 
 from sqlalchemy import text
 
-from .. import builtin_registry, storage
+from .. import builtin_registry, credits, storage
 from ..config import get_settings
 from ..db import make_engine, make_sessionmaker
 from ..deletion import purge_deleted_groups
@@ -82,6 +82,10 @@ async def run(stop: asyncio.Event, settings=None, on_tick=None) -> None:
                         log.warning("could not delete stored files of purged group %s", gid, exc_info=True)
                 async with maker() as s:
                     await core.rollup_jobs(s)
+                    await s.commit()
+                async with maker() as s:  # credits: long tasks every hour, "earn while waiting"
+                    await credits.charge_running(s, utcnow())
+                    await credits.pay_standby(s, utcnow(), settings.heartbeat_interval_s)
                     await s.commit()
             except Exception:  # keep the loop alive; errors are logged with traceback
                 log.exception("scheduler iteration failed")

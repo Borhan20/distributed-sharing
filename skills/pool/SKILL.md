@@ -99,6 +99,12 @@ image. It prints why after submitting. Set a size only when it is known.
 - **To learn a size first:** `pool run --local` prints `pool: It used: memory ..., CPU ..., run time ...`.
 - **A first run waits** while the user has another first run going. Setting `-m` skips that wait.
 
+**Credits.** In a group with credits, a run on another member's computer
+costs credits; `pool run` and `pool submit` print the expected cost. Check the
+balance with `pool credits` before a big run, and tell the user the cost. Out of
+credits, jobs run last or wait. Never give, move or ask for credits unless the
+user asks for exactly that.
+
 ## 6. Exit codes
 
 | Command | Exit code |

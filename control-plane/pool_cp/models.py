@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
@@ -16,6 +17,7 @@ from sqlalchemy import (
     Index,
     Integer,
     LargeBinary,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -68,6 +70,16 @@ class Group(Base):
     registry_retention_days: Mapped[int | None] = mapped_column(Integer)  # None: the server's default
     # The time limit of a task nobody set one for, on a first run (docs/design/pool-decides.md §10).
     default_time_limit_s: Mapped[int] = mapped_column(Integer, server_default="14400", default=14400)
+    # Credits (docs/design/credits.md): earn by sharing, spend by using.
+    credits_enabled: Mapped[bool] = mapped_column(Boolean, server_default="false", default=False)
+    credit_start: Mapped[Decimal] = mapped_column(Numeric(18, 4), server_default="20", default=Decimal(20))
+    credit_rates: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, server_default='{"cpu_hour": 1, "gib_hours_per_credit": 4, "gpu_hour": 10}',
+        default=lambda: {"cpu_hour": 1, "gib_hours_per_credit": 4, "gpu_hour": 10})
+    out_of_credits: Mapped[str] = mapped_column(String(16), server_default="lowest", default="lowest")
+    standby_percent: Mapped[int] = mapped_column(Integer, server_default="0", default=0)
+    credits_in: Mapped[bool] = mapped_column(Boolean, server_default="true", default=True)
+    credits_out: Mapped[bool] = mapped_column(Boolean, server_default="true", default=True)
     state: Mapped[str] = mapped_column(String(16), default="active")  # active | expired | closed | deleted
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now())
     closed_at: Mapped[datetime | None] = mapped_column(TS)
@@ -79,6 +91,8 @@ class Group(Base):
         CheckConstraint(_in("approval_rule", APPROVAL_RULES), name="ck_groups_approval_rule"),
         CheckConstraint("state IN ('active','expired','closed','deleted')", name="ck_groups_state"),
         CheckConstraint("approval_k >= 1", name="ck_groups_k"),
+        CheckConstraint("out_of_credits IN ('lowest', 'wait')", name="ck_groups_out_of_credits"),
+        CheckConstraint("standby_percent BETWEEN 0 AND 100", name="ck_groups_standby_percent"),
     )
 
 
@@ -196,6 +210,8 @@ class DeviceShare(Base):
     removed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     removed_at: Mapped[datetime | None] = mapped_column(TS)
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now())
+    # "Earn while waiting" (credits): paid up to this moment.
+    standby_paid_until: Mapped[datetime | None] = mapped_column(TS)
 
 
 class GroupRegistryCredential(Base):
@@ -346,6 +362,9 @@ class Attempt(Base):
     usage: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     # What this attempt was given: cpu, memory_mb, disk_mb, max_runtime_s, first_run (scheduler.sizing).
     resources: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # Credits charged so far for this attempt, and for how many seconds of it (credits.charge_attempt).
+    charged: Mapped[Decimal] = mapped_column(Numeric(18, 4), server_default="0", default=Decimal(0))
+    charged_s: Mapped[float] = mapped_column(Float, server_default="0", default=0.0)
     __table_args__ = (
         UniqueConstraint("task_id", "epoch", name="uq_attempt_epoch"),
         CheckConstraint(_in("state", ATTEMPT_STATES), name="ck_attempt_state"),
@@ -404,3 +423,58 @@ class ServiceHeartbeat(Base):
     instance: Mapped[str] = mapped_column(String(64), primary_key=True)
     service: Mapped[str] = mapped_column(String(16))
     at: Mapped[datetime] = mapped_column(TS)
+
+
+class CreditBalance(Base):
+    """A member's credits in one group: the sum of their credit_entries, kept here so it can be locked."""
+
+    __tablename__ = "credit_balances"
+    group_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    balance: Mapped[Decimal] = mapped_column(Numeric(18, 4), server_default="0", default=Decimal(0))
+    free: Mapped[Decimal] = mapped_column(Numeric(18, 4), server_default="0", default=Decimal(0))  # of balance
+    updated_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), onupdate=func.now())
+    __table_args__ = (CheckConstraint("free >= 0", name="ck_credit_balances_free"),)
+
+
+class CreditEntry(Base):
+    """Append-only: one change of a member's credits. Rows are never updated or deleted."""
+
+    __tablename__ = "credit_entries"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    group_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"))
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    free: Mapped[Decimal] = mapped_column(Numeric(18, 4), server_default="0", default=Decimal(0))  # of amount
+    # start, grant, request, give, receive, spend, earn, pool_retry, move_out, move_in, standby
+    kind: Mapped[str] = mapped_column(String(16))
+    job_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    attempt_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    device_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    counterparty_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    request_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now())
+    __table_args__ = (Index("ix_credit_entries_group_user", "group_id", "user_id", "id"),
+                      Index("ix_credit_entries_job", "job_id"))
+
+
+class CreditRequest(Base):
+    __tablename__ = "credit_requests"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    group_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"))
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    reason: Mapped[str] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(String(16), server_default="open", default="open")
+    granted: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    decided_at: Mapped[datetime | None] = mapped_column(TS)
+    created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now())
+    __table_args__ = (
+        CheckConstraint("state IN ('open', 'approved', 'declined')", name="ck_credit_requests_state"),
+        CheckConstraint("amount > 0", name="ck_credit_requests_amount"),
+        Index("uq_credit_requests_open", "group_id", "user_id", unique=True, postgresql_where="state = 'open'"),
+    )
+

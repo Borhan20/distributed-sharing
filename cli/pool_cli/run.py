@@ -610,7 +610,7 @@ def run(argv: list[str]) -> int:
             return 130
     job = cli.api("POST", f"/api/v1/groups/{group}/jobs", json=p.job)
     _say(f"Submitted {job['name']} ({job['tasks']['total']} task(s)) to {group}: job {job['id']}")
-    for line in cli.sizing_lines(job):
+    for line in cli.sizing_lines(job) + cli.credit_lines(job):
         _say(line)
     if o.detach:
         _say(f"Running in the background. Follow it with: pool attach {job['id']}")
@@ -680,7 +680,8 @@ def attach(job_id: str, out: Path, yes: bool = False, poll: float = 1.0) -> int:
     if given:  # one task: compare with what its run had (a first run had a whole computer's free memory)
         requested = {"cpu": given.get("cpu"), "memory_mb": given.get("memory_mb"),
                      "time_limit_s": given.get("max_runtime_s")}
-    for line in cli.sizing_lines(job, new_only=True) + usage_lines(requested, job.get("used")):
+    for line in (cli.sizing_lines(job, new_only=True) + usage_lines(requested, job.get("used"))
+                 + cli.credit_lines(job, after=True)):
         _say(line)
     codes = [(t.get("result") or {}).get("exit_code") for t in tasks]
     # Only a task that failed for good for lack of memory: a try that ran out and then succeeded is not news.

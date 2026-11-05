@@ -264,6 +264,166 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/groups/{name}/credits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** My Credits */
+        get: operations["my_credits_api_v1_groups__name__credits_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/groups/{name}/credits/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** My History */
+        get: operations["my_history_api_v1_groups__name__credits_history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/groups/{name}/credits/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Member Credits
+         * @description Every member's balance: for coordinators and admins (credits.md §7, privacy).
+         */
+        get: operations["member_credits_api_v1_groups__name__credits_members_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/groups/{name}/credits/give": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Give Credits */
+        post: operations["give_credits_api_v1_groups__name__credits_give_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/groups/{name}/credits/requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Requests
+         * @description The coordinator sees every member's requests; a member sees their own.
+         */
+        get: operations["list_requests_api_v1_groups__name__credits_requests_get"];
+        put?: never;
+        /** Ask For Credits */
+        post: operations["ask_for_credits_api_v1_groups__name__credits_requests_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/groups/{name}/credits/requests/{request_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve Request */
+        post: operations["approve_request_api_v1_groups__name__credits_requests__request_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/groups/{name}/credits/requests/{request_id}/decline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Decline Request */
+        post: operations["decline_request_api_v1_groups__name__credits_requests__request_id__decline_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/groups/{name}/credits/grant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Grant Credits */
+        post: operations["grant_credits_api_v1_groups__name__credits_grant_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/credits/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Move Credits */
+        post: operations["move_credits_api_v1_me_credits_move_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/devices/enrollment-codes": {
         parameters: {
             query?: never;
@@ -924,6 +1084,18 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ApproveIn */
+        ApproveIn: {
+            /** Amount */
+            amount?: number | null;
+        };
+        /** AskIn */
+        AskIn: {
+            /** Amount */
+            amount: number;
+            /** Reason */
+            reason: string;
+        };
         /** AuditOut */
         AuditOut: {
             /** Id */
@@ -959,6 +1131,52 @@ export interface components {
              * @default false
              */
             confirm: boolean;
+        };
+        /** CreditRates */
+        CreditRates: {
+            /**
+             * Cpu Hour
+             * @default 1
+             */
+            cpu_hour: number;
+            /**
+             * Gib Hours Per Credit
+             * @default 4
+             */
+            gib_hours_per_credit: number;
+            /**
+             * Gpu Hour
+             * @default 10
+             */
+            gpu_hour: number;
+        };
+        /** CreditsOut */
+        CreditsOut: {
+            /** Group */
+            group: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Balance */
+            balance: number;
+            /** Free */
+            free: number;
+            /** Earned */
+            earned: number;
+            /** Start */
+            start: number;
+            /** Rates */
+            rates: {
+                [key: string]: number;
+            };
+            /** Out Of Credits */
+            out_of_credits: string;
+            /** Standby Percent */
+            standby_percent: number;
+            /** Credits In */
+            credits_in: boolean;
+            /** Credits Out */
+            credits_out: boolean;
+            open_request?: components["schemas"]["RequestOut"] | null;
         };
         /** DeleteGroupBody */
         DeleteGroupBody: {
@@ -1128,6 +1346,48 @@ export interface components {
              */
             expires_at: string;
         };
+        /** EntryOut */
+        EntryOut: {
+            /** Id */
+            id: number;
+            /** Kind */
+            kind: string;
+            /** Amount */
+            amount: number;
+            /** Free */
+            free: number;
+            /** Note */
+            note: string | null;
+            /** Job Id */
+            job_id: string | null;
+            /** Device */
+            device: string | null;
+            /** Counterparty */
+            counterparty: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** GiveIn */
+        GiveIn: {
+            /** To */
+            to: string;
+            /** Amount */
+            amount: number;
+            /** Note */
+            note?: string | null;
+        };
+        /** GrantIn */
+        GrantIn: {
+            /** To */
+            to: string;
+            /** Amount */
+            amount: number;
+            /** Reason */
+            reason: string;
+        };
         /** GroupCreate */
         GroupCreate: {
             /** Name */
@@ -1209,6 +1469,40 @@ export interface components {
              * @default 14400
              */
             default_time_limit_s: number;
+            /**
+             * Credits Enabled
+             * @default false
+             */
+            credits_enabled: boolean;
+            /**
+             * Credit Start
+             * @default 20
+             */
+            credit_start: number;
+            /** Credit Rates */
+            credit_rates?: {
+                [key: string]: number;
+            };
+            /**
+             * Out Of Credits
+             * @default lowest
+             */
+            out_of_credits: string;
+            /**
+             * Standby Percent
+             * @default 0
+             */
+            standby_percent: number;
+            /**
+             * Credits In
+             * @default true
+             */
+            credits_in: boolean;
+            /**
+             * Credits Out
+             * @default true
+             */
+            credits_out: boolean;
             /** State */
             state: string;
             /**
@@ -1254,6 +1548,19 @@ export interface components {
             registry_retention_days?: number | null;
             /** Default Time Limit S */
             default_time_limit_s?: number | null;
+            /** Credits Enabled */
+            credits_enabled?: boolean | null;
+            /** Credit Start */
+            credit_start?: number | null;
+            credit_rates?: components["schemas"]["CreditRates"] | null;
+            /** Out Of Credits */
+            out_of_credits?: ("lowest" | "wait") | null;
+            /** Standby Percent */
+            standby_percent?: number | null;
+            /** Credits In */
+            credits_in?: boolean | null;
+            /** Credits Out */
+            credits_out?: boolean | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1409,6 +1716,10 @@ export interface components {
             sizing?: {
                 [key: string]: unknown;
             } | null;
+            /** Credits */
+            credits?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** JobWaitingOut */
         JobWaitingOut: {
@@ -1471,6 +1782,17 @@ export interface components {
              */
             created_at: string;
         };
+        /** MemberCreditsOut */
+        MemberCreditsOut: {
+            /** Member */
+            member: string;
+            /** Balance */
+            balance: number;
+            /** Free */
+            free: number;
+            /** Earned */
+            earned: number;
+        };
         /** MemberOut */
         MemberOut: {
             /**
@@ -1489,6 +1811,20 @@ export interface components {
              * Format: date-time
              */
             joined_at: string;
+        };
+        /** MoveIn */
+        MoveIn: {
+            /** From Group */
+            from_group: string;
+            /** To Group */
+            to_group: string;
+            /** Amount */
+            amount: number;
+        };
+        /** MoveOut */
+        MoveOut: {
+            source: components["schemas"]["CreditsOut"];
+            target: components["schemas"]["CreditsOut"];
         };
         /** MyRegistryOut */
         MyRegistryOut: {
@@ -1544,6 +1880,31 @@ export interface components {
             owner: string;
             /** Removed At */
             removed_at: string | null;
+        };
+        /** RequestOut */
+        RequestOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Member */
+            member: string;
+            /** Amount */
+            amount: number;
+            /** Reason */
+            reason: string;
+            /** State */
+            state: string;
+            /** Granted */
+            granted: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Decided At */
+            decided_at: string | null;
         };
         /** ResultsTable */
         ResultsTable: {
@@ -1607,6 +1968,10 @@ export interface components {
             updated_at: string;
             /** Usage */
             usage?: {
+                [key: string]: unknown;
+            } | null;
+            /** Given */
+            given?: {
                 [key: string]: unknown;
             } | null;
         };
@@ -2263,6 +2628,341 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JoinRequestOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    my_credits_api_v1_groups__name__credits_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreditsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    my_history_api_v1_groups__name__credits_history_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                before_id?: number | null;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntryOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    member_credits_api_v1_groups__name__credits_members_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemberCreditsOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    give_credits_api_v1_groups__name__credits_give_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GiveIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreditsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_requests_api_v1_groups__name__credits_requests_get: {
+        parameters: {
+            query?: {
+                state?: string;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ask_for_credits_api_v1_groups__name__credits_requests_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_request_api_v1_groups__name__credits_requests__request_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decline_request_api_v1_groups__name__credits_requests__request_id__decline_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    grant_credits_api_v1_groups__name__credits_grant_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GrantIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemberCreditsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    move_credits_api_v1_me_credits_move_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MoveIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MoveOut"];
                 };
             };
             /** @description Validation Error */
