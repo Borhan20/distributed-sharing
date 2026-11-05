@@ -127,7 +127,7 @@ async def test_fits_somewhere_then_nothing_left_to_explain(group_with_device):
     ack = await agent.run_task(offer)
     assert ack.accepted
     result = await owner.get(f"/api/v1/jobs/{job_id}/waiting")
-    assert result == {"pending_tasks": 0, "reasons": []}
+    assert (result["pending_tasks"], result["reasons"]) == (0, [])
 
 
 async def test_failed_try_is_explained_while_waiting_to_retry(group_with_device):

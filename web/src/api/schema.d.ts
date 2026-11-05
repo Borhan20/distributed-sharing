@@ -966,6 +966,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/jobs/{job_id}/tests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Test Report
+         * @description Every task's JUnit XML report merged into one (group members only).
+         */
+        get: operations["test_report_api_v1_jobs__job_id__tests_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/jobs/{job_id}/results": {
         parameters: {
             query?: never;
@@ -1748,6 +1768,15 @@ export interface components {
             pending_tasks: number;
             /** Reasons */
             reasons: components["schemas"]["WaitingReason"][];
+            /** Eta S */
+            eta_s?: number | null;
+            /** Eta */
+            eta?: string | null;
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
         };
         /** JoinRequestCreate */
         JoinRequestCreate: {
@@ -2002,6 +2031,35 @@ export interface components {
             given?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /** TestReport */
+        TestReport: {
+            /** Files */
+            files: number;
+            /** Tests */
+            tests: number;
+            /** Passed */
+            passed: number;
+            /** Failed */
+            failed: number;
+            /** Error */
+            error: number;
+            /** Skipped */
+            skipped: number;
+            /** Seconds */
+            seconds: number;
+            /** Failures */
+            failures: {
+                [key: string]: unknown;
+            }[];
+            /** More Failures */
+            more_failures: number;
+            /** Slowest */
+            slowest: {
+                [key: string]: unknown;
+            }[];
+            /** Unreadable */
+            unreadable: string[];
         };
         /** ValidationError */
         ValidationError: {
@@ -4076,6 +4134,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GroupRegistryOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_report_api_v1_jobs__job_id__tests_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestReport"];
                 };
             };
             /** @description Validation Error */

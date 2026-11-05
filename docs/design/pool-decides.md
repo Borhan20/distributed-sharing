@@ -461,3 +461,24 @@ size overflowed a calculation. All are fixed and tested.
 Not built in step D: "likely to stay online" from a computer's online history,
 and "fast for this image" from measured run times per computer.
 
+### Step E: organize (built 7 November 2026)
+
+| Topic | Choice | Why |
+|---|---|---|
+| Test report | Every `.xml` output that is a JUnit report, of every task's latest run (failed runs too), merged: counts, each failure with its task and message, the slowest tests. `GET /jobs/{id}/tests`, `pool tests`, a **Tests** section on the job page, `tests.md` in the zip, a line at the end of `pool run`/`pool attach`. | §4.8. A failing suite is the report people need most. |
+| Untrusted XML | A DOCTYPE or entity declaration is refused; at most 10 MiB per file, 50,000 tests, 2,000 files | The files come from the tasks. Python's parser does not fetch external entities, but there is no reason to parse DTDs at all. |
+| Run summary | `summary.md` in the zip: state, sizes, the reasons (for the submitter and managers), tests, one line per task (computer, tries, seconds, memory and CPU used), failed tasks with their error | §4.8. |
+| Waiting time | `eta` on `GET /jobs/{id}/waiting`: the average run time of the job's finished tasks (or a third of a learned time limit) × the rounds needed with the places the able computers have now | §4.8. Shown on the job page and in `pool attach` progress. |
+| Quiet tasks | A note for a running task that printed nothing for 30 minutes | §4.6, first half: no CPU figure exists while a task runs, so "no output" is all pool can see. |
+
+**Not built in step E:**
+
+- **Copies of slow tasks** (§4.6). Today a task has one current attempt, and
+  the fence accepts a result only from it (`task.current_attempt_id` and the
+  epoch). A copy needs two live attempts of one task and "the first result
+  wins, the other is stopped". That changes the fencing the chaos test checks,
+  so it is its own piece of work, with its own design and review.
+- **Stopping a stuck task** 30 minutes after the note: without a CPU figure
+  while it runs, pool cannot tell "stuck" from "busy and quiet". The time
+  limit stops it.
+

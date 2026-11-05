@@ -179,6 +179,7 @@ export function JobPage() {
         </dl>
       </section>
       <JobResults jobId={j.id} name={j.name} tasks={tasks.data ?? []} done={done} />
+      {done && <TestReport jobId={j.id} />}
       <section className="card">
         <h2>Tasks</h2>
         <ErrorBox error={tasks.error} />
@@ -462,13 +463,28 @@ function WaitingReasons({ jobId }: { jobId: string }) {
     refetchInterval: 5000,
   });
   const reasons = waiting.data?.reasons ?? [];
-  if (reasons.length === 0) return null;
+  const eta = waiting.data?.eta;
+  const notes = waiting.data?.notes ?? [];
+  if (reasons.length === 0) {
+    if (!eta && notes.length === 0) return null;
+    return (
+      <section className="card" aria-live="polite">
+        {eta && <p>Probably done in {eta}.</p>}
+        {notes.map((n) => (
+          <p key={n} className="muted">
+            {n}
+          </p>
+        ))}
+      </section>
+    );
+  }
   const n = waiting.data?.pending_tasks ?? 0;
   return (
     <section className="card waiting" aria-live="polite">
       <h2>
         {n} task{n === 1 ? "" : "s"} waiting: why
       </h2>
+      {eta && <p>Probably done in {eta}.</p>}
       <ul>
         {reasons.map((r) => (
           <li key={r.code}>
@@ -481,6 +497,53 @@ function WaitingReasons({ jobId }: { jobId: string }) {
           </li>
         ))}
       </ul>
+    </section>
+  );
+}
+
+/** Every task's JUnit XML report merged into one (pool-decides §4.8); nothing when there are none. */
+function TestReport({ jobId }: { jobId: string }) {
+  const report = useQuery({
+    queryKey: ["tests", jobId],
+    queryFn: () => unwrap(client.GET("/api/v1/jobs/{job_id}/tests", { params: { path: { job_id: jobId } } })),
+    retry: false,
+  });
+  const r = report.data;
+  if (!r || r.tests === 0) return null;
+  return (
+    <section className="card">
+      <h2>Tests</h2>
+      <p>
+        {r.passed} passed, {r.failed} failed, {r.error} errors, {r.skipped} skipped, from {r.files} report
+        {r.files === 1 ? "" : "s"}.
+      </p>
+      {r.failures.length > 0 && (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Task</th>
+                <th>Test</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody>
+              {r.failures.map((f, i) => (
+                <tr key={i}>
+                  <td>{String(f.task)}</td>
+                  <td>
+                    <code className="small-text">
+                      {String(f.suite)}::{String(f.name)}
+                    </code>
+                  </td>
+                  <td className="small-text">{String(f.message ?? "")}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {r.more_failures > 0 && <p className="muted">…and {r.more_failures} more (in the zip's tests.md).</p>}
+        </div>
+      )}
     </section>
   );
 }

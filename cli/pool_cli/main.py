@@ -536,6 +536,35 @@ def results(job_id: str, out: Path = typer.Option(None, "--out", "-o", help="Sav
         typer.echo(text, nl=False)
 
 
+def test_lines(report: dict) -> list[str]:
+    """A merged JUnit report in a few lines (docs/design/pool-decides.md §4.8)."""
+    if not report or not report.get("tests"):
+        return []
+    lines = [f"Tests: {report['passed']} passed, {report['failed']} failed, {report['error']} errors, "
+             f"{report['skipped']} skipped ({report['files']} report(s))."]
+    for f in report.get("failures", [])[:20]:
+        lines.append(f"  task {f['task']}: {f['suite']}::{f['name']}  {f['message'][:120]}".rstrip())
+    more = len(report.get("failures", [])) - 20 + report.get("more_failures", 0)
+    if more > 0:
+        lines.append(f"  ...and {more} more")
+    return lines
+
+
+@app.command()
+def tests(job_id: str) -> None:
+    """Every task's JUnit XML test report (junit.xml in /out) merged into one: passed, failed, slowest."""
+    report = api("GET", f"/api/v1/jobs/{job_id}/tests")
+    if not report.get("tests"):
+        typer.echo("no test reports: write JUnit XML to /out (e.g. pytest --junitxml=/out/junit.xml)")
+        return
+    for line in test_lines(report):
+        typer.echo(line)
+    if report.get("slowest"):
+        typer.echo("Slowest:")
+        for c in report["slowest"][:5]:
+            typer.echo(f"  {c['seconds']:>8.2f} s  task {c['task']}: {c['suite']}::{c['name']}")
+
+
 @app.command()
 def cancel(job_id: str) -> None:
     job = api("POST", f"/api/v1/jobs/{job_id}/cancel")

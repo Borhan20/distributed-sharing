@@ -312,3 +312,72 @@ async def explain_waiting(s: AsyncSession, settings: Settings, job: Job) -> tupl
     sentences = " ".join(_BLOCKER_TEXT[code] for code in sorted(blockers))
     return pending, [Reason("no_match", f"No available computer can run this job. {sentences}",
                             "Compare the job's requirements with the group's computers on the group page.")]
+
+
+QUIET_S = 30 * 60  # a running task that printed nothing for this long gets a note
+
+
+def _time(seconds: float) -> str:
+    s = int(seconds)
+    if s < 90:
+        return f"{s} s"
+    if s < 5400:
+        return f"{round(s / 60)} min"
+    return f"{s / 3600:.1f} h"
+
+
+async def progress(s: AsyncSession, settings: Settings, job: Job) -> dict[str, Any]:
+    """When the job will probably end, and tasks that have been quiet for long (pool-decides §4.6, §4.8)."""
+    now = utcnow()
+    counts = dict((await s.execute(
+        select(Task.state, func.count()).where(Task.job_id == job.id).group_by(Task.state))).all())
+    running = counts.get("running", 0)
+    remaining = counts.get("pending", 0) + counts.get("assigned", 0) + running
+    out: dict[str, Any] = {"eta_s": None, "eta": None, "notes": []}
+    if job.state not in ("pending", "running") or remaining == 0:
+        return out
+    # How long one task takes: this job's finished tasks, else what pool learned from earlier runs.
+    walls = [w for (w,) in (await s.execute(
+        select(func.extract("epoch", Attempt.ended_at - Attempt.started_at)).join(Task, Task.id == Attempt.task_id)
+        .where(Task.job_id == job.id, Attempt.state == "succeeded", Attempt.started_at.isnot(None))
+        .limit(500))).all() if w is not None]
+    sizing = job.sizing or {}
+    per_task = None
+    if walls:
+        per_task = sum(float(w) for w in walls) / len(walls)
+    elif sizing.get("runs") and not sizing.get("first_run") and job.max_runtime_s:
+        per_task = job.max_runtime_s / 3  # learned limits are 3 × the longest run
+    # How many run at once: the places on the computers able to run it now.
+    group = await s.get(Group, job.group_id)
+    submitter, probation_until = (await s.execute(
+        select(User.handle, Membership.probation_until).join(Membership, Membership.user_id == User.id)
+        .where(User.id == job.submitter_id, Membership.group_id == job.group_id))).one()
+    on_probation = probation_until is not None and probation_until > now
+    slots = 0
+    for d, enabled, removed in await _group_devices(s, job.group_id):
+        if not enabled or removed or not _online(d, settings.heartbeat_interval_s):
+            continue
+        sh = _reported(d, group.name)
+        if sh and sh.get("active_now") and _blocker(job, d, sh, submitter, on_probation) is None:
+            slots += _places(job, d, sh)
+    at_once = max(min(slots, remaining), running, 1)
+    if per_task:
+        rounds = -(-remaining // at_once)
+        out["eta_s"] = int(per_task * rounds)
+        out["eta"] = (f"about {_time(per_task * rounds)} more: {remaining} task(s) of about {_time(per_task)}, "
+                      f"{at_once} at a time")
+    # Tasks that printed nothing for a long time.
+    quiet = (await s.execute(
+        select(Task.index, Attempt.started_at, func.max(TaskLog.created_at))
+        .join(Attempt, Attempt.id == Task.current_attempt_id)
+        .outerjoin(TaskLog, TaskLog.attempt_id == Attempt.id)
+        .where(Task.job_id == job.id, Task.state == "running", Attempt.started_at.isnot(None))
+        .group_by(Task.index, Attempt.started_at).order_by(Task.index).limit(1000))).all()
+    for index, started, last in quiet:
+        silent = (now - (last or started)).total_seconds()
+        if silent >= QUIET_S:
+            out["notes"].append(f"Task {index} has printed nothing for {_time(silent)}. A program that prints "
+                                "nothing may be stuck; its time limit still stops it.")
+    out["notes"] = out["notes"][:20]
+    return out
+
