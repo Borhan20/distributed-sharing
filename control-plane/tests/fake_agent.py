@@ -109,18 +109,21 @@ class FakeAgent:
         return await self.recv_type(pm.HeartbeatAck)
 
     async def run_task(self, offer: pm.Offer, exit_code: int = 0, logs: str = "hello\n",
-                       outputs: list[dict] | None = None) -> pm.CommitAck:
+                       outputs: list[dict] | None = None, usage: dict | None = None) -> pm.CommitAck:
         await self.send(pm.Accept(attempt_id=offer.attempt_id, epoch=offer.epoch, tier="T2"))
         await self.send(pm.Started(attempt_id=offer.attempt_id, epoch=offer.epoch))
         await self.send(pm.Progress(attempt_id=offer.attempt_id, epoch=offer.epoch, seq=0, log_chunk=logs))
-        return await self.commit(offer.attempt_id, offer.task_id, offer.epoch, exit_code, outputs=outputs)
+        return await self.commit(offer.attempt_id, offer.task_id, offer.epoch, exit_code, outputs=outputs,
+                                 usage=usage)
 
     async def commit(self, attempt_id: str, task_id: str, epoch: int, exit_code: int = 0,
-                     key: str | None = None, outputs: list[dict] | None = None) -> pm.CommitAck:
+                     key: str | None = None, outputs: list[dict] | None = None,
+                     usage: dict | None = None) -> pm.CommitAck:
         await self.send(pm.Commit(idempotency_key=key or f"{task_id}:{attempt_id}", task_id=task_id,
                                   attempt_id=attempt_id, epoch=epoch, exit_code=exit_code,
                                   outputs=outputs if outputs is not None else
-                                  [{"path": "result.txt", "sha256": "e" * 64, "size": 3}]))
+                                  [{"path": "result.txt", "sha256": "e" * 64, "size": 3}],
+                                  usage=usage))
         return await self.recv_type(pm.CommitAck)
 
     async def close(self) -> None:

@@ -357,6 +357,21 @@ class UploadURLs(_Msg):
     reason: str | None = None
 
 
+class RunUsage(_Model):
+    """What one attempt used, as `docker stats` measured it on the device (docs/design/pool-decides.md §4.2).
+
+    It is the device's claim: the server caps each number at what the task was given before it uses it."""
+
+    peak_memory_mb: int = Field(ge=0, le=2**31)
+    cpu_seconds: float = Field(ge=0, le=1e9)
+    peak_cpu: float = Field(ge=0, le=4096)
+    wall_seconds: float = Field(ge=0, le=1e8)
+    output_bytes: int = Field(ge=0, le=2**50, default=0)
+    image_mb: int = Field(ge=0, le=2**31, default=0)
+    oom_killed: bool = False
+    samples: int = Field(ge=0, le=2**31, default=0)
+
+
 class Commit(_Msg):
     type: Literal["commit"] = "commit"
     idempotency_key: str
@@ -366,6 +381,7 @@ class Commit(_Msg):
     exit_code: int
     outputs: list[ArtifactRef] = Field(default_factory=list, max_length=1000)
     error: str | None = Field(default=None, max_length=4096)
+    usage: RunUsage | None = None  # absent from agents that cannot measure (or are older)
 
 
 class CommitAck(_Msg):

@@ -4057,6 +4057,30 @@
               }
             ],
             "title": "Spec"
+          },
+          "requested": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested"
+          },
+          "used": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Used"
           }
         },
         "type": "object",
@@ -4507,6 +4531,18 @@
             "type": "string",
             "format": "date-time",
             "title": "Updated At"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usage"
           }
         },
         "type": "object",

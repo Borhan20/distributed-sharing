@@ -336,3 +336,22 @@ Made on 6 November 2026:
 | Time limit when nothing is known | The group's default time limit, 4 hours to start with. The coordinator can change it on the group's **Settings** tab. |
 | Who learns from whom | Learned sizes are kept per person ([§4.2](#42-measure-every-run)). |
 | Credits | A separate design: [credits.md](credits.md). |
+
+## 11. As built
+
+### Step A: measure (built 6 November 2026)
+
+| Topic | Choice | Why |
+|---|---|---|
+| Source | `docker stats --format '{{json .}}'`, one reading about every second, for the whole run | The numbers people know. Works the same for Docker on Linux and in WSL2. |
+| Memory | The highest reading. Docker leaves out page cache that the kernel can free. | That is the memory the program needs, not the files it read. |
+| CPU time | The average over the time the readings cover, times the whole run time | `docker stats` needs 1–2 s before its first reading. Adding up only the readings gave 55% of the real time in tests; the average gives 85–100%. |
+| Out of memory | Docker's `OOMKilled` mark, read after the end, and only when the exit code is not 0 | A child process killed while the program still succeeded is not a failed task. |
+| Wire | `usage` in the `commit` message (optional) | Older agents send nothing, and nothing changes for them. |
+| Trust | The server caps every number at the task's limits and at the time it saw the attempt run, and keeps a list of capped fields | A device may make a run look smaller, never bigger, longer or out of memory. |
+| Where it shows | Job page (**Used** line and column), `pool run`, `pool attach`, `pool status`, `pool run --local` | `--local` measures too, so people learn a size before they ask the group. |
+
+Not built in step A: measuring the agent's own disk writes outside `/out`
+(the file system is read-only, and `/tmp` counts as memory), and per-computer
+run times for "fast for this image" ([§4.4](#44-choose-the-computer)).
+

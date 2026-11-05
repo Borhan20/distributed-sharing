@@ -29,9 +29,11 @@ def match(text: str) -> list[str]:
     return [hint for _, pattern, hint in _RULES if pattern.search(text)]
 
 
-def for_exit(code: int | None, memory: str | None) -> list[str]:
+def for_exit(code: int | None, memory: str | None, oom: bool = False) -> list[str]:
+    limit = f" ({memory})" if memory else ""
+    if oom:
+        return [f"Out of memory: the program needed more than its limit{limit}. Ask for more with --memory."]
     if code == 137:
-        limit = f" ({memory})" if memory else ""
         return [f"The program was stopped with signal 9, usually for using more than its memory limit{limit}. "
                 "Ask for more with --memory."]
     return []

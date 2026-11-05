@@ -104,7 +104,7 @@ func (a *Agent) runAttempt(ctx context.Context, at *attempt) {
 	refs := a.upload(at, res.Outputs)
 	commit := &protocol.Commit{
 		IdempotencyKey: at.taskID + ":" + at.id, TaskID: at.taskID, AttemptID: at.id, Epoch: at.epoch,
-		ExitCode: res.ExitCode, Outputs: refs,
+		ExitCode: res.ExitCode, Outputs: refs, Usage: res.Usage,
 	}
 	if res.TimedOut {
 		msg := fmt.Sprintf("max_runtime_exceeded (%ds)", env.Spec.MaxRuntimeS)

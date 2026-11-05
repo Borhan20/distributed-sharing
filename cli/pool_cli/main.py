@@ -408,7 +408,12 @@ def jobs_list(group: str = typer.Argument(None), state: str = typer.Option(None)
 def status(job_id: str) -> None:
     job = api("GET", f"/api/v1/jobs/{job_id}")
     typer.echo(f"{job['name']}  state={job['state']}  tasks={_fmt(job['tasks'])}")
-    table(api("GET", f"/api/v1/jobs/{job_id}/tasks"), ["index", "params", "state", "epoch", "attempts", "device"])
+    rows = api("GET", f"/api/v1/jobs/{job_id}/tasks")
+    for r in rows:
+        u = r.get("usage") or {}
+        r["used"] = (f"{u['peak_memory_mb']}MiB,cpu={u['avg_cpu']:g},{u['wall_seconds']:.0f}s"
+                     if u.get("samples") else None)
+    table(rows, ["index", "params", "state", "epoch", "attempts", "device", "used"])
 
 
 @app.command()

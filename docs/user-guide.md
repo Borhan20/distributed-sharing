@@ -73,7 +73,7 @@ A new group has no computers. Jobs wait until at least one member
 
 1. Open your group and go to **Jobs → Submit a job**. The form already holds a small example that runs as-is.
 2. Press **Submit job**. The job page opens.
-3. Watch the tasks: *pending* → *running* → *succeeded*. Click **Logs** on a task to see its output (`part 0 of 4` …).
+3. Watch the tasks: *pending* → *running* → *succeeded*. Click **Logs** on a task to see its output (`part 0 of 4` …). When a task ends, its **Used** column shows the memory, CPU and time it used. The **Used** line under **Spec** puts the most one task used next to what each task asked for.
 4. Under **Results**, press **Download all (zip)** to get every task's files and log at once ([§7](#7-collect-the-results)).
 5. If tasks stay *pending*, the box **"tasks waiting: why"** tells you why and what would fix it, for example *"No computer is shared with this group yet"*.
 
@@ -619,6 +619,27 @@ pool: The container's file system is read-only. Write to /out (kept, comes back 
 The hints work for every language. They also show after a run on a member's
 computer.
 
+### See what your program used
+
+After every run, pool says how much memory, CPU and time the program used,
+next to what it was given. This works with `--local` too, so you can find out
+a program's size on your own computer before you ask the group for it:
+
+```text
+$ pool run --local
+...
+pool: It used: memory 116 MiB of 1.0 GiB, CPU 0.62 of 1 on average, run time 2 s of 1 h.
+```
+
+| You see | What it means | Do this |
+|---|---|---|
+| Memory far below what it was given | You asked for too much | Ask for less (`-m`). Smaller tasks find a computer sooner. |
+| `Out of memory: the program needed more than its limit` | The program hit its memory limit and was stopped | Ask for more (`-m`). |
+| CPU close to what it was given, the whole time | The program could use more cores | Try `--cpus` with more, if the program uses several threads. |
+
+How it is measured: the computer reads `docker stats` about once a second.
+Very short programs (under 2 seconds) may show no numbers.
+
 ### Save your settings: `pool.yaml`
 
 Put the settings you always use into `pool.yaml`, next to your Dockerfile. It
@@ -845,7 +866,8 @@ ran it.
 | `agent: ... pull access denied`, `manifest unknown` | The computer could not download the image | Check the image name. For a private image, add a token under **My images**, or ask a coordinator for one on the **Images** tab |
 | `this image is private: this computer pulled it for another group` | The image belongs to someone else's registry | Use an image you can read, or add a token that can read it ([§6](#6-private-images)) |
 | `the server gave no pull token (...)` | The token is missing, expired or cannot read this image | Replace it under **My images** (your own) or on the **Images** tab (the group's) |
-| `exit 1` (or another number) and your program's error | Your program failed | Fix the program; try it locally with `docker run --rm IMAGE COMMAND` |
+| `out of memory: the program needed more than its ... MiB` | The program used more memory than the task asked for | Ask for more memory (`memory:` or `-m`). The job page's **Used** line shows how much it reached. |
+| `exit 1` (or another number) and your program's error | Your program failed | Fix the program; try it locally with `pool run --local` |
 | Result column shows `max_runtime_exceeded` | The task ran out of time | Raise `time_limit` |
 | `agent: outputs kept on the device only` | The server has no working file store | Ask the server admin; results are still in the log |
 

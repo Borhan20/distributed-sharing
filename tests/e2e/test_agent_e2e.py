@@ -270,3 +270,23 @@ async def test_kill_switch_stops_work(platform):
         await asyncio.sleep(1)
     assert (await http.get(f"/api/v1/jobs/{job_id}/tasks")).json()[0]["state"] == "running"
     await http.post(f"/api/v1/jobs/{job_id}/cancel")
+
+
+async def test_each_run_is_measured_and_out_of_memory_is_named(platform):
+    """docs/design/pool-decides.md step A: the real agent measures each run; the job shows asked vs used."""
+    cp, http, agents = platform
+    agents[0].start()
+    hold = "a=$(dd if=/dev/zero bs=1048576 count=100 2>/dev/null | tr '\\000' 'a'); sleep 4; echo ${#a}"
+    ok = await submit(http, job("measured", ["sh", "-c", hold], resources={"cpu": 1, "memory": "512Mi"}))
+    oom = await submit(http, job("too-big", ["sh", "-c", hold], resources={"cpu": 1, "memory": "64Mi"}, retries=0))
+    j = await wait_job(http, ok)
+    assert j["state"] == "succeeded", j
+    assert j["requested"]["memory_mb"] == 512 and j["used"]["measured"] == 1
+    assert 90 <= j["used"]["peak_memory_mb"] <= 512, j["used"]
+    assert j["used"]["max_wall_seconds"] >= 4 and j["used"]["avg_cpu"] <= 1.0
+    task = (await http.get(f"/api/v1/jobs/{ok}/tasks")).json()[0]
+    assert task["usage"]["samples"] >= 2 and task["usage"]["capped"] in ([], ["peak_cpu"]), task["usage"]
+    j = await wait_job(http, oom)
+    task = (await http.get(f"/api/v1/jobs/{oom}/tasks")).json()[0]
+    assert j["state"] == "failed" and task["result"]["oom_killed"] is True, task
+    assert "out of memory" in task["result"]["error"]

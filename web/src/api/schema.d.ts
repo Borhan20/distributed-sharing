@@ -1390,6 +1390,14 @@ export interface components {
             spec?: {
                 [key: string]: unknown;
             } | null;
+            /** Requested */
+            requested?: {
+                [key: string]: unknown;
+            } | null;
+            /** Used */
+            used?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** JobWaitingOut */
         JobWaitingOut: {
@@ -1586,6 +1594,10 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /** Usage */
+            usage?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** ValidationError */
         ValidationError: {

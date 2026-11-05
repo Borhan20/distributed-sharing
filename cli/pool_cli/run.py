@@ -36,7 +36,7 @@ import yaml
 from pool_protocol import sandbox
 from pool_protocol.jobspec import JobSpecError, default_name, load_job_spec, parse_quantity_mb, result_folder
 
-from . import hints
+from . import hints, measure
 from . import main as cli
 
 PROJECT_FILE = "pool.yaml"
@@ -471,7 +471,10 @@ def run_local(p: Plan, out: Path) -> int:
         subprocess.run([_docker(), "stop", "-t", "10", name], capture_output=True)
 
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    started = time.monotonic()
+    meter = measure.Meter(_docker(), name).start()
     seen: list[str] = []
+    used, oom = None, False
     timer = threading.Timer(limit, stop_at_limit)
     timer.start()
     try:
@@ -481,22 +484,37 @@ def run_local(p: Plan, out: Path) -> int:
             sys.stdout.flush()
             _remember(seen, line)
         code = proc.wait()
+        used = meter.stop(time.monotonic() - started)
+        inspect = subprocess.run([_docker(), "inspect", "--format", "{{.State.OOMKilled}}", name],
+                                 capture_output=True, text=True)
+        oom = inspect.stdout.strip() == "true" and code != 0
         _collect_local(name, out)
     except KeyboardInterrupt:
         _say("stopped")
         return 130
     finally:
+        meter.stop(0)
         timer.cancel()
         subprocess.run([_docker(), "rm", "-f", name], capture_output=True)
         shutil.rmtree(out_dir, ignore_errors=True)  # files the job made unreadable stay behind; harmless
+    for line in usage_lines(_local_requested(p.job, limit), used):
+        _say(line)
     if timed_out.is_set():
         _say(f"stopped: it ran longer than its time limit ({p.job.get('time_limit', '1h')}); raise it with "
              "--time-limit")
         return code or 124
-    for h in hints.match("".join(seen)) + hints.for_exit(code, p.job.get("memory")):
+    for h in hints.match("".join(seen)) + hints.for_exit(code, p.job.get("memory"), oom):
         _say(h)
     _say(f"exit {code}" if code else "done")
     return code
+
+
+def _local_requested(job: dict[str, Any], limit_s: float) -> dict[str, Any]:
+    try:
+        memory_mb = parse_quantity_mb(job.get("memory", "1Gi"))
+    except ValueError:
+        memory_mb = None
+    return {"cpu": float(job.get("cpu", 1)), "memory_mb": memory_mb, "time_limit_s": limit_s}
 
 
 def _collect_local(container: str, dest: Path) -> None:
@@ -638,8 +656,14 @@ def attach(job_id: str, out: Path, yes: bool = False, poll: float = 1.0) -> int:
         return _stop(job_id, yes)
     tasks = cli.api("GET", f"/api/v1/jobs/{job_id}/tasks")
     _save_outputs(job_id, tasks, out, single)
+    job = cli.api("GET", f"/api/v1/jobs/{job_id}")
+    for line in usage_lines(job.get("requested"), job.get("used")):
+        _say(line)
     codes = [(t.get("result") or {}).get("exit_code") for t in tasks]
-    for h in hints.match("".join(seen)) + (hints.for_exit(codes[0], None) if single else []):
+    oom = bool((job.get("used") or {}).get("oom_killed"))
+    memory = f"{job['requested']['memory_mb']} MiB" if job.get("requested") else None
+    for h in hints.match("".join(seen)) + (hints.for_exit(codes[0], memory, oom) if single else
+                                           hints.for_exit(None, memory, oom)):
         _say(h)
     states = {t["state"] for t in tasks}
     if states == {"succeeded"}:
@@ -690,6 +714,38 @@ def _stop(job_id: str, yes: bool) -> int:
         time.sleep(0.5)
     _say("stopped")
     return 130
+
+
+def _size(mb: float) -> str:
+    return f"{mb / 1024:.1f} GiB" if mb >= 1024 else f"{mb:.0f} MiB"
+
+
+def _duration(seconds: float) -> str:
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds} s"
+    if seconds < 3600:
+        return f"{seconds // 60} min {seconds % 60} s" if seconds % 60 else f"{seconds // 60} min"
+    hours, minutes = seconds // 3600, seconds % 3600 // 60
+    return f"{hours} h {minutes} min" if minutes else f"{hours} h"
+
+
+def usage_lines(requested: dict | None, used: dict | None) -> list[str]:
+    """What the runs used next to what they were given (docs/design/pool-decides.md §4.2)."""
+    if not used or not used.get("measured"):
+        return []
+    req = requested or {}
+    mem, cpu = used["peak_memory_mb"], used["avg_cpu"]
+    parts = [f"memory {_size(mem)}" + (f" of {_size(req['memory_mb'])}" if req.get("memory_mb") else ""),
+             f"CPU {cpu:g}" + (f" of {req['cpu']:g}" if req.get("cpu") else "") + " on average",
+             "run time " + _duration(used["max_wall_seconds"])
+             + (f" of {_duration(req['time_limit_s'])}" if req.get("time_limit_s") else "")]
+    many = used["measured"] > 1
+    lines = [("Most used by one task: " if many else "It used: ") + ", ".join(parts) + "."]
+    if req.get("memory_mb") and mem * 4 < req["memory_mb"] and req["memory_mb"] > 1024:
+        lines.append(f"It used less than a quarter of its memory. Asking for less (e.g. -m {max(256, mem * 2)}m) "
+                     "finds a computer sooner.")
+    return lines
 
 
 def _save_outputs(job_id: str, tasks: list[dict], out: Path, single: bool) -> None:

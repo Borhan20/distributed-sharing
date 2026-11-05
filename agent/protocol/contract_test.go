@@ -155,6 +155,7 @@ var goTypes = map[string]reflect.Type{
 	"RunningAttempt": reflect.TypeOf(RunningAttempt{}), "ShareInfo": reflect.TypeOf(ShareInfo{}),
 	"ShareLimits": reflect.TypeOf(ShareLimits{}), "Started": reflect.TypeOf(Started{}),
 	"UploadRequest": reflect.TypeOf(UploadRequest{}), "Usage": reflect.TypeOf(Usage{}),
+	"RunUsage":  reflect.TypeOf(RunUsage{}),
 	"Challenge": reflect.TypeOf(Challenge{}), "Welcome": reflect.TypeOf(Welcome{}),
 	"HeartbeatAck": reflect.TypeOf(HeartbeatAck{}), "Offer": reflect.TypeOf(Offer{}),
 	"NoWork": reflect.TypeOf(NoWork{}), "UploadURLs": reflect.TypeOf(UploadURLs{}),

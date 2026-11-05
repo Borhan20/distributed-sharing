@@ -336,6 +336,8 @@ class Attempt(Base):
     outputs: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
     end_reason: Mapped[str | None] = mapped_column(String(64))
     commit_key: Mapped[str | None] = mapped_column(String(128))
+    # What the run used, as the device measured it, capped at what the task was given (scheduler.usage).
+    usage: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     __table_args__ = (
         UniqueConstraint("task_id", "epoch", name="uq_attempt_epoch"),
         CheckConstraint(_in("state", ATTEMPT_STATES), name="ck_attempt_state"),

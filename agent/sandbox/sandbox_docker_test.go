@@ -367,3 +367,41 @@ func TestTaskNumberAndImageDefaultCommand(t *testing.T) {
 		t.Fatalf("image default command: err=%v exit=%d stderr=%s", r.err, r.res.ExitCode, r.stderr)
 	}
 }
+
+// The run is measured (docs/design/pool-decides.md §4.2): memory, CPU time, run time, outputs, image size.
+func TestUsageIsMeasured(t *testing.T) {
+	// About 100 MiB held for 4 s while one core is busy, then a 3-byte output file.
+	r := runScript(t, `a=$(dd if=/dev/zero bs=1048576 count=100 2>/dev/null | tr '\000' 'a');
+		end=$(( $(date +%s) + 4 )); while [ $(date +%s) -lt $end ]; do :; done; echo ${#a} >/dev/null; echo hi > /out/x`,
+		func(s *Spec) { s.MemoryMB = 512 })
+	if r.err != nil || r.res.ExitCode != 0 {
+		t.Fatalf("err=%v exit=%d stderr=%q", r.err, r.res.ExitCode, r.stderr)
+	}
+	u := r.res.Usage
+	if u == nil {
+		t.Fatal("no usage")
+	}
+	t.Logf("usage: %+v", *u)
+	if u.Samples < 2 || u.PeakMemoryMB < 90 || u.PeakMemoryMB > 512 {
+		t.Errorf("peak memory %d MiB from %d samples, want about 100", u.PeakMemoryMB, u.Samples)
+	}
+	// One core is busy the whole time, so CPU time should be close to the run time (design: within 10-25%).
+	if u.CPUSeconds < u.WallSeconds*0.75 || u.CPUSeconds > u.WallSeconds*1.15 || u.PeakCPU < 0.5 || u.PeakCPU > 1.3 {
+		t.Errorf("cpu %.2f s, peak %.2f cores over %.1f s; want about 1 core busy", u.CPUSeconds, u.PeakCPU, u.WallSeconds)
+	}
+	if u.WallSeconds < 4 || u.OutputBytes != 3 || u.ImageMB < 1 || u.OOMKilled {
+		t.Errorf("got %+v", *u)
+	}
+}
+
+// Docker's out-of-memory mark reaches the result, so pool can tell "needs more memory" from a crash.
+func TestOutOfMemoryIsReported(t *testing.T) {
+	r := runScript(t, `a=$(dd if=/dev/zero bs=1048576 count=200 2>/dev/null | tr '\000' 'a'); echo ${#a}`,
+		func(s *Spec) { s.MemoryMB = 64 })
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	if r.res.ExitCode == 0 || r.res.Usage == nil || !r.res.Usage.OOMKilled {
+		t.Fatalf("exit=%d usage=%+v", r.res.ExitCode, r.res.Usage)
+	}
+}
