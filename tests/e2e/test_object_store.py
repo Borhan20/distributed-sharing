@@ -8,7 +8,7 @@
 4. When the store is configured but unreachable, jobs still succeed and the agent is told
    why its outputs stayed on the device.
 
-    cd agent && go build -o bin/pool-agent ./cmd/pool-agent
+    cd agent && CGO_ENABLED=0 go build -o bin/pool-agent ./cmd/pool-agent
     uv run pytest -m e2e -s tests/e2e/test_object_store.py
 """
 

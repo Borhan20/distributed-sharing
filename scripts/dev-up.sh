@@ -116,7 +116,7 @@ else
 fi
 
 step "Building the agent"
-(cd "$ROOT/agent" && go build -o bin/pool-agent ./cmd/pool-agent)
+(cd "$ROOT/agent" && CGO_ENABLED=0 go build -o bin/pool-agent ./cmd/pool-agent)  # static: apps need it
 "$AGENT" version
 
 step "Connecting this computer"

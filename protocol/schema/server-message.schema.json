@@ -420,6 +420,50 @@
       "title": "SignedEnvelope",
       "type": "object"
     },
+    "TunnelOpen": {
+      "description": "Open a tunnel to an app's port (pool-run step 2): the agent connects to the server's agent tunnel\nendpoint for `tunnel_id` with `secret` (it reaches the agent only over its signed-in session), and pipes the\nbytes to `port` inside the attempt's container.",
+      "properties": {
+        "attempt_id": {
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "msg_id": {
+          "title": "Msg Id",
+          "type": "string"
+        },
+        "port": {
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Port",
+          "type": "integer"
+        },
+        "secret": {
+          "maxLength": 128,
+          "minLength": 32,
+          "title": "Secret",
+          "type": "string"
+        },
+        "tunnel_id": {
+          "maxLength": 64,
+          "title": "Tunnel Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "tunnel_open",
+          "default": "tunnel_open",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tunnel_id",
+        "attempt_id",
+        "port",
+        "secret"
+      ],
+      "title": "TunnelOpen",
+      "type": "object"
+    },
     "UploadURL": {
       "properties": {
         "expires_at": {
@@ -552,6 +596,7 @@
       "preempt": "#/$defs/Preempt",
       "pull_auth": "#/$defs/PullAuth",
       "revoke": "#/$defs/Revoke",
+      "tunnel_open": "#/$defs/TunnelOpen",
       "upload_urls": "#/$defs/UploadURLs",
       "welcome": "#/$defs/Welcome"
     },
@@ -593,6 +638,9 @@
     },
     {
       "$ref": "#/$defs/Revoke"
+    },
+    {
+      "$ref": "#/$defs/TunnelOpen"
     },
     {
       "$ref": "#/$defs/Error"

@@ -253,8 +253,12 @@ async def group_has_gpu(s: AsyncSession, group: Group) -> bool:
     return False
 
 
+APP_TIME_S = 8 * 3600  # an app runs until it is stopped: at most this long unless the person says otherwise
+
+
 async def decide(s: AsyncSession, *, user_id: uuid.UUID, group: Group, image: str, command: Any, args: Any,
-                 given: dict[str, Any], info: dict[str, Any] | None = None, gpu_given: bool = True) -> Decision:
+                 given: dict[str, Any], info: dict[str, Any] | None = None, gpu_given: bool = True,
+                 app: bool = False) -> Decision:
     """Sizes for a new job. `given` holds the sizes the person set (cpu, memory_mb, disk_mb, max_runtime_s);
     None means pool decides."""
     auto = [k for k, f in (("cpu", "cpu"), ("memory", "memory_mb"), ("disk", "disk_mb"),
@@ -271,6 +275,10 @@ async def decide(s: AsyncSession, *, user_id: uuid.UUID, group: Group, image: st
         why = {"memory": "this is your first run of this image",
                "cpu": "the start for a first run", "disk": "room for the image and its files",
                "time_limit": "the group's default for a first run"}
+    if app and "time_limit" in auto:
+        # An app's run time says nothing about the next one: it runs until it is stopped.
+        sizes["max_runtime_s"] = APP_TIME_S
+        why["time_limit"] = "an app runs until you stop it, at most this long"
     if info and first_run and info.get("size_mb") and "disk" in auto:
         # A big image needs room on the computer: about 3 × its download, unpacked.
         sizes["disk_mb"] = min(max(FIRST_RUN_DISK_MB, _round_up(info["size_mb"] * 3, 256)), CEILING_DISK_MB)
@@ -298,9 +306,8 @@ async def decide(s: AsyncSession, *, user_id: uuid.UUID, group: Group, image: st
         else:
             reasons.append("GPU none: the image is built for NVIDIA CUDA, but no computer in the group shares a "
                            "GPU, so it runs on the CPU.")
-    if info and info.get("ports"):
-        reasons.append(f"The image opens port {', '.join(info['ports'][:5])}. Apps that listen on a port do not work "
-                       "yet: it runs as a program, and nothing can reach the port.")
+    if app:
+        reasons.append("An app: it runs until you stop it, and only you can reach its ports (`pool attach`).")
     if gpus:
         auto.append("gpu")
     sizing = {"auto": auto, "first_run": first_run, "runs": len(runs), "match": match, "steps": 0,

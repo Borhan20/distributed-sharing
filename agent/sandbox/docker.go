@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"debug/elf"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,6 +37,9 @@ type Docker struct {
 	Mounts OutDirs
 	// Profile is used to label containers.
 	Profile string
+	// Helper is this agent's own binary when it is static (mounted into apps for `pool-agent pipe`); "" when
+	// apps cannot run here (a dynamically linked build, or Docker inside WSL2).
+	Helper string
 
 	mu      sync.Mutex
 	images  map[string]string // attempt id -> image (for cleanup)
@@ -87,6 +91,7 @@ func NewLocalDocker(workRoot, profile string) *Docker {
 		WorkRoot: workRoot,
 		Mounts:   LocalDirs{Root: filepath.Join(workRoot, "mounts")},
 		Profile:  profile,
+		Helper:   StaticSelf(),
 	}
 }
 
@@ -142,6 +147,7 @@ func (d *Docker) Detect(ctx context.Context) (Info, error) {
 		}
 	}
 	info.GPUTiers = []protocol.Tier{}
+	info.Apps = d.Helper != ""
 	return info, nil
 }
 
@@ -158,6 +164,9 @@ func (d *Docker) Run(ctx context.Context, s Spec, onStart func(), logs LogSink) 
 		return res, fmt.Errorf("prepare outputs dir: %w", err)
 	}
 	d.remember(s.AttemptID, s.Image, outMount)
+	if len(s.Ports) > 0 {
+		s.Helper = d.Helper
+	}
 	args, err := CreateArgs(s, outMount)
 	if err != nil {
 		return res, err
@@ -368,6 +377,71 @@ func (d *Docker) finishUsage(m *usageMeter, statsDone <-chan struct{}, stop cont
 		}
 	}
 	return u
+}
+
+// Tunnel starts `pool-agent pipe 127.0.0.1:PORT` inside the app's container and returns its stdin and stdout.
+// The app has no network of its own; this pipe is the only way in, and only the agent can open it.
+func (d *Docker) Tunnel(ctx context.Context, attemptID string, port int) (io.ReadWriteCloser, error) {
+	if port < 1 || port > 65535 {
+		return nil, fmt.Errorf("bad port %d", port)
+	}
+	cmd := d.command(ctx, "exec", "-i", ContainerName(attemptID), HelperPath, "pipe",
+		"127.0.0.1:"+strconv.Itoa(port))
+	in, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("docker exec: %w", err)
+	}
+	return &execPipe{in: in, out: out, cmd: cmd}, nil
+}
+
+type execPipe struct {
+	in   io.WriteCloser
+	out  io.ReadCloser
+	cmd  *exec.Cmd
+	once sync.Once
+}
+
+func (p *execPipe) Read(b []byte) (int, error)  { return p.out.Read(b) }
+func (p *execPipe) Write(b []byte) (int, error) { return p.in.Write(b) }
+func (p *execPipe) Close() error {
+	p.once.Do(func() {
+		_ = p.in.Close()
+		if p.cmd.Process != nil {
+			_ = p.cmd.Process.Kill()
+		}
+		_ = p.cmd.Wait()
+	})
+	return nil
+}
+
+// StaticSelf returns this program's path when it is a statically linked Linux binary (it can then run inside
+// any image, even an empty one), or "".
+func StaticSelf() string {
+	path, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	if path, err = filepath.EvalSymlinks(path); err != nil {
+		return ""
+	}
+	f, err := elf.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	for _, prog := range f.Progs {
+		if prog.Type == elf.PT_INTERP { // dynamically linked: needs the host's libc
+			return ""
+		}
+	}
+	return path
 }
 
 func (d *Docker) isGone(name string) bool {

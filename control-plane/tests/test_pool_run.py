@@ -16,6 +16,7 @@ from pool_cli import hints
 from pool_cli import main as cli
 from pool_cli import run as pool_run
 from pool_cp import storage
+from pool_protocol import messages as pm
 from pool_protocol.jobspec import load_job_spec
 
 pytestmark = pytest.mark.asyncio
@@ -42,6 +43,8 @@ async def test_docker_run_command_lines():
     assert parse("--entrypoint", "sh", IMG, "-c", "echo hi").entrypoint == "sh"
     assert parse("-it", IMG).notes, "-it is accepted with a note: no interactive terminal yet"
     assert parse("-m", "2Gi", IMG).memory == "2Gi", "pool's own sizes pass through"
+    o = parse("-p", "8080:80", "--publish=9000", "-p", "127.0.0.1:5001:5000/tcp", "-P", IMG)
+    assert o.ports == {80: 8080, 9000: 9000, 5000: 5001}, "docker's -p: HERE:APP; -P is what pool does anyway"
 
 
 @pytest.mark.parametrize("argv, words", [
@@ -50,7 +53,11 @@ async def test_docker_run_command_lines():
     (["--network", "host", IMG], "no network"),
     (["--privileged", IMG], "owner's computer"),
     (["-u", "0", IMG], "unprivileged"),
-    (["-p", "8000:8000", IMG], "do not work yet"),
+    (["-p", "8000:8000/udp", IMG], "only TCP"),
+    (["-p", "0.0.0.0:8000:8000", IMG], "only on this computer"),
+    (["-p", "web", IMG], "numbers"),
+    (["-p", "70000", IMG], "between 1 and 65535"),
+    (["--expose", "80", IMG], "EXPOSE"),
     (["--gpus", "all", IMG], "how many"),
     (["-m", "lots", IMG], "not a size"),
     (["-m", "512", IMG], "give a unit"),
@@ -101,8 +108,20 @@ async def test_the_plan_from_flags_and_pool_yaml(tmp_path):
     p = pool_run.plan(parse("--build", "ctx", "-f", "other.Dockerfile", "--", "x"), tmp_path)
     assert p.dockerfile == (tmp_path / "other.Dockerfile").resolve(), "-f is relative to where you run it"
     (tmp_path / "pool.yaml").write_text("port: 8000\n")
-    with pytest.raises(cli.ApiError, match="do not work yet"):
-        pool_run.plan(parse(IMG), tmp_path)
+    p = pool_run.plan(parse(IMG), tmp_path)
+    assert p.job["ports"] == [8000] and p.ports == {8000: 8000}
+    (tmp_path / "pool.yaml").write_text('ports: ["8080:80", 9000]\n')
+    p = pool_run.plan(parse(IMG), tmp_path)
+    assert p.job["ports"] == [80, 9000] and p.ports == {80: 8080, 9000: 9000}
+    assert pool_run.plan(parse("-p", "7000", IMG), tmp_path).job["ports"] == [7000], "-p wins over pool.yaml"
+    (tmp_path / "pool.yaml").write_text("ports: []\n")
+    assert pool_run.plan(parse(IMG), tmp_path).job["ports"] == [], "ports: [] keeps a program a program"
+    assert "ports" not in pool_run.plan(parse(IMG), tmp_path.parent).job, "not given: the image's EXPOSE decides"
+    for bad in ("port: 80\nports: [81]\n", "ports: [true]\n", "port: 0\n"):
+        (tmp_path / "pool.yaml").write_text(bad)
+        with pytest.raises(cli.ApiError, match="pool.yaml"):
+            pool_run.plan(parse(IMG), tmp_path)
+    assert pool_run.here_port(80) == 8080 and pool_run.here_port(3000) == 3000, "below 1024 needs root here"
     (tmp_path / "pool.yaml").write_text("colour: red\n")
     with pytest.raises(cli.ApiError, match="unknown field"):
         pool_run.plan(parse(IMG), tmp_path)
@@ -256,6 +275,52 @@ async def test_detach_then_attach_and_stop(group_with_device, cli, tmp_path, mon
     assert pool_run._stop(job_id, yes=False) == 130
     assert (await owner.get(f"/api/v1/jobs/{job_id}"))["state"] == "cancelled"
     assert pool_run.attach(job_id, tmp_path / "out") == 130, "attaching to a finished job reports how it ended"
+
+
+async def test_pool_run_opens_the_apps_port_here(group_with_device, cli, tmp_path, monkeypatch, capsys,
+                                                  base_url):
+    """pool run -p HERE:APP: a connection to localhost:HERE goes through the server to the app's computer."""
+    import socket
+
+    import websockets
+
+    owner, g, agent = await group_with_device()
+    cli("login", "--server", cli.server, "--dev-user", owner.username, "--group", g)
+    monkeypatch.chdir(tmp_path)
+    await agent.connect([{**share(g), "allow_apps": True, "app_hours": 8}])
+    with socket.socket() as s:  # a free port here
+        s.bind(("127.0.0.1", 0))
+        here = s.getsockname()[1]
+    run = asyncio.create_task(asyncio.to_thread(pool_run.run, ["-p", f"{here}:8000", "-y", IMG]))
+    offer = await work(owner, g, agent)
+    assert agent.open_envelope(offer).spec.ports == [8000]
+    await agent.send(pm.Accept(attempt_id=offer.attempt_id, epoch=offer.epoch, tier="T2"))
+    await agent.send(pm.Started(attempt_id=offer.attempt_id, epoch=offer.epoch))
+
+    def browser() -> bytes:  # like a browser on this computer
+        for _ in range(100):
+            try:
+                c = socket.create_connection(("127.0.0.1", here), timeout=10)
+                break
+            except OSError:
+                import time
+                time.sleep(0.1)
+        with c:
+            c.sendall(b"GET / HTTP/1.0\r\n\r\n")
+            return c.recv(100)
+
+    got = asyncio.create_task(asyncio.to_thread(browser))
+    msg = await agent.recv_type(pm.TunnelOpen, timeout=30)
+    assert msg.port == 8000
+    url = base_url.replace("http", "ws", 1) + f"/api/v1/agent/tunnels/{msg.tunnel_id}?secret={msg.secret}"
+    async with websockets.connect(url) as t:
+        assert await t.recv() == b"GET / HTTP/1.0\r\n\r\n"
+        await t.send(b"HTTP/1.0 200 OK\r\n\r\nhi")
+        assert await asyncio.wait_for(got, 10) == b"HTTP/1.0 200 OK\r\n\r\nhi"
+    await agent.commit(offer.attempt_id, offer.task_id, offer.epoch, 0, outputs=[])
+    assert await asyncio.wait_for(run, 30) == 0
+    err = capsys.readouterr().err
+    assert f"Open http://localhost:{here} for the app's port 8000" in err and "Only you can reach it" in err
 
 
 @pytest.mark.parametrize("folder", sorted(p for p in (ROOT / "examples" / "run").iterdir() if p.is_dir()),

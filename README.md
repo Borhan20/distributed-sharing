@@ -99,7 +99,7 @@ uv run pool groups create research-team --template research-team
 uv run pool devices code                    # one-time code for the next step
 
 # 3. Agent on the computer that shares
-cd agent && go build -o bin/pool-agent ./cmd/pool-agent
+cd agent && CGO_ENABLED=0 go build -o bin/pool-agent ./cmd/pool-agent
 ./bin/pool-agent enroll --server http://127.0.0.1:8000 --code ABCDE-FGHJK --insecure-http
 ./bin/pool-agent share research-team        # also lists the computer in the group
 ./bin/pool-agent run

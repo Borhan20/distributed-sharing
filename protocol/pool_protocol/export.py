@@ -39,6 +39,8 @@ SHARE = {
     "accept_from": "all-members",
     "accept_new_members": False,
     "active_now": True,
+    "allow_apps": True,
+    "app_hours": 8.0,
 }
 
 EXAMPLES: dict[str, dict] = {
@@ -174,6 +176,14 @@ EXAMPLES: dict[str, dict] = {
         "error": None,
         "usage": {"peak_memory_mb": 1400, "cpu_seconds": 2280.5, "peak_cpu": 3.9, "wall_seconds": 720.0,
                   "output_bytes": 4096, "image_mb": 180, "oom_killed": False, "samples": 712},
+    },
+    "tunnel_open": {
+        "type": "tunnel_open",
+        "msg_id": "m-30",
+        "tunnel_id": "t-6f1c2d",
+        "attempt_id": ATT,
+        "port": 8000,
+        "secret": "s" * 43,
     },
     "commit_ack": {
         "type": "commit_ack",

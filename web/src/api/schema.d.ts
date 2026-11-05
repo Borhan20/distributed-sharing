@@ -1761,6 +1761,8 @@ export interface components {
             image_info?: {
                 [key: string]: unknown;
             } | null;
+            /** Ports */
+            ports?: number[] | null;
         };
         /** JobWaitingOut */
         JobWaitingOut: {

@@ -22,6 +22,8 @@ type ShareEdit struct {
 	Disk         *string
 	GPU          *bool
 	OnlyWhenIdle *string
+	AllowApps    *bool    // apps (tasks with ports)
+	AppHours     *float64 // the longest one app may run
 }
 
 // ShareDefaults supplies device-specific defaults for a new share.
@@ -98,6 +100,15 @@ func AddOrUpdateShare(raw []byte, e ShareEdit, d ShareDefaults) ([]byte, bool, e
 			}
 		}
 	}
+	if e.AllowApps != nil || e.AppHours != nil {
+		apps := mapValue(item, "apps", yaml.MappingNode)
+		if e.AllowApps != nil {
+			setScalar(apps, "allow", strconv.FormatBool(*e.AllowApps), "!!bool")
+		}
+		if e.AppHours != nil {
+			setScalar(apps, "max_hours", strconv.FormatFloat(*e.AppHours, 'f', -1, 64), "!!float")
+		}
+	}
 	prio := mapValue(root, "priority", yaml.SequenceNode)
 	if indexOfScalar(prio, e.Group) < 0 {
 		prio.Content = append(prio.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: e.Group})
@@ -148,7 +159,7 @@ func RemoveShare(raw []byte, group string) ([]byte, bool, error) {
 }
 
 // Describe summarises a share in plain words, e.g. "up to 50% CPU, 7Gi
-// memory, 20Gi disk, no GPU, at any time".
+// memory, 20Gi disk, no GPU, no apps, at any time".
 func (s *Share) Describe() string {
 	gpu := "no GPU"
 	if s.Limits.GPU {
@@ -164,8 +175,12 @@ func (s *Share) Describe() string {
 	if (s.When.Weekdays.set || s.When.Weekends.set) && s.When.OnlyWhenIdle != "" {
 		when += ", and only after " + s.When.OnlyWhenIdle + " without keyboard or mouse use"
 	}
-	return fmt.Sprintf("up to %d%% CPU, %s memory, %s disk, %s, %s",
-		s.Limits.CPUPercent, s.Limits.Memory, s.Limits.Disk, gpu, when)
+	apps := "no apps"
+	if s.Apps.Allow {
+		apps = fmt.Sprintf("apps allowed (up to %g h each, with no network)", s.Apps.MaxHours)
+	}
+	return fmt.Sprintf("up to %d%% CPU, %s memory, %s disk, %s, %s, %s",
+		s.Limits.CPUPercent, s.Limits.Memory, s.Limits.Disk, gpu, apps, when)
 }
 
 func checkEdit(e ShareEdit) error {
@@ -182,6 +197,9 @@ func checkEdit(e ShareEdit) error {
 		if mb, err := ParseQuantityMB(*q); err != nil || mb <= 0 {
 			return fmt.Errorf("%s: bad size %q (use e.g. 512Mi, 8Gi)", name, *q)
 		}
+	}
+	if e.AppHours != nil && (*e.AppHours <= 0 || *e.AppHours > 168) {
+		return errors.New("--app-hours must be more than 0 and at most 168 (a week)")
 	}
 	if e.OnlyWhenIdle != nil {
 		if d, err := time.ParseDuration(*e.OnlyWhenIdle); err != nil || d < 0 {

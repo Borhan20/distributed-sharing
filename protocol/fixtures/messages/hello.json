@@ -41,6 +41,8 @@
       "accept_from": "all-members",
       "accept_new_members": false,
       "active_now": true,
+      "allow_apps": true,
+      "app_hours": 8.0,
       "group": "research-team",
       "limits": {
         "cpu_percent": 75,
@@ -56,6 +58,8 @@
       ],
       "accept_new_members": false,
       "active_now": true,
+      "allow_apps": true,
+      "app_hours": 8.0,
       "group": "uni-ml-lab",
       "limits": {
         "cpu_percent": 75,

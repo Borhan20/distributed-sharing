@@ -95,6 +95,9 @@ func cmdShare(args []string, w io.Writer) error {
 	disk := fs.String("disk", policy.DefaultShareDisk, "most disk space the group may use")
 	gpu := fs.Bool("gpu", false, "allow the group to use this computer's GPU (--gpu=false to turn off)")
 	idle := fs.String("only-when-idle", "", "run only after this long without keyboard or mouse use, e.g. 10m")
+	apps := fs.Bool("allow-apps", false, "allow apps: programs that listen on a port, reached only through pool "+
+		"(they get no network; --allow-apps=false to turn off)")
+	appHours := fs.Float64("app-hours", policy.DefaultAppHours, "the longest one app may run here, in hours")
 	group, err := parseWithGroup(fs, args)
 	if err != nil {
 		return err
@@ -116,6 +119,12 @@ func cmdShare(args []string, w io.Writer) error {
 	}
 	if set["only-when-idle"] {
 		e.OnlyWhenIdle = idle
+	}
+	if set["allow-apps"] {
+		e.AllowApps = apps
+	}
+	if set["app-hours"] {
+		e.AppHours = appHours
 	}
 
 	path, err := policyFor(*profile, *polPath)

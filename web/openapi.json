@@ -5173,6 +5173,20 @@
               }
             ],
             "title": "Image Info"
+          },
+          "ports": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ports"
           }
         },
         "type": "object",

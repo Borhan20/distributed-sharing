@@ -111,6 +111,6 @@ jobs:
           go-version-file: agent/go.mod
           cache-dependency-path: agent/go.sum
       - run: uv sync --all-packages --extra s3 --frozen
-      - run: cd agent && go build -o bin/pool-agent ./cmd/pool-agent
+      - run: cd agent && CGO_ENABLED=0 go build -o bin/pool-agent ./cmd/pool-agent
       - name: Agent end-to-end and chaos tests (invariants checked after each run)
         run: uv run pytest -m e2e -q -s tests/e2e

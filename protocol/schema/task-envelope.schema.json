@@ -201,6 +201,16 @@
           "title": "Outputs Path",
           "type": "string"
         },
+        "ports": {
+          "items": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxItems": 10,
+          "title": "Ports",
+          "type": "array"
+        },
         "resources": {
           "$ref": "#/$defs/TaskResources"
         },

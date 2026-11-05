@@ -138,7 +138,7 @@ that were not available.
 
 | Item | Status | Notes |
 |---|---|---|
-| `pool run` with `docker run`'s flags | Done | `-e`, `--env-file`, `--cpus`, `-m`, `--disk`, `--gpus`, `-w`, `--entrypoint`, `-d`; refused flags say why; `-p` is refused until step 2 (apps); `-it` is accepted with a note (no terminal yet) |
+| `pool run` with `docker run`'s flags | Done | `-e`, `--env-file`, `--cpus`, `-m`, `--disk`, `--gpus`, `-w`, `--entrypoint`, `-d`, `-p` (step 2); refused flags say why; `-it` is accepted with a note (no terminal yet) |
 | Build on your computer, push to the built-in registry | Done | CNCF Distribution 2.8.3 in token mode, sign-in through `/api/v1/registry/token` with the member's pool token; `<group>/<user>/...` only; a code change uploads only the changed layer (measured in e2e) |
 | Computers pull with a server-signed token for one image | Done | Also the second check that the image is the submitter's own |
 | `args` and `workdir` in jobs | Done | `args` go to the image's ENTRYPOINT like `docker run IMAGE ARGS` (protocol, agent, CLI) |
@@ -152,7 +152,19 @@ that were not available.
 | pool chooses sizes (`pool-decides` step B) | Done | Sizes left out are chosen from the person's own earlier runs of the image (memory × 1.25, CPU, 3 × run time). A first run gets the computer's whole free memory and the group's default time limit (coordinator setting, 4 h); one first run per person at a time; part 0 first. Out of memory or time on a size pool chose: tried again with more (at most 3 times), not a failure, not in fair share. Reasons shown in `pool run`, `pool submit`, `pool attach` and on the job page. Tested: API tests, e2e with the real agent (first run, learning, growing after a real out-of-memory kill). **Needs security review** |
 | Agent skill | Done | `skills/pool`: an Agent Skill (agentskills.io format) for Claude Code, Codex and Gemini CLI. Unit tests check its format and that every flag and command it names exists; an e2e test runs its workflow (check, `pool run -d`, wait, attach) |
 | Tested | Done | API tests with a registry fake that checks token signatures and access; CLI tests with a fake computer; e2e with the real registry, agent and SeaweedFS (build, push, layer reuse, refused push into another member's space, real delete, `--local`, Ctrl-C stops the container within 10 s, attach). **Needs security review** (registry sign-in and pull tokens) |
-| Not yet | – | Sizes chosen by pool (design accepted: `docs/design/pool-decides.md`); ports and the tunnel (step 2), Compose (step 3), replicas (step 4); registry storage in SeaweedFS (a volume for now); a storage quota per member; a push-only credential for Docker instead of the member's pool token |
+| Not yet | – | Compose (step 3), replicas (step 4); registry storage in SeaweedFS (a volume for now); a storage quota per member; a push-only credential for Docker instead of the member's pool token |
+
+## `pool run`, step 2: one app with ports (docs/design/pool-run.md §9, 6 November 2026)
+
+| Item | Status | Notes |
+|---|---|---|
+| Ports in jobs | Done | `port:` / `ports:` in job files and `pool.yaml`, `-p` on `pool run` and `pool attach`; without them, the image's `EXPOSE` (TCP) decides; `ports: []` keeps a program; at most 10; not with parts or a sweep. Apps run 8 h unless a time limit is given |
+| Owner opt-in | Done | `pool-agent share GROUP --allow-apps [--app-hours N]` (off by default, 8 h, at most 168). The scheduler places apps only there; the waiting reason says how to allow them |
+| No network for apps | Done | Apps keep `--network none` (an `--internal` network still reached the owner's computer at the bridge address, checked with Docker 29). The agent reaches the port from inside the container: `docker exec ... /.pool/pool-agent pipe 127.0.0.1:PORT`, with its own static binary mounted read-only. The agent must be built with `CGO_ENABLED=0` |
+| Tunnel | Done | Your `pool` listens on 127.0.0.1 and opens one WebSocket per connection (`/api/v1/jobs/{id}/tunnel`); only the person who started the app, only its ports, only while it runs; the computer joins with a one-time id and secret sent over its own connection. 32 connections per person, 4 GiB each, audited (`app.tunnel`). One API process joins tunnels |
+| Web | Done | The job page says it is an app and how to open it |
+| Tested | Done | Protocol and Go contract tests, Go unit tests (`pipe`, policy, share flags), API tests (placement, EXPOSE, tunnel both ways, refusals), CLI tests (a real TCP connection through `pool run -p`), e2e with the real agent: a busybox web server answers at `localhost` through pool, 5 connections at once, another user is refused, the app has only the loopback interface and no internet, stopping it ends `pool attach` and removes the container. **Needs security review** (tunnel, pipe, policy) |
+| Not yet | – | A heartbeat from your `pool` command (an app runs until stopped or its time limit); moving an app on owner return is not tested; health checks; examples in several languages; several API processes |
 
 ## Ahead of plan (Phase 2 and later pieces already built)
 

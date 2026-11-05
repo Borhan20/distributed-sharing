@@ -7,7 +7,7 @@
    other agent with a higher epoch, the job still finishes, invariants hold.
 4. Kill switch: running work stops at once and the task is requeued.
 
-    cd agent && go build -o bin/pool-agent ./cmd/pool-agent
+    cd agent && CGO_ENABLED=0 go build -o bin/pool-agent ./cmd/pool-agent
     uv run pytest -m e2e -s tests/e2e/test_agent_e2e.py
 """
 
@@ -45,7 +45,8 @@ def _requirements():
     if not AGENT_BIN.exists():
         if not shutil.which("go"):
             pytest.skip("go toolchain not available to build the agent")
-        subprocess.run(["go", "build", "-o", str(AGENT_BIN), "./cmd/pool-agent"], cwd=ROOT / "agent", check=True)
+        subprocess.run(["go", "build", "-o", str(AGENT_BIN), "./cmd/pool-agent"], cwd=ROOT / "agent", check=True,
+                       env={**os.environ, "CGO_ENABLED": "0"})  # static, as apps need (test_apps_e2e)
     subprocess.run(["docker", "pull", "-q", busybox_image()], check=True, capture_output=True)
 
 

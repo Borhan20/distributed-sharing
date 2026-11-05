@@ -66,6 +66,8 @@ func main() {
 		err = cmdResume(os.Args[2:])
 	case "status":
 		err = cmdStatus(os.Args[2:], os.Stdout)
+	case "pipe": // inside an app's container: connect stdin/stdout to the app's port (not for people)
+		err = cmdPipe(os.Args[2:], os.Stdin, os.Stdout)
 	case "version", "--version", "-v":
 		fmt.Printf("pool-agent %s (%s/%s, protocol v1alpha1)\n", version, runtime.GOOS, runtime.GOARCH)
 	case "help", "--help", "-h":

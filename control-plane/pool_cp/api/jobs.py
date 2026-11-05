@@ -60,6 +60,8 @@ class JobOut(BaseModel):
     credits: dict[str, Any] | None = None
     # What pool read from the image: platforms, CUDA, ports (docs/design/pool-decides.md §4.1).
     image_info: dict[str, Any] | None = None
+    # An app's ports: open them on your computer with `pool attach` (pool-run step 2).
+    ports: list[int] | None = None
 
 
 def _requested(job: Job) -> dict[str, Any]:
@@ -102,6 +104,7 @@ async def _job_out(s: AsyncSession, job: Job, with_spec: bool = False, show_reas
         used=summary_from_row((await s.execute(text(SUMMARY_SQL), {"job": job.id})).first()) if with_spec else None,
         credits=await credits.job_credits(s, job, g) if (with_spec if with_credits is None else with_credits) else None,
         image_info=job.image_info if with_spec else None,
+        ports=job.ports or None,
     )
 
 
@@ -245,6 +248,11 @@ async def submit_job(
     elif not is_pinned(js.spec.image):
         js.spec.image = await _pin_image(s, request, p, g, js.spec.image)
     info = await _read_image(s, request, p, g, js.spec.image, builtin)
+    if js.spec.ports is None and not (js.spec.parts or js.spec.matrix):
+        # No ports given: the image's EXPOSE lines decide (pool-decides §4.1). `ports: []` keeps a program.
+        exposed = sorted({int(x.split("/")[0]) for x in (info or {}).get("ports") or []
+                          if x.split("/")[-1] in ("tcp", x) and x.split("/")[0].isdigit()})
+        js.spec.ports = [x for x in exposed if 1 <= x <= 65535][:10] or None
     res = js.resources()
     given = js.given_sizes()
     as_submitted["sizes"] = {k: v for k, v in (("cpu", js.spec.resources.cpu), ("memory", js.spec.resources.memory),
@@ -256,7 +264,7 @@ async def submit_job(
         given={"cpu": res.cpu if given["cpu"] else None, "memory_mb": res.memory_mb if given["memory"] else None,
                "disk_mb": res.disk_mb if given["disk"] else None,
                "max_runtime_s": parse_duration_s(js.spec.max_runtime) if given["time_limit"] else None},
-        info=info, gpu_given=given["gpu"])
+        info=info, gpu_given=given["gpu"], app=js.is_app())
     job = Job(
         group_id=g.id,
         submitter_id=p.user.id,
@@ -270,6 +278,7 @@ async def submit_job(
         sizing=decision.sizing,
         image_info=info,
         architectures=_architectures(info, js.spec.os),
+        ports=list(js.spec.ports or []) or None,
         gpus=decision.gpus if decision.gpus is not None else res.gpus,
         gpu_memory_mb=res.gpu_memory_mb,
         min_tier_rank=TIER_RANK[js.spec.isolation.min_tier],

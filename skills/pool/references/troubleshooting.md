@@ -25,6 +25,8 @@ with `pool:` come from the pool command, and are often a hint.
 | `image: cannot reach the registry` | Try again later, or ask the server admin. |
 | `unknown field(s) ...` | A typo in the job file. The message lists the allowed fields. |
 | `unknown placeholders: {{name}}` | Add `name` to `sweep`, or use `{{index}}`. |
+| `the tunnel to port N was refused` | The app is not running now (still waiting, or moving to another computer), or the sign-in expired. Check `pool status JOB-ID`; the user may need `pool login`. |
+| `port N and the next 19 are taken here` | Pick another local port: `pool attach JOB-ID -p 9000:N`. |
 
 ## 2. The job waits and does not start
 
@@ -38,6 +40,7 @@ waiting: why" with the exact reason.
 | Online but not available right now | Outside the owner's hours, or the owner is using it. Wait. |
 | Asks for more than any shared computer offers | Ask for less (`-m`, `--cpus`, `--gpus`, `--disk`), or the user asks an owner to raise their limit. |
 | No available computer can run this job | Something no computer offers: GPU, operating system, isolation level. Remove what is not needed. |
+| It is an app, and no shared computer allows apps | An owner must allow apps (`pool-agent share GROUP --allow-apps`). Tell the user. If it should run as a program, put `ports: []` in the job file. |
 | Waiting to retry after a failure | Read the failed task's log (`pool logs JOB-ID --task N`). |
 
 ## 3. A task failed

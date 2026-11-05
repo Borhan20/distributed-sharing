@@ -62,6 +62,7 @@ const (
 	DeclineResourcesExceedLimits = "resources_exceed_limits"
 	DeclineEgressNotAllowed      = "egress_not_allowed"
 	DeclineImageNotAllowed       = "image_not_allowed"
+	DeclineAppsNotAllowed        = "apps_not_allowed"
 	DeclineKillSwitch            = "kill_switch"
 	DeclineBusy                  = "busy"
 	DeclineOther                 = "other"
@@ -177,6 +178,8 @@ type ShareInfo struct {
 	AcceptFrom       AcceptFrom  `json:"accept_from"`
 	AcceptNewMembers bool        `json:"accept_new_members"`
 	ActiveNow        bool        `json:"active_now"`
+	AllowApps        bool        `json:"allow_apps"`
+	AppHours         float64     `json:"app_hours"`
 }
 
 type RunningAttempt struct {
@@ -254,6 +257,9 @@ type TaskSpec struct {
 	OutputsPath string            `json:"outputs_path"`
 	Checkpoint  *TaskCheckpoint   `json:"checkpoint"`
 	Inputs      []TaskInput       `json:"inputs"`
+	// An app (pool-run step 2): ports it listens on inside its container. The container has no network;
+	// connections come only through TunnelOpen.
+	Ports []int `json:"ports,omitempty"`
 }
 
 type TaskEnvelope struct {
@@ -532,6 +538,16 @@ type Preempt struct {
 	Reason    string `json:"reason"`
 }
 
+// TunnelOpen asks the agent to connect one tunnel to an app's port (pool-run step 2).
+type TunnelOpen struct {
+	Type      string `json:"type"`
+	MsgID     string `json:"msg_id"`
+	TunnelID  string `json:"tunnel_id"`
+	AttemptID string `json:"attempt_id"`
+	Port      int    `json:"port"`
+	Secret    string `json:"secret"`
+}
+
 type Revoke struct {
 	Type   string `json:"type"`
 	MsgID  string `json:"msg_id"`
@@ -573,6 +589,7 @@ const (
 	TypeCancel        = "cancel"
 	TypePreempt       = "preempt"
 	TypeRevoke        = "revoke"
+	TypeTunnelOpen    = "tunnel_open"
 	TypeError         = "error"
 )
 
@@ -627,6 +644,8 @@ func NewMessage(msgType string) (any, bool) {
 		return &Preempt{}, true
 	case TypeRevoke:
 		return &Revoke{}, true
+	case TypeTunnelOpen:
+		return &TunnelOpen{}, true
 	case TypeError:
 		return &Error{}, true
 	}

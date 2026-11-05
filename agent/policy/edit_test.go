@@ -49,7 +49,7 @@ func TestAddShareToDefaultKeepsCommentsAndDefaults(t *testing.T) {
 	if p.Egress != "deny" || p.Idle != "auto" || len(p.Isolation.AllowTiers) != 3 {
 		t.Errorf("other settings changed: egress=%s idle=%s tiers=%v", p.Egress, p.Idle, p.Isolation.AllowTiers)
 	}
-	if got := s.Describe(); got != "up to 50% CPU, 7Gi memory, 20Gi disk, no GPU, at any time" {
+	if got := s.Describe(); got != "up to 50% CPU, 7Gi memory, 20Gi disk, no GPU, no apps, at any time" {
 		t.Errorf("Describe() = %q", got)
 	}
 }
@@ -203,5 +203,32 @@ func TestDefaultShareMemory(t *testing.T) {
 		if got := DefaultShareMemory(in); got != want {
 			t.Errorf("DefaultShareMemory(%d) = %s, want %s", in, got, want)
 		}
+	}
+}
+
+func TestShareAllowsApps(t *testing.T) {
+	yes, hours := true, 2.5
+	out, _, err := AddOrUpdateShare(nil, ShareEdit{Group: "lab", AllowApps: &yes}, ShareDefaults{TotalMemoryMB: 8192})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := Parse(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := p.Find("lab"); !s.Apps.Allow || s.Apps.MaxHours != DefaultAppHours {
+		t.Fatalf("apps: %+v", s.Apps)
+	}
+	out, _, err = AddOrUpdateShare(out, ShareEdit{Group: "lab", AppHours: &hours}, ShareDefaults{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ = Parse(out)
+	if s := p.Find("lab"); !s.Apps.Allow || s.Apps.MaxHours != 2.5 || !strings.Contains(s.Describe(), "apps allowed") {
+		t.Fatalf("apps: %+v %s", s.Apps, s.Describe())
+	}
+	bad := 500.0
+	if _, _, err := AddOrUpdateShare(out, ShareEdit{Group: "lab", AppHours: &bad}, ShareDefaults{}); err == nil {
+		t.Fatal("500 hours accepted")
 	}
 }

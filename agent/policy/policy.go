@@ -220,7 +220,19 @@ type Share struct {
 	AcceptFrom       AcceptFrom `yaml:"accept_from"`
 	AcceptNewMembers bool       `yaml:"accept_new_members"`
 	OnOwnerReturn    string     `yaml:"on_owner_return"`
+	// Apps: tasks that listen on ports (pool-run step 2). Off unless the owner turns them on, because an app
+	// holds the computer for hours. The app gets no network; it is reached only through the agent.
+	Apps Apps `yaml:"apps"`
 }
+
+// Apps is what an owner allows for apps in one share.
+type Apps struct {
+	Allow    bool    `yaml:"allow"`
+	MaxHours float64 `yaml:"max_hours"` // 0 with allow: DefaultAppHours
+}
+
+// DefaultAppHours is how long one app may run when the owner allows apps without a limit.
+const DefaultAppHours = 8.0
 
 // Isolation lists the tiers the owner allows.
 type Isolation struct {
@@ -305,6 +317,12 @@ func (p *Policy) validate() error {
 				return fmt.Errorf("shares[%d] (%s): when.only_when_idle: bad duration %q", i, s.Group, s.When.OnlyWhenIdle)
 			}
 			s.When.idle = d
+		}
+		if s.Apps.MaxHours < 0 || s.Apps.MaxHours > 168 {
+			return fmt.Errorf("shares[%d] (%s): apps.max_hours must be between 0 and 168", i, s.Group)
+		}
+		if s.Apps.Allow && s.Apps.MaxHours == 0 {
+			s.Apps.MaxHours = DefaultAppHours
 		}
 		switch s.OnOwnerReturn {
 		case "":
@@ -473,6 +491,8 @@ func (p *Policy) ShareInfos(device Device, now time.Time, idle IdleState) []prot
 			AcceptFrom:       s.AcceptFrom.AcceptFrom,
 			AcceptNewMembers: s.AcceptNewMembers,
 			ActiveNow:        active,
+			AllowApps:        s.Apps.Allow && device.Apps,
+			AppHours:         s.Apps.MaxHours,
 		})
 	}
 	return out
@@ -486,6 +506,7 @@ type Device struct {
 	GPUs       []protocol.GPUInfo
 	Tiers      []protocol.Tier // tiers the sandbox can provide
 	GPUTiers   []protocol.Tier // tiers that can also expose a GPU
+	Apps       bool            // the sandbox can run apps (a static agent binary, Docker on Linux)
 }
 
 // Used is what running attempts consume.
@@ -538,6 +559,19 @@ func (p *Policy) Admit(env *protocol.TaskEnvelope, dev Device, byGroup map[strin
 	if spec.Network.Egress != "" && spec.Network.Egress != "none" {
 		// Design doc X5: no egress proxy yet, so egress is always declined.
 		return deny(protocol.DeclineEgressNotAllowed, "network egress is not supported by this agent yet")
+	}
+	if len(spec.Ports) > 0 {
+		if !dev.Apps {
+			return deny(protocol.DeclineAppsNotAllowed, "this agent cannot run apps (it needs a static build, "+
+				"CGO_ENABLED=0, and Docker on Linux)")
+		}
+		if !share.Apps.Allow {
+			return deny(protocol.DeclineAppsNotAllowed, "apps are not allowed in this share (pool-agent share --allow-apps)")
+		}
+		if float64(spec.MaxRuntimeS) > share.Apps.MaxHours*3600 {
+			return deny(protocol.DeclineAppsNotAllowed, fmt.Sprintf("the app may run %d s; this share allows %g h",
+				spec.MaxRuntimeS, share.Apps.MaxHours))
+		}
 	}
 	if active, reason := share.Active(now, idle); !active {
 		return deny(reason, "share is not active now")

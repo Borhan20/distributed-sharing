@@ -105,7 +105,10 @@ func (f *fakeRuntime) Kill(context.Context, string) error              { return 
 func (f *fakeRuntime) Pause(context.Context, string) error             { return nil }
 func (f *fakeRuntime) Unpause(context.Context, string) error           { return nil }
 func (f *fakeRuntime) Throttle(context.Context, string, float64) error { return nil }
-func (f *fakeRuntime) KillAll(context.Context, string) (int, error)    { return 0, nil }
+func (f *fakeRuntime) Tunnel(context.Context, string, int) (io.ReadWriteCloser, error) {
+	return nil, errors.New("no apps in the fake runtime")
+}
+func (f *fakeRuntime) KillAll(context.Context, string) (int, error) { return 0, nil }
 func (f *fakeRuntime) Cleanup(id string) error {
 	f.mu.Lock()
 	f.cleaned[id] = true

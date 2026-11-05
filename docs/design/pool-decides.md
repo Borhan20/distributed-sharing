@@ -395,7 +395,7 @@ owner's maximum time limit (the agent has none yet; pool's own limits stop at
 7 days). "One first run per person" can let two through when two computers ask
 at the same moment.
 
-### Step C: read the image (built 7 November 2026)
+### Step C: read the image (built 6 November 2026)
 
 | Topic | Choice | Why |
 |---|---|---|
@@ -429,7 +429,7 @@ Not built in step C: using the health check (it matters for apps), and
 checking that an image's architecture matches a computer's CPU variant
 (arm/v6 vs arm/v7); the scheduler compares the CPU type only.
 
-### Step D: place better (built 7 November 2026)
+### Step D: place better (built 6 November 2026)
 
 Computers ask for work, so pool picks the best task for the computer that asks:
 
@@ -461,7 +461,7 @@ size overflowed a calculation. All are fixed and tested.
 Not built in step D: "likely to stay online" from a computer's online history,
 and "fast for this image" from measured run times per computer.
 
-### Step E: organize (built 7 November 2026)
+### Step E: organize (built 6 November 2026)
 
 | Topic | Choice | Why |
 |---|---|---|

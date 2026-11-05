@@ -33,7 +33,7 @@ func (a *Agent) runAttempt(ctx context.Context, at *attempt) {
 		TaskIndex: env.Spec.TaskIndex, TaskCount: env.Spec.TaskCount, Args: env.Spec.Args, Workdir: deref(env.Spec.Workdir),
 		CPU: env.Spec.Resources.CPU, MemoryMB: env.Spec.Resources.MemoryMB, DiskMB: env.Spec.Resources.DiskMB,
 		GPUs: env.Spec.Resources.GPUs, MaxRuntime: time.Duration(env.Spec.MaxRuntimeS) * time.Second,
-		OutputsPath: env.Spec.OutputsPath,
+		OutputsPath: env.Spec.OutputsPath, Ports: env.Spec.Ports,
 	}
 	onStart := func() {
 		a.rememberImage(env.Spec.Image) // pulled and started: the image is here now (for its other parts)

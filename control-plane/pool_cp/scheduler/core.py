@@ -150,7 +150,10 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
     # The agent's share settings per group, in its priority order (plan §6.4, §7.7).
     shares = [{"group_id": str(g.id), "prio": i, "accept_all": sh.get("accept_from", "all-members") == "all-members",
                "handles": [] if sh.get("accept_from", "all-members") == "all-members" else list(sh["accept_from"]),
-               "accept_new": bool(sh.get("accept_new_members", False))} for i, (g, sh) in enumerate(groups)]
+               "accept_new": bool(sh.get("accept_new_members", False)),
+               # Apps (pool-run step 2): only where the owner allows them, for at most app_hours.
+               "allow_apps": bool(sh.get("allow_apps", False)),
+               "app_s": float(sh.get("app_hours") or 0) * 3600} for i, (g, sh) in enumerate(groups)]
 
     params = {
         "shares": json.dumps(shares),
@@ -183,7 +186,8 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
     query = text("""
         WITH sh AS (
             SELECT * FROM jsonb_to_recordset(CAST(:shares AS jsonb))
-                AS x(group_id uuid, prio int, accept_all bool, handles jsonb, accept_new bool)
+                AS x(group_id uuid, prio int, accept_all bool, handles jsonb, accept_new bool, allow_apps bool,
+                     app_s float8)
         ), usage AS (
             -- Use counts CPU time and GPU time (one GPU hour as 10 CPU hours, as in credits): asking for a GPU
             -- has a price in fair share too.
@@ -216,6 +220,8 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
           AND (j.data_class <> 'confidential' OR (:dedicated AND :tier >= 2))
           AND NOT j.egress
           AND (sh.accept_all OR sh.handles ? u.handle)
+          AND (coalesce(cardinality(j.ports), 0) = 0
+               OR (sh.allow_apps AND coalesce(j.max_runtime_s, 3600) <= sh.app_s))
           AND (m.probation_until IS NULL OR m.probation_until <= :now OR sh.accept_new)
           -- A task it may start now. A first run starts with part 0 alone, until part 0 has ended in any way.
           AND EXISTS (SELECT 1 FROM tasks p WHERE p.job_id = j.id AND p.state = 'pending' AND p.not_before <= :now

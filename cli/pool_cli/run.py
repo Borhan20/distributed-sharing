@@ -36,12 +36,12 @@ import yaml
 from pool_protocol import sandbox
 from pool_protocol.jobspec import JobSpecError, default_name, load_job_spec, parse_quantity_mb, result_folder
 
-from . import hints, measure
+from . import hints, measure, tunnel
 from . import main as cli
 
 PROJECT_FILE = "pool.yaml"
-_PROJECT_KEYS = {"name", "group", "image", "build", "platform", "command", "args", "workdir", "env", "cpu",
-                 "memory", "disk", "gpu", "time_limit", "retries"}
+_PROJECT_KEYS = {"name", "group", "image", "build", "platform", "command", "args", "workdir", "env", "port", "ports",
+                 "cpu", "memory", "disk", "gpu", "time_limit", "retries"}
 
 # docker run flags pool will not take, and why (they would open the owner's computer, or need what a borrowed
 # computer does not have).
@@ -67,12 +67,12 @@ REFUSED = {
     "--runtime": "the owner's computer chooses the runtime",
     "--cgroup-parent": "the owner's computer sets the limits",
 }
-LATER = {"-p", "--publish", "-P", "--publish-all", "--expose"}
+LATER = {"--expose"}
 NOTED = {"-i", "-t", "-it", "-ti", "--interactive", "--tty"}
 IGNORED = {"--rm", "--init"}
 _VALUE_OPTS = {"-e", "--env", "--env-file", "--gpus", "--gpu", "--cpus", "--cpu", "-m", "--memory", "--disk", "-w",
                "--workdir", "--entrypoint", "--name", "--group", "--time-limit", "--retries", "--build", "-f",
-               "--file", "--platform", "-o", "--out"}
+               "--file", "--platform", "-o", "--out", "-p", "--publish"}
 _FLAG_OPTS = {"-d", "--detach", "--local", "-y", "--yes", "-h", "--help"}
 
 USAGE = """\
@@ -96,6 +96,8 @@ Run a program on a computer of your group, like `docker run` on yours.
       --platform P       Platform to build for (default: what most of the group's computers are)
       --name NAME        Job name (default: from the folder or image)
       --group GROUP      Group (default: from `pool login --group`)
+  -p, --publish PORT     Open the app's PORT here, e.g. -p 8000 or -p 8080:8000 (HERE:APP). Only you can
+                         reach it, on 127.0.0.1. Ports the image EXPOSEs are opened anyway.
   -o, --out DIR          Where the job's /out files go (default ./pool-out)
   -d, --detach           Start it and return; `pool attach JOB` later
       --local            Run it here, with your Docker and the rules of a member's computer
@@ -111,6 +113,7 @@ Settings can also live in ./pool.yaml (a job file plus `build` and `platform`); 
 class RunOptions:
     image: str | None = None
     args: list[str] | None = None  # None: not given (pool.yaml's args apply)
+    ports: dict[int, int] = field(default_factory=dict)  # -p: {app port: port on this computer}
     env: dict[str, str] = field(default_factory=dict)
     env_files: list[str] = field(default_factory=list)
     gpu: int | None = None
@@ -169,8 +172,10 @@ def parse(argv: list[str]) -> RunOptions:
         if name in REFUSED:
             raise cli.ApiError(f"pool run does not take {name}: {REFUSED[name]}.")
         if name in LATER:
-            raise cli.ApiError(f"{name}: apps that listen on a port do not work yet (planned: docs/design/pool-run.md "
-                               "§5, step 2). Programs that compute and write files to /out work now.")
+            raise cli.ApiError(f"pool run does not take {name}: put EXPOSE in the Dockerfile, or use -p PORT.")
+        if name in ("-P", "--publish-all"):  # the image's EXPOSE lines are opened anyway
+            i += 1
+            continue
         if name in IGNORED:
             i += 1
             continue
@@ -206,6 +211,12 @@ class _Help(Exception):  # noqa: N818 - control flow, not an error
 
 
 def _set(o: RunOptions, name: str, value: str) -> None:  # noqa: C901 - one branch per option
+    if name in ("-p", "--publish"):
+        try:
+            o.ports.update(tunnel.parse_ports([value]))
+        except ValueError as exc:
+            raise cli.ApiError(str(exc)) from None
+        return
     if name in ("-e", "--env"):
         key, eq, val = value.partition("=")
         if not eq:  # docker -e KEY takes the value from your environment, and leaves it out when unset
@@ -284,9 +295,6 @@ def load_project(folder: Path) -> dict[str, Any]:
     data = yaml.safe_load(path.read_text()) or {}
     if not isinstance(data, dict):
         raise cli.ApiError(f"{PROJECT_FILE} must be a mapping, e.g. name: ..., command: ...")
-    if "port" in data or "ports" in data:
-        raise cli.ApiError(f"{PROJECT_FILE}: apps that listen on a port do not work yet (planned: "
-                           "docs/design/pool-run.md §5, step 2)")
     unknown = sorted(set(data) - _PROJECT_KEYS)
     if unknown:
         raise cli.ApiError(f"{PROJECT_FILE}: unknown field(s) {', '.join(unknown)}; allowed: "
@@ -303,6 +311,7 @@ class Plan:
     dockerfile: Path | None
     platform: str
     name: str
+    ports: dict[int, int] = field(default_factory=dict)  # {app port: port here} (-p, pool.yaml)
 
 
 def plan(o: RunOptions, folder: Path) -> Plan:
@@ -351,12 +360,31 @@ def plan(o: RunOptions, folder: Path) -> Plan:
     group = o.group or project.get("group")
     if group:
         job["group"] = group
+    ports = o.ports or project_ports(project)
+    if ports is not None:  # not given: the server opens the ports the image EXPOSEs
+        job["ports"] = sorted(ports)
     try:
         load_job_spec(job)  # the server checks again; this catches mistakes before a build
     except JobSpecError as exc:
         raise cli.ApiError(f"job: {exc}") from None
     return Plan(job=job, build_context=context, dockerfile=df, platform=o.platform or project.get("platform")
-                or "", name=name)  # "": the group's most common kind of computer (run), or linux/amd64
+                or "", name=name, ports=ports or {})  # platform "": what most of the group's computers are
+
+
+def project_ports(project: dict[str, Any]) -> dict[int, int] | None:
+    """pool.yaml's `port: 8000` or `ports: [8000, "8080:8000"]`. None: not given; {}: `ports: []` (no app)."""
+    if "port" in project and "ports" in project:
+        raise cli.ApiError(f"{PROJECT_FILE}: give port or ports, not both")
+    raw = project.get("ports", project.get("port"))
+    if raw is None:
+        return None
+    values = raw if isinstance(raw, list) else [raw]
+    if not all(isinstance(v, int | str) and not isinstance(v, bool) for v in values):
+        raise cli.ApiError(f"{PROJECT_FILE}: ports are numbers or \"HERE:APP\", e.g. ports: [8000, \"8080:80\"]")
+    try:
+        return tunnel.parse_ports([str(v) for v in values])
+    except ValueError as exc:
+        raise cli.ApiError(f"{PROJECT_FILE}: {str(exc).removeprefix('-p ')}") from None
 
 
 def group_platform(group: str) -> str:
@@ -483,6 +511,9 @@ def run_local(p: Plan, out: Path) -> int:
     cmd = local_args(p.job, image, out_dir, name)
     _say(f"Running here with the rules of a member's computer: no network, read-only file system, user 65534, "
          f"{p.job.get('cpu', 1)} CPU, {p.job.get('memory', '1Gi')} memory.")
+    if p.job.get("ports"):
+        _say("--local does not open the app's ports (it runs with no network, like on a member's computer). To try "
+             "the app in your browser here, use docker run -p; pool run without --local opens them.")
     limit = _seconds(p.job.get("time_limit", "1h"))
     timed_out = threading.Event()
 
@@ -633,9 +664,10 @@ def run(argv: list[str]) -> int:
     for line in cli.sizing_lines(job) + cli.credit_lines(job):
         _say(line)
     if o.detach:
-        _say(f"Running in the background. Follow it with: pool attach {job['id']}")
+        _say(f"Running in the background. Follow it with: pool attach {job['id']}"
+             + (" (it also opens the app's ports here)" if job.get("ports") else ""))
         return 0
-    return attach(job["id"], out, yes=o.yes)
+    return attach(job["id"], out, yes=o.yes, ports=p.ports)
 
 
 def _check_sign_in(token: str, seconds: int) -> None:
@@ -651,11 +683,34 @@ def _check_sign_in(token: str, seconds: int) -> None:
                            "again first")
 
 
-def attach(job_id: str, out: Path, yes: bool = False, poll: float = 1.0) -> int:
-    """Follow a job until it ends: output (one task) or progress (several), then save its /out files."""
+def attach(job_id: str, out: Path, yes: bool = False, poll: float = 1.0, ports: dict[int, int] | None = None) -> int:
+    """Follow a job until it ends: output (one task) or progress (several), then save its /out files. An app's
+    ports are opened here while it runs (ports: {app port: port here}; by default the same number)."""
     job = cli.api("GET", f"/api/v1/jobs/{job_id}")
-    single = job["tasks"].get("total", 0) == 1
+    return _follow(job_id, job, out, yes, poll, ports, single=job["tasks"].get("total", 0) == 1)
+
+
+def _open_ports(job_id: str, app_ports: list[int], wanted: dict[int, int] | None) -> tunnel.Forwarder:
+    """Listen here for each of the app's ports (only this computer can connect) and say where to open it."""
+    cfg = cli.Config.load()
+    mapping = {p: (wanted or {}).get(p, here_port(p)) for p in app_ports}
+    fw = tunnel.Forwarder(cfg.server, lambda: cli.Config.load().token, job_id, mapping, _say)
+    for app_port, here in fw.start().items():
+        moved = "" if here == mapping[app_port] else f" ({mapping[app_port]} is taken here)"
+        _say(f"Open http://localhost:{here} for the app's port {app_port}{moved}. Only you can reach it.")
+    return fw
+
+
+def here_port(app_port: int) -> int:
+    """The port opened here for an app port: the same number, or 8000 + it below 1024 (those need root)."""
+    return app_port if app_port >= 1024 else 8000 + app_port
+
+
+def _follow(job_id: str, job: dict, out: Path, yes: bool, poll: float, ports: dict[int, int] | None,
+            single: bool) -> int:
     cursor, attempt, seen, placed, progress, drained = 0, None, [], False, "", False
+    app_ports = list(job.get("ports") or []) if single else []
+    forwarder: tunnel.Forwarder | None = None
     try:
         while True:
             rows = []
@@ -671,6 +726,9 @@ def attach(job_id: str, out: Path, yes: bool = False, poll: float = 1.0) -> int:
                     _print_log(r)
                     _remember(seen, r["chunk"])
             job = cli.api("GET", f"/api/v1/jobs/{job_id}")
+            if app_ports and forwarder is None and job["tasks"].get("running"):
+                forwarder = _open_ports(job_id, app_ports, ports)
+                _say("Ctrl-C stops the app.")
             if single and not placed and (rows or job["tasks"].get("running") or _finished(job)):
                 tasks = cli.api("GET", f"/api/v1/jobs/{job_id}/tasks")
                 if tasks and tasks[0].get("device"):
@@ -692,7 +750,11 @@ def attach(job_id: str, out: Path, yes: bool = False, poll: float = 1.0) -> int:
             if not rows:
                 time.sleep(poll)
     except KeyboardInterrupt:
+        if forwarder is not None:
+            forwarder.stop()
         return _stop(job_id, yes)
+    if forwarder is not None:
+        forwarder.stop()
     tasks = cli.api("GET", f"/api/v1/jobs/{job_id}/tasks")
     _save_outputs(job_id, tasks, out, single)
     job = cli.api("GET", f"/api/v1/jobs/{job_id}")
