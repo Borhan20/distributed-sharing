@@ -31,7 +31,7 @@ spec:
     out = cli("sweep", str(spec), "--set", "seed=0..9", "--set", "lr=0.1,0.01", "--dry-run").output
     assert out.startswith("20 tasks")
     out = cli("submit", str(spec)).output
-    job_id = out.strip().split("id=")[1]
+    job_id = out.strip().split("id=")[1].split()[0]
     assert "2 task(s)" in out
     assert "sweep" in cli("jobs", "list", g).output
     status = cli("status", job_id).output
@@ -88,7 +88,7 @@ spec:
   image: {IMG}
   command: ["sh", "-c", "echo hi > /out/result.txt"]
 """)
-    job_id = cli("submit", str(spec)).output.strip().split("id=")[1]
+    job_id = cli("submit", str(spec)).output.strip().split("id=")[1].split()[0]
     assert (await agent.run_task(await agent.ready())).accepted
     res = cli("download", job_id, "-o", str(tmp_path / "out"), ok=False)
     assert res.exit_code != 0 and "no file store" in str(res.exception), res.exception
@@ -107,7 +107,7 @@ spec:
   image: {IMG}
   command: ["sh", "-c", "echo hi"]
 """)
-    job_id = cli("submit", str(spec)).output.strip().split("id=")[1]
+    job_id = cli("submit", str(spec)).output.strip().split("id=")[1].split()[0]
     assert "job deleted" in cli("jobs", "delete", job_id, "--yes").output
     assert "restore it before" in cli("groups", "delete", g, "--yes").output
     assert g in cli("groups", "deleted").output

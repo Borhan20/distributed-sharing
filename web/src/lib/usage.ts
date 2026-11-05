@@ -14,7 +14,25 @@ export type JobUsed = {
   max_wall_seconds?: number;
   oom_killed?: number;
 };
-export type Requested = { cpu?: number; memory_mb?: number; time_limit_s?: number | null };
+export type Requested = {
+  cpu?: number;
+  memory_mb?: number | null;
+  first_run?: boolean;
+  disk_mb?: number;
+  gpus?: number;
+  time_limit_s?: number | null;
+};
+
+/** The sizes each task gets now: "1 CPU, 1.8 GiB memory, 2.0 GiB disk, time limit 30 min". */
+export function requestedText(r: Requested | null | undefined): string | null {
+  if (!r || (!r.memory_mb && !r.first_run)) return null;
+  const memory = r.first_run ? "all the free memory of its computer (first run)" : `${sizeText(r.memory_mb ?? 0)} memory`;
+  const parts = [`${r.cpu ?? 1} CPU`, memory];
+  if (r.disk_mb) parts.push(`${sizeText(r.disk_mb)} disk`);
+  if (r.gpus) parts.push(`${r.gpus} GPU`);
+  if (r.time_limit_s) parts.push(`time limit ${durationText(r.time_limit_s)}`);
+  return parts.join(", ");
+}
 
 export function sizeText(mb: number): string {
   return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GiB` : `${Math.round(mb)} MiB`;

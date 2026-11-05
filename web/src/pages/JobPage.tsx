@@ -8,7 +8,7 @@ import { ConfirmDialog, CopyButton, ErrorBox, Loading, RichText, StateBadge } fr
 import { TERMINAL, fmtTime } from "../lib/format";
 import { downloadFile } from "../lib/download";
 import { commandText, splitImage } from "../lib/jobspec";
-import { oversizeHint, taskUsageText, usedText, type JobUsed, type Requested, type TaskUsage } from "../lib/usage";
+import { oversizeHint, requestedText, taskUsageText, usedText, type JobUsed, type Requested, type TaskUsage } from "../lib/usage";
 import { TaskCounts } from "./group/JobsTab";
 import type { RerunState } from "./group/SubmitJob";
 
@@ -147,7 +147,10 @@ export function JobPage() {
             </>
           )}
           <dt>Each task</dt>
-          <dd>{resourcesText(spec.resources)}</dd>
+          <dd>
+            {requestedText(j.requested as Requested | null) ?? resourcesText(spec.resources)}
+            <SizingReasons sizing={j.sizing as Sizing | null} />
+          </dd>
           {usedText(j.requested as Requested | null, j.used as JobUsed | null) && (
             <>
               <dt>Used</dt>
@@ -323,6 +326,23 @@ function JobResults({ jobId, name, tasks, done }: { jobId: string; name: string;
         </p>
       )}
     </section>
+  );
+}
+
+type Sizing = { auto?: string[]; first_run?: boolean; reasons?: string[] };
+
+/** Why each size is what it is (docs/design/pool-decides.md §4.9). */
+function SizingReasons({ sizing }: { sizing: Sizing | null }) {
+  if (!sizing?.reasons?.length || !sizing.auto?.length) return null;
+  return (
+    <details className="small-text">
+      <summary className="muted">Chosen by pool: why</summary>
+      <ul>
+        {sizing.reasons.map((r, i) => (
+          <li key={i}>{r}</li>
+        ))}
+      </ul>
+    </details>
   );
 }
 

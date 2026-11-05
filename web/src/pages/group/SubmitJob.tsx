@@ -270,6 +270,7 @@ function JobFormFields({ form, set }: { form: JobForm; set: <K extends keyof Job
         <label>
           Size of each task
           <select value={form.size} onChange={(e) => set("size", e.target.value as Size)}>
+            <option value="auto">Let pool decide (from your earlier runs)</option>
             {Object.entries(SIZES).map(([k, v]) => (
               <option key={k} value={k}>
                 {v.label}
@@ -280,9 +281,20 @@ function JobFormFields({ form, set }: { form: JobForm; set: <K extends keyof Job
         </label>
         <label>
           Time limit per task
-          <input value={form.timeLimit} onChange={(e) => set("timeLimit", e.target.value)} placeholder="30m, 2h" />
+          <input
+            value={form.timeLimit}
+            onChange={(e) => set("timeLimit", e.target.value)}
+            placeholder="empty: pool decides"
+          />
         </label>
       </div>
+      {form.size === "auto" && (
+        <p className="muted small-text">
+          pool measures every run. The first time you run an image, each task gets all the free memory of the
+          computer it runs on. After that, pool sizes your tasks from what your earlier runs used, and the job page
+          says why.
+        </p>
+      )}
       {form.size === "custom" && (
         <div className="row wrap">
           <label>

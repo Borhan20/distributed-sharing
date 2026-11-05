@@ -87,10 +87,10 @@ Run a program on a computer of your group, like `docker run` on yours.
 
   -e, --env KEY=VALUE    Environment variable (not for real secrets: the computer's owner can read it)
       --env-file FILE    Environment variables from a file
-      --cpus N           CPU cores (default 1)             -m, --memory SIZE   Memory, e.g. 512m, 4g (default 1g)
-      --gpus N           GPUs                                  --disk SIZE     Disk, e.g. 10g (default 1g)
+      --cpus N           CPU cores                         -m, --memory SIZE   Memory, e.g. 512m, 4g
+      --gpus N           GPUs                                  --disk SIZE     Disk, e.g. 10g
   -w, --workdir PATH     Working directory in the container    --entrypoint CMD  Run CMD instead of the
-      --time-limit T     Stop after T, e.g. 30m, 2h (1h)                           image's entrypoint
+      --time-limit T     Stop after T, e.g. 30m, 2h                                image's entrypoint
       --retries N        Tries again after a failure (0)
       --build PATH       Build this folder (default: .)    -f, --file FILE     Dockerfile to build
       --platform P       Platform to build for (default linux/amd64)
@@ -101,6 +101,8 @@ Run a program on a computer of your group, like `docker run` on yours.
       --local            Run it here, with your Docker and the rules of a member's computer
   -y, --yes              Ctrl-C stops the job without asking
 
+Sizes you leave out (CPU, memory, disk, time limit) are chosen by pool from your earlier runs of the image, and
+it says why. With --local they are 1 CPU, 1g memory and 1h.
 Settings can also live in ./pool.yaml (a job file plus `build` and `platform`); flags win.
 """
 
@@ -608,6 +610,8 @@ def run(argv: list[str]) -> int:
             return 130
     job = cli.api("POST", f"/api/v1/groups/{group}/jobs", json=p.job)
     _say(f"Submitted {job['name']} ({job['tasks']['total']} task(s)) to {group}: job {job['id']}")
+    for line in cli.sizing_lines(job):
+        _say(line)
     if o.detach:
         _say(f"Running in the background. Follow it with: pool attach {job['id']}")
         return 0
@@ -671,7 +675,12 @@ def attach(job_id: str, out: Path, yes: bool = False, poll: float = 1.0) -> int:
     tasks = cli.api("GET", f"/api/v1/jobs/{job_id}/tasks")
     _save_outputs(job_id, tasks, out, single)
     job = cli.api("GET", f"/api/v1/jobs/{job_id}")
-    for line in usage_lines(job.get("requested"), job.get("used")):
+    requested = job.get("requested")
+    given = tasks[0].get("given") if single and tasks else None
+    if given:  # one task: compare with what its run had (a first run had a whole computer's free memory)
+        requested = {"cpu": given.get("cpu"), "memory_mb": given.get("memory_mb"),
+                     "time_limit_s": given.get("max_runtime_s")}
+    for line in cli.sizing_lines(job, new_only=True) + usage_lines(requested, job.get("used")):
         _say(line)
     codes = [(t.get("result") or {}).get("exit_code") for t in tasks]
     # Only a task that failed for good for lack of memory: a try that ran out and then succeeded is not news.

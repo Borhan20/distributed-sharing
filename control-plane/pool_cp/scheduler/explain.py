@@ -181,6 +181,28 @@ async def auto_parts(s: AsyncSession, settings: Settings, job: Job, submitter: s
     return n, f"Split into {n} part(s): room for {places} at once on {computers} {when}."
 
 
+async def _first_run_reasons(s: AsyncSession, job: Job, pending: int) -> list[Reason]:
+    """Why a first run waits although computers fit it (scheduler.sizing, claim_task)."""
+    if not (job.sizing or {}).get("first_run"):
+        return []
+    part0 = (await s.execute(select(Task.state).where(Task.job_id == job.id, Task.index == 0))).scalar()
+    if part0 in ("assigned", "running"):
+        return [Reason("first_part", "Part 0 runs first, to learn how much memory, CPU and time each part needs. "
+                                     "The other parts start when it ends, with that size.")]
+    busy = (await s.execute(
+        select(func.count()).select_from(Attempt).join(Task, Task.id == Attempt.task_id)
+        .join(Job, Job.id == Task.job_id)
+        .where(Job.submitter_id == job.submitter_id, Attempt.state.in_(("assigned", "running")),
+               Attempt.resources["first_run"].as_boolean())
+    )).scalar_one()
+    if busy:
+        return [Reason("one_first_run",
+                       "You have another first run going. pool runs one first run per person at a time, because a "
+                       "first run takes all the free memory of a computer.",
+                       "It starts when the other one ends. To skip the wait, set the memory yourself (-m).")]
+    return []
+
+
 async def explain_waiting(s: AsyncSession, settings: Settings, job: Job) -> tuple[int, list[Reason]]:
     """Return (pending task count, reasons). No reasons when nothing is waiting."""
     now = utcnow()
@@ -252,6 +274,9 @@ async def explain_waiting(s: AsyncSession, settings: Settings, job: Job) -> tupl
             blockers[why] = blockers.get(why, 0) + 1
 
     if fits:
+        first_run = await _first_run_reasons(s, job, pending)
+        if first_run:
+            return pending, first_run + ([failure] if failure else [])
         reasons = [Reason("waiting_for_room",
                           f"{_computers(fits)} able to run this job. It starts within seconds, or as soon as one "
                           "finishes its current work.")]
@@ -269,6 +294,9 @@ async def explain_waiting(s: AsyncSession, settings: Settings, job: Job) -> tupl
         if not short:  # each limit fits on some computer, but no single computer fits them all
             short.append(f"{_cpu(job.cpu)}, {_size(job.memory_mb)} memory and {_size(job.disk_mb)} disk together")
         message = "This job asks for more than any shared computer offers: needs " + "; ".join(short) + "."
+        if (job.sizing or {}).get("first_run") and (job.sizing or {}).get("steps"):
+            message = (f"The last try ran out of memory with all the free memory of a computer "
+                       f"({_size(job.memory_mb - 1)}). It waits for a computer that offers more.")
         hint = (f"Ask for less in the job's resources, or ask a computer's owner to raise the limit, "
                 f"e.g. `pool-agent share {group.name} --cpu-percent 75 --memory 8Gi`.")
         return pending, [Reason("too_big", message, hint)]

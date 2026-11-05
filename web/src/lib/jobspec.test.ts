@@ -25,7 +25,11 @@ describe("the submit form", () => {
     expect(formProblems(EXAMPLE_FORM)).toEqual([]);
     expect(formTaskCount(EXAMPLE_FORM)).toBeNull(); // auto: the server decides
     const job = formToJob(EXAMPLE_FORM);
-    expect(job).toMatchObject({ name: "hello", parts: "auto", cpu: 0.5, memory: "512Mi", time_limit: "10m" });
+    expect(job).toMatchObject({ name: "hello", parts: "auto" });
+    // No sizes and no time limit: pool chooses them from the person's earlier runs.
+    expect(job).not.toHaveProperty("cpu");
+    expect(job).not.toHaveProperty("memory");
+    expect(job).not.toHaveProperty("time_limit");
     // Written with a tag, as people push their own images; the server pins it at submit time.
     expect(EXAMPLE_IMAGE).toBe("busybox:1.36");
     expect(exampleYaml).toContain("busybox@sha256:");
@@ -53,10 +57,24 @@ describe("the submit form", () => {
       cpu: 2,
       memory: "4Gi",
       disk: "10Gi",
-      time_limit: "10m",
       retries: 2,
     });
     expect(parseYaml(formToYaml(f))).toEqual(formToJob(f));
+  });
+
+  it("leaves sizes to pool, and Run again keeps them with pool", () => {
+    const job = formToJob(form({ size: "auto", timeLimit: "" }));
+    expect(job).not.toHaveProperty("cpu");
+    expect(job).not.toHaveProperty("disk");
+    expect(job).not.toHaveProperty("time_limit");
+    // A stored job whose sizes pool chose has them as null in its spec.
+    const stored = {
+      metadata: { name: "x" },
+      spec: { image: "a:1", resources: { cpu: null, memory: null, disk: null }, max_runtime: null },
+    };
+    expect(jobToForm(stored)).toMatchObject({ size: "auto", timeLimit: "" });
+    const given = { metadata: { name: "x" }, spec: { image: "a:1", resources: { cpu: 2, memory: "4Gi", disk: "10Gi" } } };
+    expect(jobToForm(given).size).toBe("medium");
   });
 
   it("runs once without parts or sweep, and an empty command means the image's own", () => {

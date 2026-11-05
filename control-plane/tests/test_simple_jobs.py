@@ -21,7 +21,8 @@ async def test_short_form_with_parts_numbers_every_task(user):
     tasks = await c.get(f"/api/v1/jobs/{job['id']}/tasks")
     assert [t["index"] for t in tasks] == [0, 1, 2]
     detail = await c.get(f"/api/v1/jobs/{job['id']}")
-    assert detail["spec"]["spec"]["parts"] == 3 and detail["spec"]["as_submitted"] == {"image": IMG, "parts": 3}
+    assert detail["spec"]["spec"]["parts"] == 3
+    assert detail["spec"]["as_submitted"] == {"image": IMG, "parts": 3, "sizes": {}}, "sizes: the ones the person gave"
     r = await c.post(f"/api/v1/groups/{g}/jobs", {"image": IMG, "colour": "red"}, expect=422)
     assert "unknown field(s) colour" in r.json()["detail"]
     r = await c.post(f"/api/v1/groups/{g}/jobs", {"image": IMG, "group": "elsewhere"}, expect=422)

@@ -170,8 +170,8 @@ export function GuidePage() {
                 used as <code>{"{{seed}}"}</code>.
               </li>
               <li>
-                <strong>Size</strong>: CPU, memory and disk per task. Ask only for what you need: smaller tasks fit on
-                more computers.
+                <strong>Size</strong>: leave it to pool (the default), and it chooses CPU, memory and disk from your
+                earlier runs, and says why on the job page. Or choose a size yourself.
               </li>
               <li>
                 Write result files to <code>/out</code>, and one JSON object to <code>/out/result.json</code> to get a

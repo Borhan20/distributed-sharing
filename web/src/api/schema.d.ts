@@ -1204,6 +1204,11 @@ export interface components {
             registry_allowlist: string[];
             /** Registry Retention Days */
             registry_retention_days?: number | null;
+            /**
+             * Default Time Limit S
+             * @default 14400
+             */
+            default_time_limit_s: number;
             /** State */
             state: string;
             /**
@@ -1247,6 +1252,8 @@ export interface components {
             registry_allowlist?: string[] | null;
             /** Registry Retention Days */
             registry_retention_days?: number | null;
+            /** Default Time Limit S */
+            default_time_limit_s?: number | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1396,6 +1403,10 @@ export interface components {
             } | null;
             /** Used */
             used?: {
+                [key: string]: unknown;
+            } | null;
+            /** Sizing */
+            sizing?: {
                 [key: string]: unknown;
             } | null;
         };

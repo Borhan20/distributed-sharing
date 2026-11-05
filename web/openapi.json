@@ -3519,6 +3519,11 @@
             ],
             "title": "Registry Retention Days"
           },
+          "default_time_limit_s": {
+            "type": "integer",
+            "title": "Default Time Limit S",
+            "default": 14400
+          },
           "state": {
             "type": "string",
             "title": "State"
@@ -3722,6 +3727,19 @@
               }
             ],
             "title": "Registry Retention Days"
+          },
+          "default_time_limit_s": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 604800.0,
+                "minimum": 60.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Time Limit S"
           }
         },
         "type": "object",
@@ -4081,6 +4099,18 @@
               }
             ],
             "title": "Used"
+          },
+          "sizing": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sizing"
           }
         },
         "type": "object",

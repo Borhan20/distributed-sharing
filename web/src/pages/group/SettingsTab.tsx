@@ -13,6 +13,8 @@ export function SettingsTab({ group }: { group: Group }) {
   const [k, setK] = useState(group.approval_k);
   const [probation, setProbation] = useState(group.probation_days);
   const [retention, setRetention] = useState(group.retention_days);
+  // Hours, as people think of a time limit; the API takes seconds.
+  const [firstRunHours, setFirstRunHours] = useState((group.default_time_limit_s ?? 14400) / 3600);
   const [closing, setClosing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const navigate = useNavigate();
@@ -21,7 +23,13 @@ export function SettingsTab({ group }: { group: Group }) {
       unwrap(
         client.PATCH("/api/v1/groups/{name}", {
           params: { path },
-          body: { approval_rule: rule, approval_k: k, probation_days: probation, retention_days: retention },
+          body: {
+            approval_rule: rule,
+            approval_k: k,
+            probation_days: probation,
+            retention_days: retention,
+            default_time_limit_s: Math.round(firstRunHours * 3600),
+          },
         }),
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["group", group.name] }),
@@ -77,6 +85,22 @@ export function SettingsTab({ group }: { group: Group }) {
             Data retention after the group ends (days)
             <input type="number" min={1} max={3650} value={retention} onChange={(e) => setRetention(Number(e.target.value))} disabled={!active} />
           </label>
+          <label>
+            Time limit of a first run (hours)
+            <input
+              type="number"
+              min={0.25}
+              max={168}
+              step={0.25}
+              value={firstRunHours}
+              onChange={(e) => setFirstRunHours(Number(e.target.value))}
+              disabled={!active}
+            />
+          </label>
+          <p className="muted small-text">
+            When someone runs an image for the first time and sets no time limit, each task may run this long. After
+            that, pool sets the limit to 3 × their longest run.
+          </p>
           <ErrorBox error={save.error} />
           {save.isSuccess && <p className="ok">Saved.</p>}
           <button type="submit" disabled={!active || save.isPending}>

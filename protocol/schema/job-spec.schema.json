@@ -185,10 +185,17 @@
       "additionalProperties": false,
       "properties": {
         "cpu": {
-          "default": 1,
-          "exclusiveMinimum": 0,
-          "title": "Cpu",
-          "type": "number"
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cpu"
         },
         "disk": {
           "anyOf": [
@@ -197,9 +204,12 @@
             },
             {
               "type": "integer"
+            },
+            {
+              "type": "null"
             }
           ],
-          "default": "1Gi",
+          "default": null,
           "title": "Disk"
         },
         "gpu": {
@@ -220,9 +230,12 @@
             },
             {
               "type": "integer"
+            },
+            {
+              "type": "null"
             }
           ],
-          "default": "1Gi",
+          "default": null,
           "title": "Memory"
         }
       },
@@ -352,9 +365,12 @@
             },
             {
               "type": "integer"
+            },
+            {
+              "type": "null"
             }
           ],
-          "default": "1h",
+          "default": null,
           "title": "Max Runtime"
         },
         "network": {

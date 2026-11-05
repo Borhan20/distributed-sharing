@@ -66,6 +66,8 @@ class Group(Base):
     retention_days: Mapped[int] = mapped_column(Integer, default=30)
     registry_allowlist: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     registry_retention_days: Mapped[int | None] = mapped_column(Integer)  # None: the server's default
+    # The time limit of a task nobody set one for, on a first run (docs/design/pool-decides.md §10).
+    default_time_limit_s: Mapped[int] = mapped_column(Integer, server_default="14400", default=14400)
     state: Mapped[str] = mapped_column(String(16), default="active")  # active | expired | closed | deleted
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now())
     closed_at: Mapped[datetime | None] = mapped_column(TS)
@@ -287,6 +289,10 @@ class Job(Base):
     state: Mapped[str] = mapped_column(String(16), default="pending")
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(TS)
+    # Each task's time limit now; None on jobs from before sizes were chosen by pool (the task spec has it).
+    max_runtime_s: Mapped[int | None] = mapped_column(Integer)
+    # How the sizes were chosen and why (scheduler.sizing): auto fields, first run, growth steps, reasons.
+    sizing: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     __table_args__ = (Index("ix_jobs_active", "group_id", "created_at",
                             postgresql_where="state IN ('pending','running')"),)
 
@@ -338,6 +344,8 @@ class Attempt(Base):
     commit_key: Mapped[str | None] = mapped_column(String(128))
     # What the run used, as the device measured it, capped at what the task was given (scheduler.usage).
     usage: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # What this attempt was given: cpu, memory_mb, disk_mb, max_runtime_s, first_run (scheduler.sizing).
+    resources: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     __table_args__ = (
         UniqueConstraint("task_id", "epoch", name="uq_attempt_epoch"),
         CheckConstraint(_in("state", ATTEMPT_STATES), name="ck_attempt_state"),
@@ -365,6 +373,8 @@ class UsageLedger(Base):
     attempt_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), unique=True)
     cpu_seconds: Mapped[float] = mapped_column(Float)
     gpu_seconds: Mapped[float] = mapped_column(Float)
+    # A retry because pool chose too small a size: shown in the group's usage, left out of fair share.
+    pool_paid: Mapped[bool] = mapped_column(Boolean, server_default="false", default=False)
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now())
     __table_args__ = (Index("ix_usage_group_user_time", "group_id", "user_id", "created_at"),)
 

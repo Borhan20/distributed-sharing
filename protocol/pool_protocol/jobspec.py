@@ -126,10 +126,19 @@ class GPUReq(_Strict):
     min_memory: str | int | None = None
 
 
+# Sizes used when a size is left out and nobody decides it (e.g. a job file checked on its own). On the
+# server, a size left out is chosen by pool from the person's earlier runs (docs/design/pool-decides.md §4.3).
+DEFAULT_CPU = 1.0
+DEFAULT_MEMORY = "1Gi"
+DEFAULT_DISK = "1Gi"
+DEFAULT_MAX_RUNTIME = "1h"
+
+
 class ResourcesReq(_Strict):
-    cpu: float = Field(gt=0, default=1)
-    memory: str | int = "1Gi"
-    disk: str | int = "1Gi"
+    # None: not given, so pool decides. A given size is kept as it is.
+    cpu: float | None = Field(gt=0, default=None)
+    memory: str | int | None = None
+    disk: str | int | None = None
     gpu: GPUReq | None = None
 
 
@@ -197,7 +206,7 @@ class Spec(_Strict):
     data: DataReq = Field(default_factory=DataReq)
     checkpoint: CheckpointReq | None = None
     retries: int = Field(ge=0, le=20, default=3)
-    max_runtime: str | int = "1h"
+    max_runtime: str | int | None = None  # None: not given, so pool decides
     data_class: Literal["public", "internal", "confidential"] = "internal"
     secrets: list[str] = Field(default_factory=list)
     os: Literal["linux", "windows"] | None = None
@@ -314,13 +323,19 @@ class JobSpec(_Strict):
         keys = list(self.spec.matrix)
         return [dict(zip(keys, combo, strict=True)) for combo in itertools.product(*self.spec.matrix.values())]
 
+    def given_sizes(self) -> dict[str, bool]:
+        """Which sizes the job file sets. The others are pool's to decide."""
+        r = self.spec.resources
+        return {"cpu": r.cpu is not None, "memory": r.memory is not None, "disk": r.disk is not None,
+                "time_limit": self.spec.max_runtime is not None}
+
     def resources(self) -> TaskResources:
         r = self.spec.resources
         gpu = r.gpu or GPUReq()
         return TaskResources(
-            cpu=r.cpu,
-            memory_mb=parse_quantity_mb(r.memory),
-            disk_mb=parse_quantity_mb(r.disk),
+            cpu=r.cpu if r.cpu is not None else DEFAULT_CPU,
+            memory_mb=parse_quantity_mb(r.memory if r.memory is not None else DEFAULT_MEMORY),
+            disk_mb=parse_quantity_mb(r.disk if r.disk is not None else DEFAULT_DISK),
             gpus=gpu.count,
             gpu_vendor=gpu.vendor if gpu.count else None,
             gpu_memory_mb=parse_quantity_mb(gpu.min_memory) if (gpu.count and gpu.min_memory) else 0,
@@ -345,7 +360,7 @@ class JobSpec(_Strict):
             min_tier=s.isolation.min_tier,
             network=TaskNetwork(egress=s.network.egress, allow=s.network.allow),
             data_class=s.data_class,
-            max_runtime_s=parse_duration_s(s.max_runtime),
+            max_runtime_s=parse_duration_s(s.max_runtime if s.max_runtime is not None else DEFAULT_MAX_RUNTIME),
             outputs_path=s.data.outputs.path,
             checkpoint=(
                 TaskCheckpoint(path=s.checkpoint.path, every_s=parse_duration_s(s.checkpoint.every))
@@ -465,7 +480,8 @@ def load_job_spec(data: dict[str, Any]) -> JobSpec:
         spec = JobSpec.model_validate(data)
         # Force evaluation of derived values so bad quantities fail at submit time.
         spec.resources()
-        parse_duration_s(spec.spec.max_runtime)
+        if spec.spec.max_runtime is not None:
+            parse_duration_s(spec.spec.max_runtime)
         if spec.spec.checkpoint:
             parse_duration_s(spec.spec.checkpoint.every)
     except JobSpecError:

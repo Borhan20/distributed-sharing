@@ -33,7 +33,9 @@ async def test_usage_is_stored_and_shown_next_to_the_size_asked_for(group_with_d
     await core.rollup_jobs(db)
     await db.commit()
     j = await coord.get(f"/api/v1/jobs/{job['id']}")
-    assert j["requested"] == {"cpu": 1.0, "memory_mb": 512, "disk_mb": 1024, "gpus": 0, "time_limit_s": 600}
+    # Disk is left out of the test's job, so pool chose it: 1 GiB on a first run.
+    assert j["requested"] == {"cpu": 1.0, "memory_mb": 512, "disk_mb": 1024, "gpus": 0, "time_limit_s": 600,
+                              "first_run": False}
     assert j["used"]["peak_memory_mb"] == 300 and j["used"]["measured"] == 1 and j["used"]["max_wall_seconds"] <= 50
     tasks = await coord.get(f"/api/v1/jobs/{job['id']}/tasks")
     assert tasks[0]["usage"]["peak_memory_mb"] == 300

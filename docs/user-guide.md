@@ -84,8 +84,8 @@ The form:
 | **Image** | The image with your code, as you push it: `ghcr.io/your-org/app:1`, `yourname/app:v2` (Docker Hub) or `python:3.12-slim`. Private? See [§6](#6-private-images). |
 | **Command** | What to run, as you would type it in a terminal: `python /app/main.py --part {{index}}`. Leave it empty to run the image's own command. |
 | **How to run** | **Once**: one task. **Split into parts**: copies of the same command, **Auto** picks as many as the group's computers can run at once. **For each value**: one task per value, e.g. `seed` = `0..4`. |
-| **Size of each task** | Small, Medium, Large or Custom (CPU, memory, disk). Ask only for what you need: smaller tasks fit on more computers. |
-| **Time limit per task** | e.g. `30m` or `2h`. A task that runs longer is stopped. |
+| **Size of each task** | **Let pool decide** (the default): pool chooses CPU, memory and disk from your earlier runs ([§4](#how-pool-chooses-sizes)). Or Small, Medium, Large or Custom, if you know what your program needs. |
+| **Time limit per task** | Empty: pool decides. Or e.g. `30m`, `2h`. A task that runs longer is stopped. |
 | **More options** | Name (default: from the image), retries after a failure, GPUs per task. |
 
 **Show as job file** turns the form into the same job as a short YAML file,
@@ -114,12 +114,28 @@ time_limit: 30m
 | `command` | One string, split like a terminal does (quotes work; pipes and `&&` need `sh -c '...'`), or a list `["python", "main.py"]`. | the image's own command |
 | `parts` | Split into this many copies of the command, or `auto`. | run once |
 | `sweep` | One task per combination of values: `seed: 0..9`, `size: [small, large]` or `size: small, large`. Several keys multiply: 10 × 2 = 20 tasks. Up to 10,000. | – |
-| `cpu`, `memory`, `disk` | Per task: cores (may be fractional), and sizes like `512Mi` or `4Gi`. | `1`, `1Gi`, `1Gi` |
+| `cpu`, `memory`, `disk` | Per task: cores (may be fractional), and sizes like `512Mi` or `4Gi`. | pool decides |
 | `gpu` | GPUs per task. | `0` |
-| `time_limit` | Per task, e.g. `30m`, `2h`. | `1h` |
+| `time_limit` | Per task, e.g. `30m`, `2h`. | pool decides |
 | `retries` | How often a failed task is tried again (0–20). A task that fails on 2 different computers is marked failed. | `3` |
 | `name`, `group` | The job's name; the group (or pass `--group`). | from the image |
 | `isolation`, `data_class`, `os` | Optional: minimum isolation `T1` (default), `T2` or `T3`; `public`, `internal` (default) or `confidential` (only on dedicated organisation computers); `linux` or `windows`. | – |
+
+### How pool chooses sizes
+
+Leave out `cpu`, `memory`, `disk` or `time_limit`, and pool chooses them. A
+size you give is kept as it is.
+
+| Your runs of this image | What each task gets |
+|---|---|
+| None yet (a **first run**) | All the free memory of the computer it runs on, 1 CPU, and the group's default time limit (4 hours, unless the coordinator changed it) |
+| One or more | Memory: the most your runs used × 1.25. CPU: what they used on average, or twice as much if the last run used all it had. Time limit: 3 × your longest run, at least 30 minutes. |
+
+- **Your own runs only.** pool looks at your earlier runs of the same image (any version), and best of all the ones with the same command. Other people's runs never size your tasks.
+- **Part 0 first.** On a first run of a job with parts, part 0 runs alone. The other parts start when it ends, with the size it used.
+- **One first run at a time.** A first run takes all the free memory of a computer, so you have one at a time. To skip the wait, set the memory yourself.
+- **Too small?** If a task runs out of memory or time with a size pool chose, pool tries it again with more: twice the memory (on a first run, a computer with more free memory) or twice the time. At most 3 times. These tries are not counted as your failures, and not in fair share.
+- **Why?** The job page (**Each task → Chosen by pool: why**), `pool run` and `pool submit` say why each size was chosen.
 
 **Each task knows its number.** In the command, `{{index}}` is the task's
 number (0, 1, 2, …) and `{{count}}` the number of tasks. Inside the container
@@ -540,13 +556,13 @@ The flags are the same as for `docker run`:
 | Flag | What it does | Default |
 |---|---|---|
 | `-e KEY=VALUE`, `-e KEY`, `--env-file FILE` | Set environment variables. Do not use them for real secrets: the computer's owner can read them. | – |
-| `--cpus 4` | CPU cores | 1 |
-| `-m 8g` | Memory | 1 GiB |
-| `--disk 20g` | Disk | 1 GiB |
+| `--cpus 4` | CPU cores | pool decides ([§4](#how-pool-chooses-sizes)) |
+| `-m 8g` | Memory | pool decides |
+| `--disk 20g` | Disk | pool decides |
 | `--gpus 1` | GPUs | 0 |
 | `-w /app` | Working directory in the container | the image's |
 | `--entrypoint sh` | Run another command than the image's | the image's |
-| `--time-limit 2h` | Stop the job after this time | 1 h |
+| `--time-limit 2h` | Stop the job after this time | pool decides |
 | `--retries 1` | Try again after a failure | 0 |
 | `-d` | Start the job and return at once | – |
 | `-o DIR` | Where the files go | `./pool-out` |
@@ -653,10 +669,10 @@ memory: 4Gi
 time_limit: 2h
 ```
 
-Then `pool run` alone is enough. You only need `pool.yaml` when the defaults
-(1 CPU, 1 GiB memory, 1 hour) are not enough. The program's own options can
-go there too (`args: --epochs 300`), but a program with good defaults does not
-need them.
+Then `pool run` alone is enough. Most programs need no `pool.yaml`: pool
+chooses the sizes ([§4](#how-pool-chooses-sizes)). Use it when you want fixed
+sizes. The program's own options can go there too (`args: --epochs 300`), but
+a program with good defaults does not need them.
 
 ### Stop, run in the background, follow again
 
@@ -803,6 +819,7 @@ who only run jobs or share computers are not asked.
 - **Roles and removal:** tab **Members**, or `pool members role my-lab bob admin` and `pool members remove my-lab bob --yes`. When someone is removed, work running on their computers for this group stops and goes back to the queue.
 - **Fair use:** tab **Usage**, or `pool groups usage my-lab`. When several people's jobs wait, the person who used the least computer time in the last 7 days goes first.
 - **Records:** tab **Audit log** (coordinators and admins) lists every important action. It is hash-chained, so changes are detectable.
+- **Time limit of a first run:** tab **Settings** (coordinator only). The longest a task may run when someone runs an image for the first time and sets no limit. 4 hours by default.
 - **Settings and closing:** tab **Settings** (coordinator only). Close the group when the work is done (`pool groups close my-lab --yes`): work stops, everything stays visible.
 - **Private images:** tab **Images** → store one read-only token for the group's registry ([§6](#6-private-images)). Members with images in their own account add their own token under **My images** instead.
 - **Removing a computer:** tab **Devices** → **Remove** (coordinators and admins). Its work for the group moves to other computers, and it stays out until you choose **Let back in** under "Removed from this group". Its owner sees why on their computer's page.
@@ -833,6 +850,9 @@ The job page explains every waiting job. The same reasons, in short:
 | This job asks for more than any shared computer offers | Lower `resources` in the job, or ask an owner to raise their limit. |
 | No available computer can run this job | The job needs something no computer offers (operating system, isolation level, GPU, confidential data) or the computers only accept certain members. |
 | … able to run this job | Nothing is wrong; it starts within seconds or when a computer finishes its current work. |
+| Part 0 runs first, to learn how much … each part needs | A first run: the other parts start when part 0 ends ([§4](#how-pool-chooses-sizes)). |
+| You have another first run going | Wait, or set the memory yourself (`memory:` or `-m`). |
+| The last try ran out of memory with all the free memory of a computer | The program needs more memory than that computer had. It waits for a computer that offers more. Ask an owner to raise their limit, or make the program use less. |
 | Waiting to retry after a failure | The last try failed; see the next table. |
 
 ### The job is refused when you submit it
@@ -887,7 +907,7 @@ ran it.
 - Checkpoints (resuming a long task where it stopped) are planned.
 - Combining results runs on your side (the results table, the merged CSV files, or your own script). A final step that runs on the group's computers after all tasks is not built.
 - Apps that listen on a port (web apps, APIs, databases, notebooks) do not work yet, and there is no interactive terminal. Programs that compute and write files work now. Apps are planned ([design](design/pool-run.md)).
-- You must choose the size of each task (CPU, memory, disk, time). A design where pool measures and chooses it by itself is agreed, not built: [`design/pool-decides.md`](design/pool-decides.md).
+- pool chooses sizes from your earlier runs ([§4](#how-pool-chooses-sizes)), but it does not yet read the image itself (ports, GPU, platform), place tasks by best fit, or merge test reports. See [`design/pool-decides.md`](design/pool-decides.md).
 - There are no credits yet: sharing a computer does not give you more use. A design is proposed: [`design/credits.md`](design/credits.md).
 - Computers are not yet matched to the image's platform: build for the kind of computer your group has (`--platform`, default `linux/amd64`).
 - `parts` splits work only for programs that can do part of it (by `POOL_TASK_INDEX`); one program cannot be spread over several computers, since tasks cannot talk to each other.

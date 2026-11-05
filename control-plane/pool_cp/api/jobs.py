@@ -26,6 +26,7 @@ from ..image_access import credential_for
 from ..models import Attempt, AuditEvent, Group, Job, Task, TaskLog, UsageLedger, User
 from ..registry import RegistryError, parse_image, resolve_digest
 from ..registry_cleanup import mark_used
+from ..scheduler import sizing
 from ..scheduler.core import cancel_tasks
 from ..scheduler.explain import auto_parts, explain_waiting
 from ..scheduler.usage import SUMMARY_SQL, summary_from_row
@@ -52,15 +53,21 @@ class JobOut(BaseModel):
     # The size each task was given, and what the measured runs used (docs/design/pool-decides.md §4.2).
     requested: dict[str, Any] | None = None
     used: dict[str, Any] | None = None
+    # How the sizes were chosen: which ones pool chose, first run, growth steps, and a reason for each.
+    sizing: dict[str, Any] | None = None
 
 
 def _requested(job: Job) -> dict[str, Any]:
-    try:
-        limit = parse_duration_s((job.spec.get("spec") or {}).get("max_runtime", "1h"))
-    except (ValueError, TypeError, AttributeError):
-        limit = None
-    return {"cpu": job.cpu, "memory_mb": job.memory_mb, "disk_mb": job.disk_mb, "gpus": job.gpus,
-            "time_limit_s": limit}
+    limit = job.max_runtime_s
+    if limit is None:  # a job from before pool chose sizes
+        try:
+            limit = parse_duration_s((job.spec.get("spec") or {}).get("max_runtime") or "1h")
+        except (ValueError, TypeError, AttributeError):
+            limit = None
+    first_run = bool((job.sizing or {}).get("first_run"))
+    # A first run gets all the free memory of the computer it runs on: there is no one number to show.
+    return {"cpu": job.cpu, "memory_mb": None if first_run else job.memory_mb, "disk_mb": job.disk_mb,
+            "gpus": job.gpus, "time_limit_s": limit, "first_run": first_run}
 
 
 async def _job_out(s: AsyncSession, job: Job, with_spec: bool = False) -> JobOut:
@@ -83,6 +90,7 @@ async def _job_out(s: AsyncSession, job: Job, with_spec: bool = False) -> JobOut
         tasks=counts,
         spec=job.spec if with_spec else None,
         requested=_requested(job),
+        sizing=job.sizing,
         used=summary_from_row((await s.execute(text(SUMMARY_SQL), {"job": job.id})).first()) if with_spec else None,
     )
 
@@ -166,15 +174,27 @@ async def submit_job(
     elif not is_pinned(js.spec.image):
         js.spec.image = await _pin_image(s, request, p, g, js.spec.image)
     res = js.resources()
+    given = js.given_sizes()
+    as_submitted["sizes"] = {k: v for k, v in (("cpu", js.spec.resources.cpu), ("memory", js.spec.resources.memory),
+                                               ("disk", js.spec.resources.disk), ("time_limit", js.spec.max_runtime))
+                             if v is not None}
+    # Sizes left out are pool's to choose, from this person's earlier runs (docs/design/pool-decides.md §4.3).
+    decision = await sizing.decide(
+        s, user_id=p.user.id, group=g, image=js.spec.image, command=js.spec.command, args=js.spec.args,
+        given={"cpu": res.cpu if given["cpu"] else None, "memory_mb": res.memory_mb if given["memory"] else None,
+               "disk_mb": res.disk_mb if given["disk"] else None,
+               "max_runtime_s": parse_duration_s(js.spec.max_runtime) if given["time_limit"] else None})
     job = Job(
         group_id=g.id,
         submitter_id=p.user.id,
         name=js.metadata.name,
         shape=js.spec.shape,
         image=js.spec.image,
-        cpu=res.cpu,
-        memory_mb=res.memory_mb,
-        disk_mb=res.disk_mb,
+        cpu=decision.cpu,
+        memory_mb=decision.memory_mb,
+        disk_mb=decision.disk_mb,
+        max_runtime_s=decision.max_runtime_s,
+        sizing=decision.sizing,
         gpus=res.gpus,
         gpu_memory_mb=res.gpu_memory_mb,
         min_tier_rank=TIER_RANK[js.spec.isolation.min_tier],
@@ -374,6 +394,7 @@ class TaskOut(BaseModel):
     device: str | None
     updated_at: datetime
     usage: dict[str, Any] | None = None  # what the task's finished run used (the result's attempt)
+    given: dict[str, Any] | None = None  # the sizes that run had (cpu, memory_mb, disk_mb, max_runtime_s)
 
 
 @router.get("/jobs/{job_id}/tasks", response_model=list[TaskOut])
@@ -406,6 +427,7 @@ async def list_tasks(
             device=dname,
             updated_at=t.updated_at,
             usage=(t.result or {}).get("usage"),
+            given=(t.result or {}).get("given"),
         )
         for t, dname in rows
     ]
