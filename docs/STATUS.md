@@ -138,7 +138,7 @@ that were not available.
 
 | Item | Status | Notes |
 |---|---|---|
-| `pool run` with `docker run`'s flags | Done | `-e`, `--env-file`, `--cpus`, `-m`, `--disk`, `--gpus`, `-w`, `--entrypoint`, `-d`; refused flags say why; `-p`/`-it` wait for step 2 |
+| `pool run` with `docker run`'s flags | Done | `-e`, `--env-file`, `--cpus`, `-m`, `--disk`, `--gpus`, `-w`, `--entrypoint`, `-d`; refused flags say why; `-p` is refused until step 2 (apps); `-it` is accepted with a note (no terminal yet) |
 | Build on your computer, push to the built-in registry | Done | CNCF Distribution 2.8.3 in token mode, sign-in through `/api/v1/registry/token` with the member's pool token; `<group>/<user>/...` only; a code change uploads only the changed layer (measured in e2e) |
 | Computers pull with a server-signed token for one image | Done | Also the second check that the image is the submitter's own |
 | `args` and `workdir` in jobs | Done | `args` go to the image's ENTRYPOINT like `docker run IMAGE ARGS` (protocol, agent, CLI) |
@@ -147,9 +147,10 @@ that were not available.
 | `pool.yaml` | Done | A job file plus `build` and `platform` |
 | Registry clean-up | Done | 30 days unused (`POOL_REGISTRY_RETENTION_DAYS`, per group on the Images tab); images of groups that no longer exist. Never an image a waiting or running job needs, or one used during the scan. Runs apart from the scheduler's main loop. Blob garbage collection is an admin command (admin guide) |
 | Registry container | Done | Sees only its certificate (own volume), no capabilities, read-only image (also in the e2e test). Computers' pull tokens last 30 minutes, members' 5 |
-| Examples | Done | `examples/run/` in Python, Go and C++; each run with `pool run --local` |
+| Examples | Done | `examples/run/`: 9 kinds of work (training, machine learning, image processing, data report, test suite with JUnit, text processing, statistics, CPU-heavy computation, simulation) in Python, Node.js, Java, R, Go and C++. Each runs with plain `pool run` (no settings) and was run with `pool run --local`; the split ones were also run as 3 parts with the same container rules |
+| Agent skill | Done | `skills/pool`: an Agent Skill (agentskills.io format) for Claude Code, Codex and Gemini CLI. Unit tests check its format and that every flag and command it names exists; an e2e test runs its workflow (check, `pool run -d`, wait, attach) |
 | Tested | Done | API tests with a registry fake that checks token signatures and access; CLI tests with a fake computer; e2e with the real registry, agent and SeaweedFS (build, push, layer reuse, refused push into another member's space, real delete, `--local`, Ctrl-C stops the container within 10 s, attach). **Needs security review** (registry sign-in and pull tokens) |
-| Not yet | – | Ports and the tunnel (step 2), Compose (step 3), replicas (step 4); matching computers to the image's platform; registry storage in SeaweedFS (a volume for now); a storage quota per member; a push-only credential for Docker instead of the member's pool token |
+| Not yet | – | Sizes chosen by pool (proposed: `docs/design/pool-decides.md`); ports and the tunnel (step 2), Compose (step 3), replicas (step 4); matching computers to the image's platform; registry storage in SeaweedFS (a volume for now); a storage quota per member; a push-only credential for Docker instead of the member's pool token |
 
 ## Ahead of plan (Phase 2 and later pieces already built)
 

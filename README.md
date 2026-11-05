@@ -63,6 +63,7 @@ registration and two-step sign-in, and the file store, all on one address.
 |---|---|
 | Everyone using pool | [User guide](docs/user-guide.md), from joining a group to running a parameter sweep, with examples. The same guide by role is in the web UI under **Guide**. |
 | People sharing a computer | [`agent/README.md`](agent/README.md): what the agent does on your computer and how to control it |
+| People using an AI coding agent | [`skills/`](skills/README.md): a skill that teaches Claude Code, Codex or Gemini CLI to run jobs on pool properly |
 | Server admins | [Admin guide](docs/admin-guide.md): install, HTTPS, upgrades, backups, security notes |
 | Developers | [Design notes](docs/design/phase1-implementation.md), [ADRs](docs/adr/), [status](docs/STATUS.md), [plan](plan.md) |
 
