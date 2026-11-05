@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -666,10 +667,12 @@ func (a *Agent) maybeReady() error {
 
 const maxRecentImages = 100
 
+var digestRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
 // rememberImage notes that this computer has an image (by digest) after running it.
 func (a *Agent) rememberImage(image string) {
 	_, digest, ok := strings.Cut(image, "@")
-	if !ok || !strings.HasPrefix(digest, "sha256:") {
+	if !ok || !digestRE.MatchString(digest) { // the server's own check: one bad entry must not spoil Ready
 		return
 	}
 	a.mu.Lock()

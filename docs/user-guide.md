@@ -151,13 +151,17 @@ gives it the task that fits it best:
 
 1. The owner's own priority for their groups comes first.
 2. With credits, members who have credits come before those who have none.
-3. A computer with a GPU takes GPU work first.
-4. A big computer takes work that needs a big computer first (more than half of
-   its free memory).
-5. Then fair share: whoever used the least in the last 7 days.
-6. Among equals: work whose image the computer already has (it starts without a
-   download), short work on a computer that often loses its tasks, then the
-   oldest.
+3. A computer with a GPU takes GPU work first. (GPU time counts in fair share:
+   one GPU hour as 10 CPU hours.)
+4. Fair share: whoever used the least in the last 7 days. People whose use is
+   close (in bands: under 1 hour, 1–3 hours, 3–7 hours, …) count as equal here.
+5. Among equals: work that needs more than half of this computer's free memory
+   first, then the least use, then work whose image the computer already has
+   (it starts without a download), short work on a computer that often loses
+   its tasks, then the oldest.
+
+So asking for more memory than you need never moves you ahead of someone who
+used much less.
 
 **Each task knows its number.** In the command, `{{index}}` is the task's
 number (0, 1, 2, …) and `{{count}}` the number of tasks. Inside the container

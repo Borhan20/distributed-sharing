@@ -192,8 +192,8 @@ best.
 | Rule | Hard or preferred | Why |
 |---|---|---|
 | Fits: size, OS, platform, GPU, isolation, the owner's rules | hard (as today) | – |
-| Fair share between people | first (as today) | Who goes next does not change. |
-| **Best fit:** a GPU computer gets GPU tasks first; a big computer gets big tasks first | preferred | A small task on the only 64 GiB computer blocks the big job behind it. |
+| Fair share between people | first (as today), in bands | Who goes next does not change between people with clearly different use (as built: §11 step D). |
+| **Best fit:** a GPU computer gets GPU tasks first; a big computer gets big tasks first | preferred, among near-equals | A small task on the only 64 GiB computer blocks the big job behind it. |
 | **Image already there** | preferred | No download, so it starts in seconds. |
 | **Likely to stay online** for the task's expected time (from the computer's online history) | preferred | Fewer tasks have to move. |
 | **Reliable:** few failed or lost tasks (already counted today) | preferred | Fewer retries. |
@@ -437,12 +437,26 @@ Computers ask for work, so pool picks the best task for the computer that asks:
 |---|---|---|
 | 1 | The owner's group priority | As before. |
 | 2 | Members with credits before members without (credits §3.8) | As before. |
-| 3 | On a computer with a GPU: GPU work first | A GPU waiting behind CPU work is wasted. |
-| 4 | Work that needs more than half of this computer's free memory first, where it fits | A small task on the only big computer blocks the big job behind it. |
-| 5 | Fair share: least use in the last 7 days | As before. Rules 3 and 4 come before it on purpose: small and CPU work can run elsewhere. |
-| 6 | Work whose image this computer already has | The agent sends the digests of the images it ran recently (at most 100) with each request for work. No download, so it starts at once. |
-| 7 | On a computer that often loses tasks (reliability under 0.5): short work first | Fewer long tasks have to move. |
-| 8 | The oldest first | As before. |
+| 3 | On a computer with a GPU: GPU work first | A GPU waiting behind CPU work is wasted. GPU time counts in fair share (1 GPU hour = 10 CPU hours), so asking for a GPU has a price. |
+| 4 | Fair share in bands that double: under 1 hour of use, 1–3, 3–7, … | Fair share stays first between people with clearly different use. |
+| 5 | Inside a band: work that needs more than half of this computer's free memory first | A small task on the only big computer blocks the big job behind it. Only among near-equals, so asking for more memory never jumps someone who used much less. |
+| 6 | Exact fair share | As before. |
+| 7 | Work whose image this computer already has | The agent sends the digests of up to 100 images it started recently with each request for work. No download, so it starts at once. |
+| 8 | On a computer that often loses tasks (reliability under 0.5): short work first | Fewer long tasks have to move. |
+| 9 | The oldest first | As before. |
+
+The scheduler looks at 10 jobs at a time and up to 5 pages: jobs this computer
+cannot start now (with "wait", ones the member cannot pay an hour of; first
+runs without room) no longer leave it without work.
+
+**Changed after the security review of step D:** at first, rules 3 and 5 came
+before fair share, and "big" was measured against this computer's free memory.
+A member could then jump the queue by asking for more memory than needed, and
+a "size ladder" of jobs took almost all of a computer from someone who had used
+much less. Also, 10 jobs nobody could pay for left a computer without work, an
+invalid image entry made the server refuse a computer's request for work, an
+image counted as "already there" only after its task ended, and a huge memory
+size overflowed a calculation. All are fixed and tested.
 
 Not built in step D: "likely to stay online" from a computer's online history,
 and "fast for this image" from measured run times per computer.

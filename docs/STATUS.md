@@ -162,7 +162,7 @@ that were not available.
 | Fencing epochs, idempotent commits | Done | Chaos test checks invariants after every run |
 | Retries with backoff, always-failing detection (2 devices) | Done | Lost leases requeue without backoff |
 | Checkpoint SDK | Partial | `pool.checkpoint` works; the agent does not upload or mount checkpoints yet |
-| Reliability score | Partial | Simple moving score; not used for matching yet |
+| Reliability score | Done | Simple moving score; computers under 0.5 get short tasks first (step D) |
 | Matching: hard filters, owner's group priority, fair share | Done | Best fit, cached images and reliability are used (step D); speed and online-history scoring not built |
 | Time windows, owner-return actions | Done in agent | Pause/throttle tested in the sandbox suite, not end to end |
 | Devices in several groups / several servers | Done | Agent profiles, `run --all` |
@@ -170,7 +170,7 @@ that were not available.
 | Group expiry and templates | Partial | Expiry stops jobs; data deletion after retention not built |
 | Data classes | Partial | `confidential` → org-owned dedicated device and T2+ only |
 | Read the image (`pool-decides` step C) | Done | At submit, once per digest: platforms, CUDA, ports, size (digest-checked; CDN redirects only to public https, without the token). Tasks go only to computers of the image's CPU types; a CUDA image asks for a GPU where the group has one; `pool run` builds for the group's most common platform. Tested: parser and redirect unit tests, API tests, e2e with the built-in registry, a live check on Docker Hub images. **Needs security review** (registry client) |
-| Place better (`pool-decides` step D) | Done | Each computer gets the task that fits it best: GPU work first on GPU computers, work that needs a big computer first where it fits, then fair share, then tasks whose image it already has (the agent reports recently run images), short tasks first on unreliable computers. Tested: API tests for each rule and that fair share still decides between people |
+| Place better (`pool-decides` step D) | Done | Each computer gets the task that fits it best: GPU work first on GPU computers (GPU time counts in fair share); fair share in doubling bands; inside a band, work that needs a big computer first, then tasks whose image it already has (the agent reports recently started images), short tasks first on unreliable computers; up to 5 pages of jobs. Security review: fair-share bypass and starvation found and fixed. Tested: API tests for each rule and that fair share still decides between people |
 | Credits | Done | `docs/design/credits.md`: earn by sharing, spend by using; start credits, coordinator grants, member requests, giving, moving earned credits between groups; out of credits = lowest priority (or wait); earn while waiting (off by default); hourly charging of long tasks. Tested: API tests incl. two gives at once, e2e with two members' real agents. **Needs security review** (credits are value) |
 | Backup copies of slow tasks, per-group caches | Not started | Slow-task copies: `docs/design/pool-decides.md` §4.6 |
 | Secrets, services, overlay network, Kata, T0, gang jobs | Not started (Phases 3–4) | Rejected at submit time with a clear message |

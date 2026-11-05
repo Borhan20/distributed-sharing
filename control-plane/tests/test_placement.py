@@ -8,6 +8,7 @@ from fake_agent import CAPS, FREE, share
 from sqlalchemy import update
 
 from pool_cp.models import Device
+from pool_protocol import messages as pm
 
 pytestmark = pytest.mark.asyncio
 
@@ -96,4 +97,76 @@ async def test_fair_share_still_decides_between_people(group_with_device, user):
     offer = await agent.ready(images=[digest])
     assert await job_of(agent, offer) == theirs["id"], "who used least goes first; a cached image does not jump it"
     assert mine["id"]
+    await agent.close()
+
+
+# ---- from the security review of step D ----
+
+async def used(db, g, who, hours: float, gpu_hours: float = 0):
+    """Record use in the group's fair-share ledger, as if `who` ran things for that long."""
+    from sqlalchemy import text as sql
+
+    await db.execute(sql(
+        "INSERT INTO usage_ledger (group_id, user_id, device_id, attempt_id, cpu_seconds, gpu_seconds, pool_paid) "
+        "SELECT g.id, u.id, d.id, gen_random_uuid(), :cpu, :gpu, false FROM groups g, users u, devices d "
+        "WHERE g.name = :g AND u.handle = :h LIMIT 1"), {"g": g, "h": who.handle, "cpu": hours * 3600,
+                                                          "gpu": gpu_hours * 3600})
+    await db.commit()
+
+
+async def test_asking_for_more_memory_does_not_jump_someone_who_used_much_less(group_with_device, user, db):
+    coord, g, agent = await group_with_device()
+    light = await member(coord, g, user)
+    await used(db, g, coord, hours=1000)
+    small = await submit(light, g, img()[0])
+    for size in ("1Gi", "4Gi", "16Gi"):  # a "size ladder" of memory nobody needs
+        await submit(coord, g, img()[0], memory=size)
+    await agent.connect([share(g)])
+    assert await job_of(agent, await agent.ready()) == small["id"], "fair share first; best fit only breaks ties"
+    await agent.close()
+
+
+async def test_gpu_time_counts_in_fair_share(group_with_device, user, db):
+    coord, g, agent = await group_with_device()
+    gpu_user = await member(coord, g, user)
+    await used(db, g, gpu_user, hours=0, gpu_hours=1)  # 1 GPU hour = 10 CPU hours
+    await used(db, g, coord, hours=5)
+    mine = await submit(coord, g, img()[0])
+    await submit(gpu_user, g, img()[0])
+    await agent.connect([share(g)])
+    assert await job_of(agent, await agent.ready()) == mine["id"]
+    await agent.close()
+
+
+async def test_a_computer_still_gets_work_when_the_top_jobs_cannot_be_paid(user, enrolled, db):
+    coord = await user()
+    g = __import__("conftest").gname()
+    await coord.post("/api/v1/groups", {"name": g, "display_name": "W", "template": "dev-team"}, expect=201)
+    await coord.req("PATCH", f"/api/v1/groups/{g}", 200, json={"out_of_credits": "wait"})
+    poor = await member(coord, g, user)
+    rich = await member(coord, g, user)
+    from sqlalchemy import text as sql
+
+    await db.execute(sql("UPDATE credit_balances SET balance = 1, free = 1 WHERE user_id = "
+                         "(SELECT id FROM users WHERE handle = :h)"), {"h": poor.handle})
+    await db.commit()
+    for _ in range(12):  # 20 GiB jobs: 6 credits an hour each, more than 1 credit
+        await submit(poor, g, img()[0], memory="20Gi")
+    ok = await submit(rich, g, img()[0])
+    agent = await enrolled(coord)
+    await coord.req("PUT", f"/api/v1/devices/{agent.device_id}/shares/{g}", expect=200)
+    await agent.connect([share(g)])
+    offer = await agent.ready()
+    assert isinstance(offer, pm.Offer) and await job_of(agent, offer) == ok["id"]
+    await agent.close()
+
+
+async def test_a_bad_image_entry_is_dropped_not_the_request(group_with_device):
+    coord, g, agent = await group_with_device()
+    job = await submit(coord, g, img()[0])
+    await agent.connect([share(g)])
+    await agent.ws.send(__import__("json").dumps({"type": "ready", "msg_id": "m-1", "free": FREE,
+                                                  "tiers": ["T1", "T2"], "images": ["not-a-digest"]}))
+    offer = await agent.recv_type(pm.Offer, pm.NoWork)
+    assert isinstance(offer, pm.Offer) and await job_of(agent, offer) == job["id"]
     await agent.close()
