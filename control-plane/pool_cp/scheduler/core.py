@@ -263,7 +263,11 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
     """
     row = None
     group_free: dict[uuid.UUID, int] = {}
+    device.last_ready_at = now
     for job_id, submitter_handle, on_probation, first_run, memory_mb, group_id in jobs:
+        g = next(g for g, _ in groups if g.id == group_id)
+        if g.credits_enabled and g.out_of_credits == "wait" and not await _can_pay(session, g, job_id):
+            continue
         if first_run:
             # A first run needs this computer's share for its group to have room (more than the last try had).
             if group_id not in group_free:
@@ -297,6 +301,13 @@ def _share_memory(device: Device, group: str) -> int:
     share = next((r for r in device.reported_shares or [] if r.get("group") == group), None) or {}
     offered = int((share.get("limits") or {}).get("memory_mb") or 0)
     return min(offered, total) if total else offered
+
+
+async def _can_pay(session: AsyncSession, group: Group, job_id: uuid.UUID) -> bool:
+    """With "wait": the submitter's balance covers an hour of this task on top of what they already run."""
+    job = await session.get(Job, job_id)
+    hourly = credits.cost(credits.rates(group), cpu=job.cpu, memory_mb=job.memory_mb, gpus=job.gpus, seconds=3600)
+    return await credits.enough_for(session, group, job.submitter_id, hourly)
 
 
 async def _best_offered_memory(session: AsyncSession, settings: Settings, groups: list[str], now: datetime) -> int:
@@ -345,6 +356,8 @@ async def _assign(session: AsyncSession, settings: Settings, signer: EnvelopeSig
     spec = {**task.spec, "max_runtime_s": given["max_runtime_s"],
             "resources": {**task.spec.get("resources", {}), "cpu": given["cpu"], "memory_mb": given["memory_mb"],
                           "disk_mb": given["disk_mb"]}}
+    if group.credits_enabled:
+        given["rates"] = credits.rates(group)
     attempt = Attempt(id=uuid.uuid4(), task_id=task.id, device_id=device.id, epoch=epoch, state="assigned",
                       lease_expires_at=now + timedelta(seconds=settings.lease_ttl_s), resources=given)
     session.add(attempt)
@@ -379,7 +392,8 @@ async def fence(session: AsyncSession, device_id: uuid.UUID, attempt_id: str, ep
         aid = uuid.UUID(attempt_id)
     except ValueError:
         raise FenceError("unknown_attempt") from None
-    attempt = (await session.execute(select(Attempt).where(Attempt.id == aid).with_for_update())).scalar_one_or_none()
+    attempt = (await session.execute(select(Attempt).where(Attempt.id == aid).with_for_update()
+                                     .execution_options(populate_existing=True))).scalar_one_or_none()
     if attempt is None or attempt.device_id != device_id:
         raise FenceError("unknown_attempt")
     task = (await session.execute(select(Task).where(Task.id == attempt.task_id).with_for_update())).scalar_one()
@@ -554,7 +568,7 @@ async def handle_commit(session: AsyncSession, settings: Settings, device_id: uu
             .where(Attempt.task_id == t.id, Attempt.end_reason.in_(("oom_resized", "timeout_resized")),
                    UsageLedger.pool_paid.is_(False)))).scalars().all()
         for tried in resized_tries:
-            await credits.refund_pool_retry(session, tried, t)
+            await credits.refund_pool_retry(session, tried, t, now)
         await session.execute(
             update(UsageLedger).where(UsageLedger.attempt_id.in_([x.id for x in resized_tries]))
             .values(pool_paid=True))
@@ -644,11 +658,30 @@ async def reconcile_on_hello(session: AsyncSession, settings: Settings, device_i
     keep = {uuid.UUID(a) for a in renewed}
     active = (await session.execute(
         select(Attempt).where(Attempt.device_id == device_id, Attempt.state.in_(ACTIVE_ATTEMPT_STATES))
+        .with_for_update().execution_options(populate_existing=True)
     )).scalars().all()
     for a in active:
         if a.id not in keep:
             await lose_attempt(session, settings, a, reason="agent_restarted")
     return stale
+
+
+TIME_LIMIT_GRACE_S = 300
+
+
+async def enforce_time_limits(session: AsyncSession, settings: Settings, limit: int = 200) -> int:
+    """Attempts that run well past their time limit end on the server too (the agent stops them itself; this
+    is for one that does not): the task goes back to the queue, and nothing more is charged for it."""
+    now = utcnow()
+    rows = (await session.execute(
+        select(Attempt).where(
+            Attempt.state == "running", Attempt.started_at.isnot(None),
+            text("attempts.started_at + make_interval(secs => coalesce((attempts.resources->>'max_runtime_s')"
+                 f"::float8, 86400) + {TIME_LIMIT_GRACE_S}) < :now"))
+        .with_for_update(skip_locked=True).limit(limit), {"now": now})).scalars().all()
+    for a in rows:
+        await lose_attempt(session, settings, a, reason="time_limit")
+    return len(rows)
 
 
 async def lose_attempt(session: AsyncSession, settings: Settings, attempt: Attempt, reason: str) -> None:
@@ -691,7 +724,8 @@ async def cancel_tasks(session: AsyncSession, task_filter, reason: str) -> list[
     to_stop: list[tuple[str, uuid.UUID]] = []
     for t in tasks:
         if t.current_attempt_id:
-            a = await session.get(Attempt, t.current_attempt_id)
+            a = (await session.execute(select(Attempt).where(Attempt.id == t.current_attempt_id).with_for_update()
+                                       .execution_options(populate_existing=True))).scalar_one_or_none()
             if a and a.state in ACTIVE_ATTEMPT_STATES:
                 # The computer worked until now: it counts for fair share, and it is paid for in credits.
                 await _record_usage(session, a, t, now)

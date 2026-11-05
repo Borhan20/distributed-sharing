@@ -78,8 +78,10 @@ class Group(Base):
         default=lambda: {"cpu_hour": 1, "gib_hours_per_credit": 4, "gpu_hour": 10})
     out_of_credits: Mapped[str] = mapped_column(String(16), server_default="lowest", default="lowest")
     standby_percent: Mapped[int] = mapped_column(Integer, server_default="0", default=0)
-    credits_in: Mapped[bool] = mapped_column(Boolean, server_default="true", default=True)
+    # Groups whose earned credits members may move in (credits.md §3.6): none unless the coordinator names them.
+    credits_from: Mapped[list[str]] = mapped_column(ARRAY(String(63)), server_default="{}", default=list)
     credits_out: Mapped[bool] = mapped_column(Boolean, server_default="true", default=True)
+    credits_since: Mapped[datetime | None] = mapped_column(TS)  # when credits were last turned on
     state: Mapped[str] = mapped_column(String(16), default="active")  # active | expired | closed | deleted
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now())
     closed_at: Mapped[datetime | None] = mapped_column(TS)
@@ -178,6 +180,7 @@ class Device(Base):
     org_owned_dedicated: Mapped[bool] = mapped_column(Boolean, default=False)  # server admins only
     reliability: Mapped[float] = mapped_column(Float, default=1.0)
     last_seen_at: Mapped[datetime | None] = mapped_column(TS)
+    last_ready_at: Mapped[datetime | None] = mapped_column(TS)  # it last asked for work (credits: "earn while waiting")
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now())
     revoked_at: Mapped[datetime | None] = mapped_column(TS)
 
@@ -365,6 +368,10 @@ class Attempt(Base):
     # Credits charged so far for this attempt, and for how many seconds of it (credits.charge_attempt).
     charged: Mapped[Decimal] = mapped_column(Numeric(18, 4), server_default="0", default=Decimal(0))
     charged_s: Mapped[float] = mapped_column(Float, server_default="0", default=0.0)
+    # Of `charged`: what the submitter paid with free credits, and what the owner got as credits that stay in the
+    # group. A refund gives each back in the same kind (credits.charge_attempt).
+    charged_free: Mapped[Decimal] = mapped_column(Numeric(18, 4), server_default="0", default=Decimal(0))
+    earned_free: Mapped[Decimal] = mapped_column(Numeric(18, 4), server_default="0", default=Decimal(0))
     __table_args__ = (
         UniqueConstraint("task_id", "epoch", name="uq_attempt_epoch"),
         CheckConstraint(_in("state", ATTEMPT_STATES), name="ck_attempt_state"),

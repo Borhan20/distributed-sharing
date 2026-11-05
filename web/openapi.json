@@ -3447,21 +3447,21 @@
         "properties": {
           "cpu_hour": {
             "type": "number",
-            "maximum": 1000.0,
-            "exclusiveMinimum": 0.0,
+            "maximum": 10.0,
+            "minimum": 0.1,
             "title": "Cpu Hour",
             "default": 1
           },
           "gib_hours_per_credit": {
             "type": "number",
-            "maximum": 1000000.0,
-            "exclusiveMinimum": 0.0,
+            "maximum": 64.0,
+            "minimum": 0.5,
             "title": "Gib Hours Per Credit",
             "default": 4
           },
           "gpu_hour": {
             "type": "number",
-            "maximum": 100000.0,
+            "maximum": 100.0,
             "minimum": 0.0,
             "title": "Gpu Hour",
             "default": 10
@@ -3511,9 +3511,12 @@
             "type": "integer",
             "title": "Standby Percent"
           },
-          "credits_in": {
-            "type": "boolean",
-            "title": "Credits In"
+          "credits_from": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Credits From"
           },
           "credits_out": {
             "type": "boolean",
@@ -3541,7 +3544,7 @@
           "rates",
           "out_of_credits",
           "standby_percent",
-          "credits_in",
+          "credits_from",
           "credits_out"
         ],
         "title": "CreditsOut"
@@ -4368,10 +4371,12 @@
             "title": "Standby Percent",
             "default": 0
           },
-          "credits_in": {
-            "type": "boolean",
-            "title": "Credits In",
-            "default": true
+          "credits_from": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Credits From"
           },
           "credits_out": {
             "type": "boolean",
@@ -4610,7 +4615,7 @@
             "anyOf": [
               {
                 "type": "number",
-                "maximum": 1000000.0,
+                "maximum": 100.0,
                 "minimum": 0.0
               },
               {
@@ -4657,16 +4662,20 @@
             ],
             "title": "Standby Percent"
           },
-          "credits_in": {
+          "credits_from": {
             "anyOf": [
               {
-                "type": "boolean"
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 50
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Credits In"
+            "title": "Credits From"
           },
           "credits_out": {
             "anyOf": [

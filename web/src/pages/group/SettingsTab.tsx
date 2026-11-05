@@ -19,7 +19,7 @@ export function SettingsTab({ group }: { group: Group }) {
   const [creditStart, setCreditStart] = useState(group.credit_start ?? 20);
   const [outOfCredits, setOutOfCredits] = useState<"lowest" | "wait">((group.out_of_credits as "lowest" | "wait") ?? "lowest");
   const [standby, setStandby] = useState(group.standby_percent ?? 0);
-  const [creditsIn, setCreditsIn] = useState(group.credits_in ?? true);
+  const [creditsFrom, setCreditsFrom] = useState((group.credits_from ?? []).join(", "));
   const [creditsOut, setCreditsOut] = useState(group.credits_out ?? true);
   const [closing, setClosing] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -39,7 +39,10 @@ export function SettingsTab({ group }: { group: Group }) {
             credit_start: creditStart,
             out_of_credits: outOfCredits,
             standby_percent: standby,
-            credits_in: creditsIn,
+            credits_from: creditsFrom
+              .split(",")
+              .map((n) => n.trim())
+              .filter(Boolean),
             credits_out: creditsOut,
           },
         }),
@@ -136,9 +139,9 @@ export function SettingsTab({ group }: { group: Group }) {
                   Earn while waiting (% of the CPU rate for a shared computer that is online and idle, 0 = off)
                   <input type="number" min={0} max={100} value={standby} onChange={(e) => setStandby(Number(e.target.value))} disabled={!active} />
                 </label>
-                <label className="check">
-                  <input type="checkbox" checked={creditsIn} onChange={(e) => setCreditsIn(e.target.checked)} disabled={!active} />
-                  Members may bring earned credits from their other groups
+                <label>
+                  Members may bring earned credits from these groups (their short names, comma-separated; empty: none)
+                  <input value={creditsFrom} onChange={(e) => setCreditsFrom(e.target.value)} placeholder="e.g. vision-lab" disabled={!active} />
                 </label>
                 <label className="check">
                   <input type="checkbox" checked={creditsOut} onChange={(e) => setCreditsOut(e.target.checked)} disabled={!active} />

@@ -42,7 +42,7 @@ class CreditsOut(BaseModel):
     rates: dict[str, float]
     out_of_credits: str
     standby_percent: int
-    credits_in: bool
+    credits_from: list[str]  # groups whose earned credits may be moved in
     credits_out: bool
     open_request: RequestOut | None = None
 
@@ -116,7 +116,8 @@ async def _credits_out(s: AsyncSession, g: Group, user: User) -> CreditsOut:
     balance, free = (row.balance, row.free) if row else (Decimal(0), Decimal(0))
     return CreditsOut(group=g.name, enabled=g.credits_enabled, balance=_f(balance), free=_f(min(free, max(balance, 0))),
                       earned=_f(max(balance - free, Decimal(0))), start=_f(g.credit_start), rates=credits.rates(g),
-                      out_of_credits=g.out_of_credits, standby_percent=g.standby_percent, credits_in=g.credits_in,
+                      out_of_credits=g.out_of_credits, standby_percent=g.standby_percent,
+                      credits_from=list(g.credits_from or []),
                       credits_out=g.credits_out, open_request=_request_out(req, user.handle) if req else None)
 
 
@@ -201,7 +202,11 @@ async def ask_for_credits(name: str, body: AskIn, p: Principal = Depends(current
     g = await load_group(s, name)
     await require_role(s, g, p, ANY_MEMBER)
     _require_enabled(g)
-    r = CreditRequest(group_id=g.id, user_id=p.user.id, amount=credits.amount_of(body.amount), reason=body.reason)
+    try:
+        amount = credits.amount_of(body.amount)
+    except credits.CreditError as exc:
+        raise _bad(exc) from None
+    r = CreditRequest(group_id=g.id, user_id=p.user.id, amount=amount, reason=body.reason)
     s.add(r)
     try:
         await s.flush()
@@ -306,13 +311,14 @@ async def move_credits(body: MoveIn, p: Principal = Depends(current_principal), 
     await require_role(s, source, p, ANY_MEMBER)
     await require_role(s, target, p, ANY_MEMBER)
     try:
-        amount = await credits.move(s, p.user.id, source, target, body.amount)
+        arrived = await credits.move(s, p.user.id, source, target, body.amount)
     except credits.CreditError as exc:
         raise _bad(exc) from None
     for g, direction in ((source, "out"), (target, "in")):
         await audit.record(s, actor_type="user", actor_id=p.user.id, action=f"credits.move_{direction}",
                            group_id=g.id, target_type="user", target_id=p.user.id,
-                           details={"from": source.name, "to": target.name, "amount": float(amount)})
+                           details={"from": source.name, "to": target.name, "amount": body.amount,
+                                    "arrived": float(arrived)})
     out = MoveOut(source=await _credits_out(s, source, p.user), target=await _credits_out(s, target, p.user))
     await s.commit()
     return out

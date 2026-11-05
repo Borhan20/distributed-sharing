@@ -73,9 +73,11 @@ class GroupCreate(BaseModel):
 
 
 class CreditRates(BaseModel):
-    cpu_hour: float = Field(default=1, gt=0, le=1000)  # credits for one CPU core for one hour
-    gib_hours_per_credit: float = Field(default=4, gt=0, le=1_000_000)  # GiB of memory held one hour per credit
-    gpu_hour: float = Field(default=10, ge=0, le=100_000)  # credits for one GPU for one hour
+    # Narrow ranges on purpose (credits.RATE_LIMITS): prices far from 1 CPU hour = 1 credit would let a group
+    # make credits worth far more than the computer time behind them.
+    cpu_hour: float = Field(default=1, ge=0.1, le=10)  # credits for one CPU core for one hour
+    gib_hours_per_credit: float = Field(default=4, ge=0.5, le=64)  # GiB of memory held one hour per credit
+    gpu_hour: float = Field(default=10, ge=0, le=100)  # credits for one GPU for one hour
 
 
 class GroupUpdate(BaseModel):
@@ -92,11 +94,12 @@ class GroupUpdate(BaseModel):
     default_time_limit_s: int | None = Field(default=None, ge=60, le=7 * 24 * 3600)
     # Credits (docs/design/credits.md §3).
     credits_enabled: bool | None = None
-    credit_start: float | None = Field(default=None, ge=0, le=1_000_000)
+    credit_start: float | None = Field(default=None, ge=0, le=100)  # credits.MAX_START
     credit_rates: CreditRates | None = None
     out_of_credits: Literal["lowest", "wait"] | None = None
     standby_percent: int | None = Field(default=None, ge=0, le=100)
-    credits_in: bool | None = None
+    # Groups whose earned credits members may move into this group (credits.md §3.6). Empty: none.
+    credits_from: list[str] | None = Field(default=None, max_length=50)
     credits_out: bool | None = None
 
 
@@ -118,7 +121,7 @@ class GroupOut(BaseModel):
     credit_rates: dict[str, float] = Field(default_factory=dict)
     out_of_credits: str = "lowest"
     standby_percent: int = 0
-    credits_in: bool = True
+    credits_from: list[str] = Field(default_factory=list)
     credits_out: bool = True
     state: str
     created_at: datetime
@@ -134,7 +137,7 @@ def _group_out(g: Group, role: str | None) -> GroupOut:
                     default_time_limit_s=g.default_time_limit_s or 14400,
                     credits_enabled=bool(g.credits_enabled), credit_start=float(g.credit_start or 0),
                     credit_rates=credits.rates(g), out_of_credits=g.out_of_credits or "lowest",
-                    standby_percent=g.standby_percent or 0, credits_in=g.credits_in is not False,
+                    standby_percent=g.standby_percent or 0, credits_from=list(g.credits_from or []),
                     credits_out=g.credits_out is not False, state=g.state, created_at=g.created_at,
                     my_role=role)
 
@@ -184,6 +187,10 @@ async def create_group(body: GroupCreate, request: Request, p: Principal = Depen
         await s.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "a group with this name already exists") from None
     s.add(Membership(group_id=g.id, user_id=p.user.id, role="coordinator"))
+    await s.flush()
+    if g.credits_enabled:
+        g.credits_since = utcnow()
+        await credits.give_start(s, g, p.user.id)  # the template's start credits (not chosen by the creator)
     await audit.record(s, actor_type="user", actor_id=p.user.id, action="group.create", group_id=g.id,
                        target_type="group", target_id=g.id,
                        details={"name": g.name, "template": g.template, "approval_rule": g.approval_rule})
@@ -207,12 +214,19 @@ async def update_group(name: str, body: GroupUpdate, request: Request, p: Princi
     if "default_time_limit_s" in changes and changes["default_time_limit_s"] is None:
         raise HTTPException(422, "default_time_limit_s needs a number of seconds (60 to 604800)")
     nulls = [k for k in ("credits_enabled", "credit_start", "credit_rates", "out_of_credits", "standby_percent",
-                         "credits_in", "credits_out") if k in changes and changes[k] is None]
+                         "credits_from", "credits_out") if k in changes and changes[k] is None]
     if nulls:
         raise HTTPException(422, f"{', '.join(nulls)} cannot be empty")
     turning_on = changes.get("credits_enabled") is True and not g.credits_enabled
+    if "credits_from" in changes:
+        names = [n.strip() for n in changes["credits_from"] if n.strip()]
+        if g.name in names:
+            raise HTTPException(422, "credits_from: a group cannot take credits from itself")
+        changes["credits_from"] = sorted(set(names))
     for k, v in changes.items():
         setattr(g, k, v)
+    if turning_on:
+        g.credits_since = utcnow()  # time before this is never charged
     if turning_on:  # every member gets their start credits now (credits.md §3.4)
         members = (await s.execute(select(Membership.user_id).where(Membership.group_id == g.id))).scalars().all()
         await credits.start_all(s, g, list(members))
@@ -503,6 +517,7 @@ async def _add_member(s: AsyncSession, g: Group, user: User, role: str) -> Membe
     m = Membership(group_id=g.id, user_id=user.id, role=role, probation_until=probation)
     s.add(m)
     await s.flush()
+    await credits.give_start(s, g, user.id)  # start credits when they join a group that uses credits
     return m
 
 

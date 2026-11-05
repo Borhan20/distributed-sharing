@@ -798,9 +798,10 @@ In a group that uses credits, the more you share, the more you can use.
 | Your computer runs someone else's task | You **earn** what they pay |
 | Your task runs on someone else's computer | You **pay**: 1 credit for 1 CPU for 1 hour, 1 credit for 4 GiB of memory for 1 hour, 10 for a GPU for 1 hour |
 | Your task runs on your own computer | Free |
-| A size pool chose was too small, and pool tries again | You pay for the small try at first. When a bigger try works, pool gives it back to you. The owner keeps what they earned. |
+| A size pool chose was too small, and pool tries again | You pay for the small try at first. When a bigger try works, the small try's charge is reversed: you get it back, and the owner gives back what it earned. |
+| A task runs longer than its time limit | Never billed for more than its time limit |
 | The computer went away during your task | Nothing for the lost part |
-| You join the group | Free **start credits** (20 by default) |
+| You join the group | Free **start credits** (20 by default, at most 100) |
 
 When pool chose the size, you pay for what the task used, not for what it
 held. A first run, which holds a whole computer's free memory, costs only what
@@ -826,9 +827,13 @@ get credits:
 | Ask the coordinator | **Ask the coordinator for credits** | `pool credits ask 50 --reason "..."` |
 | Use earned credits in another group | – | `pool credits move 30 --from my-lab --to vision-lab` |
 
-**Free and earned credits.** Start credits and credits from the coordinator
-are **free**. They are spent first, and they stay in their group. **Earned**
-credits can also move to another group you belong to, if both groups allow it.
+**Free and earned credits.** Start credits, credits from the coordinator and
+"earn while waiting" are **free**: they are spent first, and they stay in their
+group. **Earned** credits can also move to another group you belong to, but
+only if that group's coordinator has named this group under **Settings →
+Credits** (none by default). They are converted by the two groups' CPU rates.
+Credits you earn from someone who paid with credits they did not have stay in
+the group.
 
 ## 11. Run a group (coordinators and admins)
 
@@ -862,7 +867,7 @@ who only run jobs or share computers are not asked.
 - **Join requests:** tab **Join requests**, or `pool requests list my-lab` and `pool requests vote my-lab REQUEST-ID approve`. The rule is one of: the coordinator alone, any *k* members, or a majority.
 - **Roles and removal:** tab **Members**, or `pool members role my-lab bob admin` and `pool members remove my-lab bob --yes`. When someone is removed, work running on their computers for this group stops and goes back to the queue.
 - **Fair use:** tab **Usage**, or `pool groups usage my-lab`. When several people's jobs wait, the person who used the least computer time in the last 7 days goes first. With credits on, people with credits go before people without.
-- **Credits:** tab **Settings → Credits** turns them on, and sets the start credits, what happens when a member has none left (lowest priority, or wait), "earn while waiting", and whether earned credits may move in and out. They are on for new Dev team, Student group and Hackathon groups, and off for Research team and Course. Turning them on gives every member their start credits.
+- **Credits:** tab **Settings → Credits** turns them on, and sets the start credits (at most 100), what happens when a member has none left (lowest priority, or wait), "earn while waiting", which groups' earned credits members may bring in (none by default), and whether credits earned here may go out. Rates stay close to 1 credit per CPU hour (0.1 to 10). They are on for new Dev team, Student group and Hackathon groups, and off for Research team and Course. Turning them on gives every member their start credits.
 - **Free credits:** tab **Credits**. **Give free credits** to a member (not to yourself), with a reason. Under **Requests for credits**, approve a request (all of it, or less) or decline it. On the CLI: `pool credits grant bob 30 --reason "thesis"`, `pool credits requests`, `pool credits approve ID [AMOUNT]`, `pool credits decline ID`. Everything is in the audit log.
 - **Records:** tab **Audit log** (coordinators and admins) lists every important action. It is hash-chained, so changes are detectable.
 - **Time limit of a first run:** tab **Settings** (coordinator only). The longest a task may run when someone runs an image for the first time and sets no limit. 4 hours by default.

@@ -13,7 +13,7 @@ const KINDS: Record<string, string> = {
   receive: "Received",
   spend: "Your job ran on their computer",
   earn: "Your computer ran their job",
-  pool_retry: "Your computer ran a retry pool paid for",
+  pool_retry: "A retry pool paid for (older entries)",
   move_out: "Moved to another group",
   move_in: "Moved from another group",
   standby: "Your computer waited for work",

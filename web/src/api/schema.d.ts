@@ -1172,8 +1172,8 @@ export interface components {
             out_of_credits: string;
             /** Standby Percent */
             standby_percent: number;
-            /** Credits In */
-            credits_in: boolean;
+            /** Credits From */
+            credits_from: string[];
             /** Credits Out */
             credits_out: boolean;
             open_request?: components["schemas"]["RequestOut"] | null;
@@ -1493,11 +1493,8 @@ export interface components {
              * @default 0
              */
             standby_percent: number;
-            /**
-             * Credits In
-             * @default true
-             */
-            credits_in: boolean;
+            /** Credits From */
+            credits_from?: string[];
             /**
              * Credits Out
              * @default true
@@ -1557,8 +1554,8 @@ export interface components {
             out_of_credits?: ("lowest" | "wait") | null;
             /** Standby Percent */
             standby_percent?: number | null;
-            /** Credits In */
-            credits_in?: boolean | null;
+            /** Credits From */
+            credits_from?: string[] | null;
             /** Credits Out */
             credits_out?: boolean | null;
         };
