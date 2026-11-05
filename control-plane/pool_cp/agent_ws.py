@@ -163,6 +163,10 @@ async def agent_ws(ws: WebSocket) -> None:
             except _Revoked:
                 await conn.close("device revoked", CLOSE_REVOKED)
                 return
+            except Exception:  # one message the server cannot handle must not drop the device's connection
+                log.exception("could not handle %s from device=%s", type(msg).__name__, device.id)
+                reply = pm.Error(code="server_error", message="the server could not handle this message",
+                                 ref_msg_id=msg.msg_id)
             for r in reply if isinstance(reply, list) else [reply]:
                 if r is not None:
                     await conn.send(r)

@@ -197,8 +197,8 @@ async def _first_run_reasons(s: AsyncSession, job: Job, pending: int) -> list[Re
     )).scalar_one()
     if busy:
         return [Reason("one_first_run",
-                       "You have another first run going. pool runs one first run per person at a time, because a "
-                       "first run takes all the free memory of a computer.",
+                       "Its submitter has another first run going. pool runs one first run per person at a time, "
+                       "because a first run takes all the free memory of a computer.",
                        "It starts when the other one ends. To skip the wait, set the memory yourself (-m).")]
     return []
 

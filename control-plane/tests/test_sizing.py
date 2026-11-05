@@ -1,9 +1,10 @@
 """pool chooses the sizes a job leaves out (docs/design/pool-decides.md §4.3, §4.5, §4.7, §10)."""
 
+import asyncio
 import uuid
 
 import pytest
-from fake_agent import FREE, share
+from fake_agent import CAPS, FREE, share
 from sqlalchemy import select
 
 from pool_cp.models import Attempt, UsageLedger
@@ -156,7 +157,7 @@ async def test_out_of_memory_on_a_chosen_size_grows_it_without_counting_a_failur
         await db.refresh(a)
         assert (a.state, a.end_reason) == ("preempted", "oom_resized")
         led = (await db.execute(select(UsageLedger).where(UsageLedger.attempt_id == a.id))).scalar_one()
-        assert led.pool_paid, "a retry for pool's own guess is left out of fair share"
+        assert not led.pool_paid, "it counts for fair share unless a bigger try succeeds (it never does here)"
     assert memory == [1280, 2560, 5120]
     tasks = await coord.get(f"/api/v1/jobs/{job['id']}/tasks")
     assert tasks[0]["state"] == "pending" and tasks[0]["failures"] == 0
@@ -171,7 +172,7 @@ async def test_out_of_memory_on_a_chosen_size_grows_it_without_counting_a_failur
     await agent.close()
 
 
-async def test_a_first_run_out_of_memory_waits_for_a_bigger_computer(group_with_device, db, settings):
+async def test_a_first_run_out_of_memory_waits_for_a_bigger_computer(group_with_device, db, enrolled):
     coord, g, agent = await group_with_device()
     job = await submit(coord, g, short())
     await agent.connect([share(g)])
@@ -183,11 +184,17 @@ async def test_a_first_run_out_of_memory_waits_for_a_bigger_computer(group_with_
     assert j["requested"]["memory_mb"] is None and j["requested"]["first_run"] is True, "all free memory, no number"
     assert "waits for a computer with more" in j["sizing"]["reasons"][-1]
     assert isinstance(await agent.ready(), pm.NoWork), "the same free memory is not enough"
+    assert isinstance(await agent.ready(free={**FREE, "memory_mb": 49152}), pm.NoWork), \
+        "claiming more free memory than the computer has does not help"
     waiting = await coord.get(f"/api/v1/jobs/{job['id']}/waiting")
     assert "ran out of memory with all the free memory" in waiting["reasons"][0]["message"]
-    bigger = await agent.ready(free={**FREE, "memory_mb": 49152})
-    assert (await offer_spec(agent, bigger)).resources.memory_mb == 49152
+    big = await enrolled(coord, "big")
+    await coord.req("PUT", f"/api/v1/devices/{big.device_id}/shares/{g}", expect=200)
+    await big.connect([share(g)], caps={**CAPS, "memory_mb": 65536})
+    bigger = await big.ready(free={**FREE, "memory_mb": 49152})
+    assert (await offer_spec(big, bigger)).resources.memory_mb == 49152
     await agent.close()
+    await big.close()
 
 
 async def test_out_of_time_on_a_chosen_limit_doubles_it(group_with_device, db):
@@ -238,3 +245,109 @@ async def test_an_old_out_of_memory_run_does_not_count_after_a_good_one():
     assert sizes["memory_mb"] == 5120 and "used at most" in why["memory"]
     sizes, why = sizing._from_runs(list(reversed(newest_first)))
     assert sizes["memory_mb"] == 8192 and "ran out of memory" in why["memory"]
+
+
+# ---- from the security review of step B ----
+
+async def test_a_run_with_one_reading_does_not_break_sizing(group_with_device, db):
+    """One reading means no CPU figure (avg_cpu None): learning and the next submit must still work."""
+    coord, g, agent = await group_with_device()
+    await submit(coord, g, short(parts=2))
+    await agent.connect([share(g)])
+    offer = await agent.ready()
+    assert (await agent.run_task(offer, usage=usage(samples=1))).accepted, "the commit is not lost"
+    job = await submit(coord, g, short())
+    j = await coord.get(f"/api/v1/jobs/{job['id']}")
+    assert j["sizing"]["first_run"] is False and j["requested"]["cpu"] == 1.0
+    await agent.close()
+
+
+async def test_other_parts_start_when_part_0_fails_without_a_result(group_with_device, db):
+    coord, g, agent = await group_with_device()
+    job = await submit(coord, g, short(parts=2, retries=0))
+    await agent.connect([share(g)])
+    first = await agent.ready()
+    await agent.send(pm.Abort(attempt_id=first.attempt_id, epoch=first.epoch, reason="runtime_error",
+                              detail="pull access denied"))
+    await asyncio.sleep(0.2)
+    nxt = await agent.ready()
+    assert isinstance(nxt, pm.Offer) and agent.open_envelope(nxt).spec.task_index == 1, \
+        "part 0 ended, so the other parts may start (as first runs)"
+    assert job["id"]
+    await agent.close()
+
+
+async def test_a_first_run_gets_the_groups_share_not_the_devices_claim(group_with_device, db):
+    coord, g, agent = await group_with_device()
+    await submit(coord, g, short())
+    small = {**share(g), "limits": {**share(g)["limits"], "memory_mb": 4096}}
+    await agent.connect([small])
+    offer = await agent.ready(free={**FREE, "memory_mb": 10**6})
+    assert (await offer_spec(agent, offer)).resources.memory_mb == 4096
+    await agent.close()
+
+
+async def test_numbers_from_one_odd_device_or_capped_runs_are_not_believed():
+    def run(peak, device, capped=()):
+        return sizing.Run(usage={**usage(peak=peak), "capped": list(capped)}, cpu=1, memory_mb=1 << 20,
+                          command=[], args=[], device_id=device)
+
+    a, b = uuid.uuid4(), uuid.uuid4()
+    sizes, _ = sizing._from_runs([run(10**6, a), run(1000, b), run(1200, b)])
+    assert sizes["memory_mb"] == 1536, "the device far above the others is ignored: 1200 × 1.25"
+    sizes, _ = sizing._from_runs([run(10**6, a, capped=["image_mb"]), run(1000, b)])
+    assert sizes["memory_mb"] == 1280
+    sizes, why = sizing._from_runs([run(1000, b)], sizing.Ceiling(memory_mb=1024))
+    assert sizes["memory_mb"] == 1024 and "biggest computer" in why["memory"]
+
+
+async def test_parts_out_of_memory_together_use_one_growth_step(group_with_device, db):
+    coord, g, agent = await group_with_device()
+    await submit(coord, g, short())
+    await agent.connect([share(g)])
+    assert (await agent.run_task(await agent.ready(), usage=usage(peak=1000))).accepted  # learn 1280 MiB
+    job = await submit(coord, g, short(parts=2))
+    one, two = await agent.ready(), await agent.ready()
+    for offer in (one, two):
+        assert (await offer_spec(agent, offer)).resources.memory_mb == 1280
+    for offer in (one, two):
+        assert (await agent.run_task(offer, exit_code=137, usage=usage(peak=1280, oom=True))).accepted
+    j = await coord.get(f"/api/v1/jobs/{job['id']}")
+    assert j["sizing"]["steps"] == 1 and j["requested"]["memory_mb"] == 2560
+    tasks = await coord.get(f"/api/v1/jobs/{job['id']}/tasks")
+    assert all(t["failures"] == 0 and t["state"] == "pending" for t in tasks)
+    await agent.close()
+
+
+async def test_tries_pool_caused_count_for_fair_share_until_the_bigger_size_works(group_with_device, db):
+    coord, g, agent = await group_with_device()
+    await submit(coord, g, short())
+    await agent.connect([share(g)])
+    assert (await agent.run_task(await agent.ready(), usage=usage(peak=1000))).accepted
+    await submit(coord, g, short())
+    small = await agent.ready()
+    assert (await agent.run_task(small, exit_code=137, usage=usage(peak=1280, oom=True))).accepted
+    led = (await db.execute(select(UsageLedger).where(UsageLedger.attempt_id == uuid.UUID(small.attempt_id))))
+    assert led.scalar_one().pool_paid is False, "counted until a bigger try succeeds"
+    assert (await agent.run_task(await agent.ready(), usage=usage(peak=2000))).accepted
+    db.expire_all()
+    led = (await db.execute(select(UsageLedger).where(UsageLedger.attempt_id == uuid.UUID(small.attempt_id))))
+    assert led.scalar_one().pool_paid is True
+    await agent.close()
+
+
+async def test_reasons_are_for_the_submitter_and_managers(group_with_device, user):
+    coord, g, agent = await group_with_device()
+    other = await user()
+    invite = (await coord.post(f"/api/v1/groups/{g}/invites", {"role": "member"}, expect=201)).json()
+    await other.post("/api/v1/invites/accept", {"token": invite["token"]}, expect=200)
+    job = await submit(other, g, short())
+    assert "reasons" in (await other.get(f"/api/v1/jobs/{job['id']}"))["sizing"]
+    assert "reasons" in (await coord.get(f"/api/v1/jobs/{job['id']}"))["sizing"]
+    third = await user()
+    invite = (await coord.post(f"/api/v1/groups/{g}/invites", {"role": "member"}, expect=201)).json()
+    await third.post("/api/v1/invites/accept", {"token": invite["token"]}, expect=200)
+    seen = (await third.get(f"/api/v1/jobs/{job['id']}"))["sizing"]
+    assert "reasons" not in seen and seen["first_run"] is True
+    assert all("reasons" not in (j["sizing"] or {}) for j in await third.get(f"/api/v1/groups/{g}/jobs"))
+    await coord.post(f"/api/v1/groups/{g}/jobs", short(time_limit=0), expect=422)

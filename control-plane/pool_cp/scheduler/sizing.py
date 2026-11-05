@@ -23,7 +23,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import Attempt, Group, Job, Task
+from ..models import Attempt, Device, DeviceShare, Group, Job, Task
 
 FIRST_RUN_PLACEHOLDER_MB = 256  # for matching only: a first run gets the computer's whole free memory
 MIN_MEMORY_MB = 128
@@ -36,6 +36,10 @@ MAX_TIME_S = 7 * 24 * 3600
 MAX_CPU = 16.0
 MAX_GROWTH_STEPS = 3
 HISTORY_ROWS = 200
+# Hard ceilings, whatever any device claims: they keep every number inside the database's 32-bit columns.
+CEILING_MEMORY_MB = 1 << 22  # 4 TiB
+CEILING_DISK_MB = 1 << 26  # 64 TiB
+OUTLIER = 2.0  # a device whose runs peaked this many times above all other devices' runs is not believed
 RUNS_USED = 10
 CPU_BOUND = 0.85  # a run that used this share of its CPU on average could have used more
 
@@ -84,6 +88,38 @@ class Run:
     memory_mb: int
     command: Any
     args: Any
+    device_id: uuid.UUID | None = None
+
+
+@dataclass
+class Ceiling:
+    """The biggest task the group's computers can take: learned sizes never go above it (§4.3)."""
+
+    memory_mb: int = CEILING_MEMORY_MB
+    disk_mb: int = CEILING_DISK_MB
+    cpu: float = MAX_CPU
+
+
+async def group_ceiling(s: AsyncSession, group: Group) -> Ceiling:
+    """The most memory, disk and CPU one computer shared with the group offers (its share, within the computer)."""
+    rows = (await s.execute(
+        select(Device).join(DeviceShare, DeviceShare.device_id == Device.id)
+        .where(DeviceShare.group_id == group.id, DeviceShare.enabled, DeviceShare.removed.is_(False),
+               Device.state == "active"))).scalars().all()
+    memory = disk = 0
+    cpu = 0.0
+    for d in rows:
+        caps = d.capabilities or {}
+        share = next((r for r in d.reported_shares or [] if r.get("group") == group.name), None) or {}
+        limits = share.get("limits") or {}
+        mem = int(limits.get("memory_mb") or 0)
+        if caps.get("memory_mb"):
+            mem = min(mem, int(caps["memory_mb"]))
+        memory = max(memory, mem)
+        disk = max(disk, int(limits.get("disk_mb") or 0))
+        cpu = max(cpu, float(caps.get("cpu_cores") or 0) * float(limits.get("cpu_percent") or 0) / 100)
+    return Ceiling(memory_mb=min(memory or CEILING_MEMORY_MB, CEILING_MEMORY_MB),
+                   disk_mb=min(disk or CEILING_DISK_MB, CEILING_DISK_MB), cpu=min(cpu or MAX_CPU, MAX_CPU))
 
 
 @dataclass
@@ -97,22 +133,36 @@ class Decision:
 
 async def _history(s: AsyncSession, user_id: uuid.UUID, image: str) -> list[Run]:
     rows = (await s.execute(
-        select(Attempt.usage, Attempt.resources, Job.cpu, Job.memory_mb, Job.image, Job.spec)
+        select(Attempt.usage, Attempt.resources, Attempt.device_id, Job.cpu, Job.memory_mb, Job.image, Job.spec)
         .join(Task, Task.id == Attempt.task_id).join(Job, Job.id == Task.job_id)
         .where(Job.submitter_id == user_id, Attempt.usage.isnot(None))
         .order_by(Attempt.ended_at.desc().nulls_last()).limit(HISTORY_ROWS)
     )).all()
     repo = repository(image)
     runs = []
-    for usage, given, cpu, memory_mb, job_image, spec in rows:
+    for usage, given, device_id, cpu, memory_mb, job_image, spec in rows:
         if repository(job_image) != repo:
             continue
         given = given or {}
         inner = (spec or {}).get("spec") or {}
         runs.append(Run(usage=usage, cpu=float(given.get("cpu") or cpu),
                         memory_mb=int(given.get("memory_mb") or memory_mb),
-                        command=inner.get("command") or [], args=inner.get("args") or []))
+                        command=inner.get("command") or [], args=inner.get("args") or [], device_id=device_id))
     return runs
+
+
+def _believable(runs: list[Run]) -> list[Run]:
+    """Runs whose numbers pool trusts (§9): none the server had to cap, and no device far above all others."""
+    runs = [r for r in runs if not r.usage.get("capped")]
+    peaks: dict[Any, float] = {}
+    for r in runs:
+        if r.usage.get("samples"):
+            peaks[r.device_id] = max(peaks.get(r.device_id, 0.0), float(r.usage.get("peak_memory_mb") or 0))
+    if len(peaks) < 2:
+        return runs
+    odd = {d for d, peak in peaks.items()
+           if peak > OUTLIER * max((p for other, p in peaks.items() if other != d), default=0.0)}
+    return [r for r in runs if r.device_id not in odd]
 
 
 def _closest(runs: list[Run], command: Any, args: Any) -> tuple[list[Run], str | None]:
@@ -130,8 +180,14 @@ def _runs_text(n: int) -> str:
     return "your last run" if n == 1 else f"your last {n} runs"
 
 
-def _from_runs(runs: list[Run]) -> tuple[dict[str, Any], dict[str, str]]:
-    """Sizes and reasons from earlier runs (at least one)."""
+def _from_runs(runs: list[Run], ceiling: Ceiling | None = None) -> tuple[dict[str, Any], dict[str, str]]:
+    """Sizes and reasons from earlier runs (at least one), never above the group's biggest computer."""
+    ceiling = ceiling or Ceiling()
+    runs = _believable(runs) or runs[:0]
+    if not runs:
+        return {"cpu": 1.0, "memory_mb": UNMEASURED_MEMORY_MB, "disk_mb": MIN_DISK_MB, "max_runtime_s": MIN_TIME_S}, {
+            "memory": "the earlier runs' numbers were not believable", "cpu": "nothing measured yet",
+            "disk": "the smallest size", "time_limit": "the shortest limit"}
     measured = [r for r in runs if r.usage.get("samples", 0) > 0]
     n = len(runs)
     sizes: dict[str, Any] = {}
@@ -149,16 +205,17 @@ def _from_runs(runs: list[Run]) -> tuple[dict[str, Any], dict[str, str]]:
     else:
         sizes["memory_mb"] = UNMEASURED_MEMORY_MB
         why["memory"] = f"{_runs_text(n).capitalize()} ended too quickly to measure"
-    # CPU.
-    if measured:
-        last = measured[0]
-        avg = max(r.usage.get("avg_cpu", 0.0) for r in measured)
-        if last.usage.get("avg_cpu", 0.0) >= CPU_BOUND * last.cpu:
+    # CPU: only runs long enough to have a CPU figure (two readings or more).
+    with_cpu = [r for r in measured if r.usage.get("avg_cpu") is not None]
+    if with_cpu:
+        last = with_cpu[0]
+        avg = max(float(r.usage["avg_cpu"]) for r in with_cpu)
+        if float(last.usage["avg_cpu"]) >= CPU_BOUND * last.cpu:
             sizes["cpu"] = min(MAX_CPU, last.cpu * 2)
             why["cpu"] = f"your last run used all of its {cpu_text(last.cpu)}"
         else:
             sizes["cpu"] = min(MAX_CPU, max(0.5, _ceil_half(avg * 1.2)))
-            why["cpu"] = f"{_runs_text(len(measured))} used {avg:g} CPU on average"
+            why["cpu"] = f"{_runs_text(len(with_cpu))} used {avg:g} CPU on average"
     else:
         sizes["cpu"] = 1.0
         why["cpu"] = "nothing measured yet"
@@ -171,6 +228,14 @@ def _from_runs(runs: list[Run]) -> tuple[dict[str, Any], dict[str, str]]:
     longest = max((r.usage.get("wall_seconds", 0.0) for r in runs), default=0.0)
     sizes["max_runtime_s"] = min(MAX_TIME_S, max(MIN_TIME_S, _round_up(longest * 3, 60)))
     why["time_limit"] = f"3 × your longest run ({time_text(longest)})"
+    # Never more than the biggest computer the group has (§4.3).
+    for key, top in (("memory_mb", ceiling.memory_mb), ("disk_mb", ceiling.disk_mb)):
+        if sizes[key] > top:
+            sizes[key] = top
+            why[key.split("_")[0]] += f", but the biggest computer in the group offers {size_text(top)}"
+    if sizes["cpu"] > ceiling.cpu:
+        sizes["cpu"] = max(0.5, math.floor(ceiling.cpu * 2) / 2)
+        why["cpu"] += f", but the biggest computer in the group offers {ceiling.cpu:g} CPU"
     return sizes, why
 
 
@@ -185,7 +250,7 @@ async def decide(s: AsyncSession, *, user_id: uuid.UUID, group: Group, image: st
         runs, match = _closest(await _history(s, user_id, image), command, args)
     first_run = "memory" in auto and not runs
     if runs:
-        sizes, why = _from_runs(runs)
+        sizes, why = _from_runs(runs, await group_ceiling(s, group))
     else:
         sizes = {"cpu": 1.0, "memory_mb": FIRST_RUN_PLACEHOLDER_MB, "disk_mb": FIRST_RUN_DISK_MB,
                  "max_runtime_s": group.default_time_limit_s}
@@ -219,11 +284,12 @@ async def decide(s: AsyncSession, *, user_id: uuid.UUID, group: Group, image: st
 
 
 def attempt_resources(job: Job, spec_max_runtime_s: int, free_memory_mb: int | None) -> dict[str, Any]:
-    """What one attempt is given: the job's sizes, and on a first run all the computer's free memory."""
+    """What one attempt is given: the job's sizes, and on a first run all the free memory the computer offers
+    this group (`free_memory_mb`, which the caller works out from the group's share, not the device's claim)."""
     first_run = bool((job.sizing or {}).get("first_run"))
     memory = job.memory_mb
     if first_run and free_memory_mb:
-        memory = max(job.memory_mb, int(free_memory_mb))
+        memory = min(max(job.memory_mb, int(free_memory_mb)), CEILING_MEMORY_MB)
     return {"cpu": job.cpu, "memory_mb": memory, "disk_mb": job.disk_mb,
             "max_runtime_s": job.max_runtime_s or spec_max_runtime_s, "first_run": first_run}
 
@@ -235,14 +301,23 @@ def _note(job: Job, reason: str, **changes: Any) -> None:
     job.sizing = sizing
 
 
-def learn_first_run(job: Job, usage: dict[str, Any] | None, given: dict[str, Any], part: int, parts: int) -> None:
-    """Size the job's other tasks from its first measured run (part 0 first, §4.5)."""
+def learn_first_run(job: Job, usage: dict[str, Any] | None, given: dict[str, Any], part: int, parts: int,
+                    observed_s: float = 0.0, ceiling: Ceiling | None = None) -> None:
+    """Size the job's other tasks from its first measured run (part 0 first, §4.5). Without a measurement (an
+    older agent, or one the server could not use) nothing is learned: the other parts run as first runs too."""
     sizing = job.sizing or {}
     if not sizing.get("first_run"):
         return
-    run = Run(usage=usage or {"samples": 0}, cpu=float(given.get("cpu") or job.cpu),
+    if not usage or usage.get("capped"):
+        if not sizing.get("unmeasured_noted"):
+            _note(job, f"Part {part} sent no measurement pool can use: the other parts run as first runs too.",
+                  unmeasured_noted=True)
+        return
+    # The run took at least as long as the server saw it run.
+    usage = {**usage, "wall_seconds": max(float(usage.get("wall_seconds") or 0), observed_s)}
+    run = Run(usage=usage, cpu=float(given.get("cpu") or job.cpu),
               memory_mb=int(given.get("memory_mb") or job.memory_mb), command=None, args=None)
-    sizes, _ = _from_runs([run])
+    sizes, _ = _from_runs([run], ceiling)
     auto = sizing.get("auto", [])
     if "memory" in auto:
         job.memory_mb = sizes["memory_mb"]
@@ -254,8 +329,9 @@ def learn_first_run(job: Job, usage: dict[str, Any] | None, given: dict[str, Any
         job.max_runtime_s = sizes["max_runtime_s"]
     who = "It" if parts == 1 else f"Part {part}"
     if usage and usage.get("samples"):
-        used = (f"{who} used {size_text(usage.get('peak_memory_mb', 0))} memory and "
-                f"{usage.get('avg_cpu', 0):g} CPU in {time_text(usage.get('wall_seconds', 0))}")
+        cpu = f" and {usage['avg_cpu']:g} CPU" if usage.get("avg_cpu") is not None else ""
+        used = (f"{who} used {size_text(usage.get('peak_memory_mb', 0))} memory{cpu} "
+                f"in {time_text(usage.get('wall_seconds', 0))}")
     else:
         used = f"{who} ended too quickly to measure"
     rest = "the next runs get" if parts == 1 else "the other parts get"
@@ -271,20 +347,30 @@ def grow(job: Job, what: str, given: dict[str, Any]) -> bool:
     if key not in sizing.get("auto", []):
         return False
     steps = int(sizing.get("steps", 0))
+    # Another part already made it bigger than this try had: pool's old guess, so not the person's failure,
+    # and no step is used (parts that run out at the same moment must not use up the steps).
+    if what == "memory":
+        had = int(given.get("memory_mb") or job.memory_mb)
+        already = job.memory_mb > had
+    else:
+        had = int(given.get("max_runtime_s") or job.max_runtime_s or MIN_TIME_S)
+        already = (job.max_runtime_s or 0) > had
+    if already:
+        return True
     if steps >= MAX_GROWTH_STEPS:
         _note(job, f"It ran out of {what} {steps + 1} times. pool stopped growing it: set the size yourself.")
         return False
     if what == "memory":
-        had = int(given.get("memory_mb") or job.memory_mb)
+        if had >= CEILING_MEMORY_MB:
+            return False
         if sizing.get("first_run"):
             # It had a whole computer's free memory: the next try needs a computer with more.
             job.memory_mb = had + 1
             reason = f"It ran out of memory at {size_text(had)}: the next try waits for a computer with more."
         else:
-            job.memory_mb = _round_up(had * 2, MEMORY_STEP_MB)
+            job.memory_mb = min(_round_up(had * 2, MEMORY_STEP_MB), CEILING_MEMORY_MB)
             reason = f"It ran out of memory at {size_text(had)}: the next try gets {size_text(job.memory_mb)}."
     else:
-        had = int(given.get("max_runtime_s") or job.max_runtime_s or MIN_TIME_S)
         if had >= MAX_TIME_S:
             return False
         job.max_runtime_s = min(MAX_TIME_S, had * 2)

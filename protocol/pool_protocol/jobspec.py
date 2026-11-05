@@ -132,6 +132,10 @@ DEFAULT_CPU = 1.0
 DEFAULT_MEMORY = "1Gi"
 DEFAULT_DISK = "1Gi"
 DEFAULT_MAX_RUNTIME = "1h"
+# The largest sizes a job may ask for: far above any computer, inside the database's 32-bit columns.
+MAX_CPU_CORES = 4096.0
+MAX_SIZE_MB = 1 << 30  # 1024 TiB, in MiB
+MAX_RUNTIME_S = 365 * 24 * 3600
 
 
 class ResourcesReq(_Strict):
@@ -479,9 +483,16 @@ def load_job_spec(data: dict[str, Any]) -> JobSpec:
             data = expand_short_form(data)
         spec = JobSpec.model_validate(data)
         # Force evaluation of derived values so bad quantities fail at submit time.
-        spec.resources()
+        res = spec.resources()
+        if res.cpu > MAX_CPU_CORES:
+            raise JobSpecError(f"cpu: at most {MAX_CPU_CORES:g} cores")
+        for what, mb in (("memory", res.memory_mb), ("disk", res.disk_mb)):
+            if mb > MAX_SIZE_MB:
+                raise JobSpecError(f"{what}: at most {MAX_SIZE_MB >> 20} TiB")
         if spec.spec.max_runtime is not None:
-            parse_duration_s(spec.spec.max_runtime)
+            seconds = parse_duration_s(spec.spec.max_runtime)
+            if not 1 <= seconds <= MAX_RUNTIME_S:
+                raise JobSpecError("time_limit: between 1 second and 365 days, e.g. 30m or 2h")
         if spec.spec.checkpoint:
             parse_duration_s(spec.spec.checkpoint.every)
     except JobSpecError:

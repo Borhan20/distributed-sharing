@@ -70,7 +70,7 @@ def _requested(job: Job) -> dict[str, Any]:
             "gpus": job.gpus, "time_limit_s": limit, "first_run": first_run}
 
 
-async def _job_out(s: AsyncSession, job: Job, with_spec: bool = False) -> JobOut:
+async def _job_out(s: AsyncSession, job: Job, with_spec: bool = False, show_reasons: bool = True) -> JobOut:
     counts = dict(
         (await s.execute(select(Task.state, func.count()).where(Task.job_id == job.id).group_by(Task.state))).all()
     )
@@ -90,7 +90,9 @@ async def _job_out(s: AsyncSession, job: Job, with_spec: bool = False) -> JobOut
         tasks=counts,
         spec=job.spec if with_spec else None,
         requested=_requested(job),
-        sizing=job.sizing,
+        # The reasons quote the submitter's runs in all their groups: only for them and the group's managers.
+        sizing=job.sizing if show_reasons or not job.sizing else
+        {k: v for k, v in job.sizing.items() if k in ("auto", "first_run", "steps")},
         used=summary_from_row((await s.execute(text(SUMMARY_SQL), {"job": job.id})).first()) if with_spec else None,
     )
 
@@ -263,12 +265,12 @@ async def list_jobs(
     s: AsyncSession = Depends(get_session),
 ):
     g = await load_group(s, name)
-    await require_role(s, g, p, ANY_MEMBER, require_active=False)
+    m = await require_role(s, g, p, ANY_MEMBER, require_active=False)
     q = select(Job).where(Job.group_id == g.id)
     if state:
         q = q.where(Job.state == state)
     rows = (await s.execute(q.order_by(Job.created_at.desc()).limit(min(limit, 500)))).scalars().all()
-    return [await _job_out(s, j) for j in rows]
+    return [await _job_out(s, j, show_reasons=j.submitter_id == p.user.id or m.role in MANAGERS) for j in rows]
 
 
 async def _load_job(s: AsyncSession, job_id: uuid.UUID, p: Principal) -> tuple[Job, Group, str]:
@@ -284,8 +286,8 @@ async def _load_job(s: AsyncSession, job_id: uuid.UUID, p: Principal) -> tuple[J
 
 @router.get("/jobs/{job_id}", response_model=JobOut)
 async def get_job(job_id: uuid.UUID, p: Principal = Depends(current_principal), s: AsyncSession = Depends(get_session)):
-    job, _, _ = await _load_job(s, job_id, p)
-    return await _job_out(s, job, with_spec=True)
+    job, _, role = await _load_job(s, job_id, p)
+    return await _job_out(s, job, with_spec=True, show_reasons=job.submitter_id == p.user.id or role in MANAGERS)
 
 
 class WaitingReason(BaseModel):

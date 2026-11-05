@@ -376,6 +376,22 @@ run times for "fast for this image" ([§4.4](#44-choose-the-computer)).
 | Each attempt's size | Stored on the attempt (`attempts.resources`) and put into the signed task envelope | The job's sizes can change while it runs; the device only ever gets concrete numbers. |
 | Reasons | `jobs.sizing.reasons`: one line per size at submit, more lines when pool grows or learns. `decided` marks where the later ones start. | §4.9. Shown by `pool run`, `pool submit`, `pool attach` and the job page. |
 
+**Changed after the security review of step B:**
+
+| Problem found | Now |
+|---|---|
+| Part 0 of a first run failed without a result (e.g. its image could not be pulled): the other parts waited for ever, and such jobs took the scheduler's slots | Once part 0 has ended in any way, the other parts may start (as first runs). A job is only ranked when it has a task it may start now. |
+| A run with one reading has no CPU figure, and sizing crashed on it (submit gave an error, the device's connection dropped) | CPU comes only from runs with a figure. Sizing errors are logged and never cost a result. One message the server cannot handle no longer drops the device's connection. |
+| A first run took the free memory the device claimed | It gets at most the device's share for that group, minus what that group's tasks already hold there. A device whose share is too small is skipped. |
+| A dishonest device could make sizes huge | Learned sizes never go above the biggest computer shared with the group. Runs with capped numbers are ignored, and so is a device whose runs peaked more than 2 × above every other device. Image sizes are capped at 1 TiB. |
+| Tries pool caused were left out of fair share at once, so timing out on purpose avoided fair share | They count until a try with the bigger size succeeds; then they leave fair share. Cancelled runs now count too. |
+| Parts that ran out of memory together used up the growth steps | A try with a size already grown by another part counts as pool's, without a step. |
+| Sizing reasons showed numbers from the submitter's other groups to everyone | Only the submitter and the group's coordinators and admins see the reasons. |
+| An explicit time limit of 0, a negative one, or huge sizes gave a server error | They are refused with a plain message (1 s to 365 days; at most 4096 CPUs, 1024 TiB). |
+
 Not built in step B: CPU above the reserved amount (needs one parent control
-group per computer), "stuck" detection, `--dry-run`, and growing the disk.
+group per computer), "stuck" detection, `--dry-run`, growing the disk, and an
+owner's maximum time limit (the agent has none yet; pool's own limits stop at
+7 days). "One first run per person" can let two through when two computers ask
+at the same moment.
 

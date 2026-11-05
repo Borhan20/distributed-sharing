@@ -21,6 +21,7 @@ WALL_SLACK_S = 60.0
 # Docker's CPU percentage goes a little over the --cpus limit now and then (101% for 1 CPU). Values are still
 # capped at the limit, but only ones more than this far over are listed as odd.
 FLAG_TOLERANCE = 1.10
+MAX_IMAGE_MB = 1 << 20  # 1 TiB: no real image is bigger; the size feeds the disk pool chooses
 
 
 def bounded_usage(raw: pm.RunUsage, *, cpu: float, memory_mb: int, disk_mb: int, exit_code: int,
@@ -40,6 +41,7 @@ def bounded_usage(raw: pm.RunUsage, *, cpu: float, memory_mb: int, disk_mb: int,
     cpu_seconds = cap("cpu_seconds", raw.cpu_seconds, wall * cpu, FLAG_TOLERANCE)
     peak_memory = cap("peak_memory_mb", raw.peak_memory_mb, memory_mb)
     output_bytes = cap("output_bytes", raw.output_bytes, disk_mb * 1024 * 1024)
+    image_mb = cap("image_mb", raw.image_mb, MAX_IMAGE_MB)
     # The kernel kills a process that goes over the limit, so the run cannot have ended well. A child killed
     # while the main program succeeded does not count: the task did not fail for lack of memory.
     oom = bool(raw.oom_killed) and exit_code != 0
@@ -51,7 +53,7 @@ def bounded_usage(raw: pm.RunUsage, *, cpu: float, memory_mb: int, disk_mb: int,
         "peak_cpu": round(peak_cpu, 2),
         "wall_seconds": round(wall, 2),
         "output_bytes": int(output_bytes),
-        "image_mb": int(raw.image_mb),
+        "image_mb": int(image_mb),
         "oom_killed": oom,
         "samples": int(raw.samples),
         # Numbers the device reported above the limits: odd for an honest device, so they are kept visible.
