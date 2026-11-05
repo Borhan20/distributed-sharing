@@ -865,7 +865,8 @@ ran it.
 - Checkpoints (resuming a long task where it stopped) are planned.
 - Combining results runs on your side (the results table, the merged CSV files, or your own script). A final step that runs on the group's computers after all tasks is not built.
 - Apps that listen on a port (web apps, APIs, databases, notebooks) do not work yet, and there is no interactive terminal. Programs that compute and write files work now. Apps are planned ([design](design/pool-run.md)).
-- You must choose the size of each task (CPU, memory, disk, time). A design where pool measures and chooses it by itself is proposed in [`design/pool-decides.md`](design/pool-decides.md).
+- You must choose the size of each task (CPU, memory, disk, time). A design where pool measures and chooses it by itself is agreed, not built: [`design/pool-decides.md`](design/pool-decides.md).
+- There are no credits yet: sharing a computer does not give you more use. A design is proposed: [`design/credits.md`](design/credits.md).
 - Computers are not yet matched to the image's platform: build for the kind of computer your group has (`--platform`, default `linux/amd64`).
 - `parts` splits work only for programs that can do part of it (by `POOL_TASK_INDEX`); one program cannot be spread over several computers, since tasks cannot talk to each other.
 - GPUs and stronger isolation (gVisor) are built but not tested on real hardware.

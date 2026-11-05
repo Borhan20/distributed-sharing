@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposal. Not agreed yet. Nothing here is built. |
+| **Status** | Accepted on 6 November 2026, with the decisions in [§10](#10-decisions). Nothing here is built yet. |
 | **Date** | 6 November 2026 |
 | **Builds on** | [`pool run`](pool-run.md) (step 1 built), plan §7.7 (scheduler and fair share) |
 
@@ -25,7 +25,7 @@ It should feel like your own computer: `docker run IMAGE` becomes
 1. **One input.** Only the image is required. Everything else is optional.
 2. **Measure, do not guess.** Sizes come from real runs, not from forms.
 3. **A wrong guess is pool's problem, not yours.** When a run fails because pool chose too little, pool tries again with more. That retry does not count as your failure, and its time does not count against your fair share.
-4. **Explain every decision.** For example: "Memory 2 GiB: the last 5 runs of this image used at most 1.4 GiB."
+4. **Explain every decision.** For example: "Memory 2 GiB: your last 5 runs of this image used at most 1.4 GiB."
 5. **What you give is kept.** pool never changes a value you set. It only tells you when the value looks wrong.
 6. **Owners stay in control.** No decision goes beyond what a computer's owner allows.
 7. **Simple rules first.** Measurements and rules that a person can check. No black-box model. Machine learning for predictions is a later option, once there is enough data.
@@ -36,13 +36,11 @@ It should feel like your own computer: `docker run IMAGE` becomes
 
 ```text
 $ pool run ghcr.io/you/simulation:3
-pool: First run of this image. Starting with 1 CPU (more if the computer is free), 2 GiB memory.
-pool: Running on lab-pc.
-...
-pool: Out of memory at 2 GiB. Trying again with 4 GiB on lab-pc-2. This does not count as a failure.
+pool: Your first run of this image. Running on lab-pc, the computer with the most free memory:
+pool:   12 GiB memory, 1 CPU (more when the computer is free), time limit 4 h (the group's default).
 ...
 pool: Done in 12 min. It used 3.1 GiB memory, 3.8 CPUs, 400 MB disk.
-pool: Saved for next time: 4 CPUs, 4 GiB memory, time limit 40 min.
+pool: Saved for your next runs: 4 CPUs, 4 GiB memory, time limit 40 min.
 pool: 3 file(s) saved to pool-out/
 ```
 
@@ -50,7 +48,7 @@ pool: 3 file(s) saved to pool-out/
 
 ```text
 $ pool run ghcr.io/you/simulation:3
-pool: Size from 1 earlier run: 4 CPUs, 4 GiB memory, time limit 40 min.
+pool: Size from your 1 earlier run: 4 CPUs, 4 GiB memory, time limit 40 min.
 pool: Running on lab-pc (it has this image already, so it starts at once).
 ```
 
@@ -82,10 +80,10 @@ pool: 14 of 14 done in 9 min. Part 6 was slow on lab-old; a copy on lab-pc-2 fin
 |---|---|---|
 | Image | required | – |
 | Command, arguments | `--entrypoint`, words after the image | the image's own command |
-| CPU | `--cpus` | earlier runs ([§4.3](#43-choose-the-size)) |
-| Memory | `-m` | earlier runs; on a first run, a start size that grows |
-| Disk | `--disk` | image size plus what earlier runs wrote |
-| Time limit | `--time-limit` | earlier runs; on a first run, the owner's maximum |
+| CPU | `--cpus` | your earlier runs ([§4.3](#43-choose-the-size)) |
+| Memory | `-m` | your earlier runs; on your first run, the most a free computer offers |
+| Disk | `--disk` | image size plus what your earlier runs wrote |
+| Time limit | `--time-limit` | your earlier runs; on your first run, the group's default time limit |
 | GPU | `--gpus` | whether the image is built for NVIDIA CUDA ([§4.1](#41-read-the-image-before-it-runs)) |
 | Ports | `-p` | the image's `EXPOSE` lines, or `ports:` in `compose.yaml` |
 | Program or app | – | with ports: an app, runs until you stop it. Without: a program, runs until it ends. |
@@ -133,17 +131,22 @@ To check on the test computer: whether the kernel's "highest memory" counter
 is there (newer Linux kernels have one), or whether the agent must sample
 every few seconds.
 
-**What pool remembers it under.** A new version of your code usually needs
-about the same as the last one. So pool remembers the numbers under the image
-name and the command, not under one exact version. It uses the closest match
-that has data:
+**What pool remembers it under.** The numbers are kept **per person**
+(decided 6 November 2026). Two people who run the same image may do very
+different work with it, so one person's runs never size another person's.
+
+A new version of your code usually needs about the same as the last one. So
+pool remembers the numbers under the image name and the command, not under
+one exact version. It uses the closest match that has data, always among your
+own runs:
 
 1. the same image name, command and arguments,
 2. the same image name and command,
 3. the same image name.
 
 A general image like `python:3.12-slim` runs very different programs. That is
-why the command is part of the match.
+why the command is part of the match. With no match, it is your first run of
+this image.
 
 ### 4.3 Choose the size
 
@@ -154,10 +157,10 @@ Every resource gets two numbers, like Kubernetes' "requests" and "limits":
 
 | Resource | No earlier runs | With earlier runs | Reserved vs allowed |
 |---|---|---|---|
-| Memory | 2 GiB. On out of memory: double it and try again. | Highest use seen × 1.25 | The same. Memory cannot be shared back, so it grows by trying again, never by going over. |
+| Memory | The most a free computer offers: pool picks the shared computer with the most free memory now, and gives the task all of it, within the owner's limit. On out of memory: the next bigger computer. | Highest use seen × 1.25 | The same. Memory cannot be shared back, so it grows by moving to a bigger computer, never by going over. |
 | CPU | Reserve 1 | Average use seen, rounded up | Allowed up to the owner's CPU limit. A program that can use 8 cores gets them when the computer is free, and pool learns that. |
 | Disk | Image size + 2 GiB | Highest written × 1.5 + image size | The same. |
-| Time limit | The owner's maximum. A program with no output and no CPU use for 30 min is reported as "probably stuck". | 3 × the longest run seen, at least 30 min | – |
+| Time limit | The group's default time limit: 4 hours, unless the coordinator changes it on the group's **Settings** tab. Never more than the owner's maximum. A program with no output and no CPU use for 30 min is reported as "probably stuck". | 3 × the longest run seen, at least 30 min | – |
 
 These numbers are starting points. They will be tuned with real runs.
 
@@ -172,6 +175,13 @@ next time.
 **Growth stops.** At most 3 automatic size steps, and never above the biggest
 computer in the group that is shared now. After that, pool stops and says
 what the program needs and which computer comes closest.
+
+**A first run holds a whole computer's free memory.** That is the price of
+not asking. To keep it small:
+
+- Only one task per person runs as a first run at a time. A job with parts runs part 0 first ([§4.5](#45-split-the-work)); the others wait for its numbers.
+- Other people's tasks still use the computer's free CPU.
+- With credits on, a first run costs what it used, not what it held (see [credits](credits.md)).
 
 ### 4.4 Choose the computer
 
@@ -213,7 +223,7 @@ For a program that can be split:
 
 | What happened | How pool knows | What pool does | Your failure? |
 |---|---|---|---|
-| Out of memory, pool chose the size | Docker's `OOMKilled` mark | Tries again with twice the memory ([§4.3](#43-choose-the-size)) | No |
+| Out of memory, pool chose the size | Docker's `OOMKilled` mark | Tries again on a computer with more free memory ([§4.3](#43-choose-the-size)) | No |
 | Out of memory, you gave `-m` | Docker's `OOMKilled` mark | Stops. Says how much it reached. | Yes |
 | Out of time, pool chose the limit | time limit reached | Tries again with twice the time, up to the owner's maximum | No |
 | Disk full | "No space left on device" | Tries again with more disk | No |
@@ -314,10 +324,15 @@ Steps A and B can go before or with step 2 of `pool run`. Step C needs it.
 | A dishonest agent reports false numbers | Sizes use the middle value over several computers. Odd values from one computer are ignored. |
 | Image settings are untrusted | They only choose within the owner's limits. They never widen them. |
 | Retries on pool's wrong guess cost the group time | They do not count against you, but they do count in the group's usage, so owners see it. |
+| A first run holds a computer's whole free memory | One first run per person at a time; part 0 first for jobs with parts ([§4.3](#43-choose-the-size)). |
 
-## 10. Open questions
+## 10. Decisions
 
-1. **Start memory on a first run:** 2 GiB, or the most a free computer offers? More means fewer retries, but fewer computers fit.
-2. **Time limit when nothing is known:** the owner's maximum, or a group default (for example 4 h)?
-3. **Who learns from whom:** are the learned sizes shared by everyone in the group, or kept per person?
-4. **Credits** (earn by sharing, spend by using) are a separate design. Its open questions are still waiting for an answer.
+Made on 6 November 2026:
+
+| Question | Decision |
+|---|---|
+| Memory on a first run | The most a free computer offers ([§4.3](#43-choose-the-size)). |
+| Time limit when nothing is known | The group's default time limit, 4 hours to start with. The coordinator can change it on the group's **Settings** tab. |
+| Who learns from whom | Learned sizes are kept per person ([§4.2](#42-measure-every-run)). |
+| Credits | A separate design: [credits.md](credits.md). |

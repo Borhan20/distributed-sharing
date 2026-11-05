@@ -150,7 +150,7 @@ that were not available.
 | Examples | Done | `examples/run/`: 9 kinds of work (training, machine learning, image processing, data report, test suite with JUnit, text processing, statistics, CPU-heavy computation, simulation) in Python, Node.js, Java, R, Go and C++. Each runs with plain `pool run` (no settings) and was run with `pool run --local`; the split ones were also run as 3 parts with the same container rules |
 | Agent skill | Done | `skills/pool`: an Agent Skill (agentskills.io format) for Claude Code, Codex and Gemini CLI. Unit tests check its format and that every flag and command it names exists; an e2e test runs its workflow (check, `pool run -d`, wait, attach) |
 | Tested | Done | API tests with a registry fake that checks token signatures and access; CLI tests with a fake computer; e2e with the real registry, agent and SeaweedFS (build, push, layer reuse, refused push into another member's space, real delete, `--local`, Ctrl-C stops the container within 10 s, attach). **Needs security review** (registry sign-in and pull tokens) |
-| Not yet | – | Sizes chosen by pool (proposed: `docs/design/pool-decides.md`); ports and the tunnel (step 2), Compose (step 3), replicas (step 4); matching computers to the image's platform; registry storage in SeaweedFS (a volume for now); a storage quota per member; a push-only credential for Docker instead of the member's pool token |
+| Not yet | – | Sizes chosen by pool (design accepted: `docs/design/pool-decides.md`); ports and the tunnel (step 2), Compose (step 3), replicas (step 4); matching computers to the image's platform; registry storage in SeaweedFS (a volume for now); a storage quota per member; a push-only credential for Docker instead of the member's pool token |
 
 ## Ahead of plan (Phase 2 and later pieces already built)
 
@@ -167,7 +167,7 @@ that were not available.
 | Chaos test (agent kills, network cuts, server restarts) | Done | Protocol-level agents; plus a real-agent SIGKILL test |
 | Group expiry and templates | Partial | Expiry stops jobs; data deletion after retention not built |
 | Data classes | Partial | `confidential` → org-owned dedicated device and T2+ only |
-| Backup copies of slow tasks, credits, per-group caches | Not started | |
+| Backup copies of slow tasks, credits, per-group caches | Not started | Designs: credits in `docs/design/credits.md` (proposal), slow-task copies in `docs/design/pool-decides.md` §4.6 (accepted) |
 | Secrets, services, overlay network, Kata, T0, gang jobs | Not started (Phases 3–4) | Rejected at submit time with a clear message |
 | Fuzzing | Started | Two Go fuzz targets; CI runs them briefly |
 | Signed releases, SBOM, pen test | Not started (Phase 5) | |
