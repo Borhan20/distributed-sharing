@@ -410,6 +410,21 @@ at the same moment.
 | Ports | A reason line: "Apps that listen on a port do not work yet" | Apps come with step 2 of `pool run`. |
 | Big images | A first run's disk: about 3 × the compressed size | Unpacked layers are bigger than the download. |
 
+**Changed after the security review of step C:**
+
+| Problem found | Now |
+|---|---|
+| A registry that sends its answer very slowly could hold the server's threads and database connections (any member could point a job at one) | Each lookup has one deadline (20 s to read an image, 30 s to pin a tag), checked as each piece arrives. At most 4 image reads run at once; when busy, the read is skipped. The database connection is released before the registry is asked. |
+| Some broken answers still refused a job with a server error | Any failure while reading is logged, and the job is submitted without the image's information. |
+| Values read from an image were not checked | Platforms must look like `linux/amd64` (at most 32), ports like `8000/tcp`, sizes must be whole numbers; JSON with `Infinity` or deep nesting is refused; child digests are checked before they are fetched. |
+| A computer's CPU type reached members' terminals and suggested commands as sent | It must look like `amd64` (letters, digits, `_`, at most 16), and `pool run` only uses and prints platform names of that form. |
+| The cache was keyed by digest alone | It is keyed by registry, repository and digest. |
+| Reading a config from the group's own registry followed redirects with its token | One hop, without the token, and the config is checked against its digest. |
+
+Docker Hub counts manifest reads against the stored account's pull allowance;
+pool reads each image once (the cache), and the computers' pulls use the same
+allowance.
+
 Not built in step C: using the health check (it matters for apps), and
 checking that an image's architecture matches a computer's CPU variant
 (arm/v6 vs arm/v7); the scheduler compares the CPU type only.

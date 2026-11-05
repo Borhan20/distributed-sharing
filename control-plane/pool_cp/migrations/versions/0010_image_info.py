@@ -18,12 +18,13 @@ depends_on = None
 def upgrade() -> None:
     op.add_column("jobs", sa.Column("image_info", postgresql.JSONB(astext_type=sa.Text()), nullable=True))
     op.add_column("jobs", sa.Column("architectures", postgresql.ARRAY(sa.String(length=32)), nullable=True))
+    # Keyed by registry, repository and digest: what one name says is never shown for another's image.
     op.create_table(
         "image_infos",
-        sa.Column("digest", sa.String(length=80), nullable=False),
+        sa.Column("image", sa.String(length=512), nullable=False),
         sa.Column("info", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.PrimaryKeyConstraint("digest"),
+        sa.PrimaryKeyConstraint("image"),
     )
 
 

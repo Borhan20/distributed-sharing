@@ -105,31 +105,54 @@ async def _job_out(s: AsyncSession, job: Job, with_spec: bool = False, show_reas
     )
 
 
+# Reading images talks to registries the submitter chooses: at most this many at once on this server, and never
+# for longer than the registry client's own deadline. A busy server skips the read (it is best effort).
+_READS = asyncio.Semaphore(4)
+
+
 async def _read_image(s: AsyncSession, request: Request, p: Principal, g: Group, image: str,
                       builtin: bool) -> dict[str, Any] | None:
     """What the pinned image says about itself (docs/design/pool-decides.md §4.1): platforms, CUDA, ports.
-    Read once per digest, then from the cache. Best effort: a job is never refused because this failed."""
+    Read once per image, then from the cache. Best effort: a job is never refused because this failed."""
     if "@" not in image:
         return None
-    digest = image.rsplit("@", 1)[1]
-    cached = await s.get(ImageInfoCache, digest)
+    ref = parse_image(image)
+    key = f"{ref.registry}/{ref.repository}@{image.rsplit('@', 1)[1]}"[:512]
+    cached = await s.get(ImageInfoCache, key)
     if cached is not None:
         return cached.info
     settings = request.app.state.settings
+    cred = None
+    if not builtin:
+        try:
+            cred = await credential_for(s, request.app.state.secretbox, user_id=p.user.id, group_id=g.id,
+                                        registry=ref.registry)
+        except SecretBoxError:
+            return None
+    await s.commit()  # do not hold a database connection while a registry answers
+    try:
+        await asyncio.wait_for(_READS.acquire(), timeout=2)
+    except TimeoutError:
+        log.info("too many image reads at once: %s is submitted without one", image)
+        return None
     try:
         if builtin:
             reg = builtin_registry.Registry(settings, request.app.state.registry_issuer)
             info = await asyncio.to_thread(reg.inspect, image)
         else:
-            cred = await credential_for(s, request.app.state.secretbox, user_id=p.user.id, group_id=g.id,
-                                        registry=parse_image(image).registry)
             info = await asyncio.to_thread(inspect_image, image, cred[:2] if cred else None,
                                            allow_private=settings.registry_private_networks)
-    except (RegistryError, SecretBoxError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        data = info.as_dict()
+    except Exception as exc:  # noqa: BLE001 (best effort: whatever a registry sends, the job is still submitted)
         log.info("could not read the image %s: %s", image, exc)
         return None
-    data = info.as_dict()
-    await s.execute(pg_insert(ImageInfoCache).values(digest=digest, info=data).on_conflict_do_nothing())
+    finally:
+        _READS.release()
+    try:
+        async with s.begin_nested():
+            await s.execute(pg_insert(ImageInfoCache).values(image=key, info=data).on_conflict_do_nothing())
+    except Exception:  # noqa: BLE001 (the cache is only a cache)
+        log.warning("could not cache what %s says", image, exc_info=True)
     return data
 
 

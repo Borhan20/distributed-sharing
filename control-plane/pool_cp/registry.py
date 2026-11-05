@@ -10,21 +10,27 @@ This is the registry token protocol Docker itself uses (`WWW-Authenticate: Beare
 Images named by a tag are pinned to a digest at submit time (`resolve_digest`), with a manifest HEAD request,
 which Docker Hub does not count as a pull.
 
-Every request goes through `_get`, which only contacts public addresses unless the server admin allows
-private networks (POOL_REGISTRY_PRIVATE_NETWORKS; default on in dev mode): submitters choose the registry
-host, so without this check they could make the server probe its own network. Redirects are followed only
-on the same host, so credentials never travel to another one. The address is checked before connecting; a
-DNS answer that changes between the check and the connection (rebinding) is not caught.
+Every request checks its address first (`_check_address`): only public addresses unless the server admin
+allows private networks (POOL_REGISTRY_PRIVATE_NETWORKS; default on in dev mode): submitters choose the
+registry host, so without this check they could make the server probe its own network. Redirects are
+followed only on the same host, so credentials never travel to another one; the one exception is an image's
+config file on a CDN (`_blob`): one hop, https only, public addresses only, and no token. The address is
+checked before connecting; a DNS answer that changes between the check and the connection (rebinding) is not
+caught. Each lookup has one overall deadline (`_within`), so a registry that answers slowly cannot hold the
+server's threads.
 """
 
 from __future__ import annotations
 
 import base64
+import contextvars
 import hashlib
+import http.client
 import ipaddress
 import json
 import re
 import socket
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -140,16 +146,60 @@ class _SameHostRedirects(urllib.request.HTTPRedirectHandler):
 _opener = urllib.request.build_opener(_SameHostRedirects)
 
 
+# The end of the current lookup (time.monotonic()), set by `_within`; None: only each request's own timeout.
+_deadline: contextvars.ContextVar[float | None] = contextvars.ContextVar("registry_deadline", default=None)
+_CHUNK = 64 * 1024
+_NETWORK_ERRORS = (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException, ValueError)
+
+
+def _within(seconds: float):  # noqa: ANN202 (a decorator)
+    """Give a whole lookup (all its requests) one deadline."""
+    def wrap(fn):  # noqa: ANN001, ANN202
+        def run(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+            token = _deadline.set(time.monotonic() + seconds)
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                _deadline.reset(token)
+        return run
+    return wrap
+
+
+def _time_left(timeout: float) -> float:
+    end = _deadline.get()
+    if end is None:
+        return timeout
+    left = end - time.monotonic()
+    if left <= 0:
+        raise RegistryError("the registry is too slow to answer")
+    return min(timeout, left)
+
+
+def _read(r, limit: int) -> bytes:  # noqa: ANN001 (a response)
+    """Read at most limit + 1 bytes, in chunks, stopping at the deadline (a slow trickle cannot hold us)."""
+    out = bytearray()
+    read = getattr(r, "read1", None) or r.read  # read1: what has arrived, without waiting for a full chunk
+    while len(out) <= limit:
+        _time_left(1.0)
+        chunk = read(min(_CHUNK, limit + 1 - len(out)))
+        if not chunk:
+            break
+        out += chunk
+    return bytes(out)
+
+
 def _get(url: str, headers: dict[str, str], timeout: float, *, allow_private: bool = False,
          method: str = "GET") -> tuple[int, dict[str, str], bytes]:
     _check_address(url, allow_private)
     req = urllib.request.Request(url, headers=headers, method=method)  # noqa: S310 (scheme checked above)
     try:
-        with _opener.open(req, timeout=timeout) as r:
-            return r.status, dict(r.headers), r.read(_MAX_BODY + 1)[:_MAX_BODY]
+        with _opener.open(req, timeout=_time_left(timeout)) as r:
+            return r.status, dict(r.headers), _read(r, _MAX_BODY)[:_MAX_BODY]
     except urllib.error.HTTPError as exc:
-        return exc.code, dict(exc.headers or {}), (exc.read(_MAX_BODY) if exc.fp else b"") or b""
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        return exc.code, dict(exc.headers or {}), (_read(exc, _MAX_BODY) if exc.fp else b"") or b""
+    except RegistryError:
+        raise
+    except _NETWORK_ERRORS as exc:
         raise RegistryError(f"cannot reach the registry: {getattr(exc, 'reason', exc)}") from None
 
 
@@ -252,6 +302,7 @@ def _token_for(ref: ImageRef, credentials: tuple[str, str] | None, timeout: floa
     return token
 
 
+@_within(30)
 def resolve_digest(image: str, credentials: tuple[str, str] | None, *, timeout: float = 15,
                    allow_private: bool = False) -> str:
     """Pin a tag: 'ghcr.io/lab/app:1' -> 'ghcr.io/lab/app:1@sha256:...', the version the tag names right now.
@@ -324,11 +375,13 @@ def _fetch_once(url: str, headers: dict[str, str], timeout: float, allow_private
     _check_address(url, allow_private)
     req = urllib.request.Request(url, headers=headers)  # noqa: S310 (scheme checked above)
     try:
-        with _no_redirects.open(req, timeout=timeout) as r:
-            return r.status, dict(r.headers), r.read(_CONFIG_MAX + 1)
+        with _no_redirects.open(req, timeout=_time_left(timeout)) as r:
+            return r.status, dict(r.headers), _read(r, _CONFIG_MAX)
     except urllib.error.HTTPError as exc:
         return exc.code, dict(exc.headers or {}), b""
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+    except RegistryError:
+        raise
+    except _NETWORK_ERRORS as exc:
         raise RegistryError(f"cannot reach the registry: {getattr(exc, 'reason', exc)}") from None
 
 
@@ -346,8 +399,11 @@ def _blob(ref: ImageRef, digest: str, token: str | None, timeout: float, allow_p
     status, got, body = _fetch_once(f"{ref.api}/v2/{ref.repository}/blobs/{digest}", headers, timeout, allow_private)
     if status in _REDIRECTS:
         location = urllib.parse.urljoin(ref.api + "/", _header(got, "location"))
-        if urllib.parse.urlsplit(location).scheme != "https":
+        split = urllib.parse.urlsplit(location)
+        if split.scheme != "https":
             raise RegistryError("the registry redirected to an address that is not https")
+        if split.username or split.password or any(ord(c) < 33 or ord(c) == 127 for c in location):
+            raise RegistryError("the registry redirected to an address pool does not follow")
         status, _, body = _fetch_once(location, {}, timeout, allow_private=False)
     if status != 200:
         raise RegistryError(f"{ref.registry} answered {status} for the image's config")
@@ -372,38 +428,71 @@ class ImageInfo:
 CUDA_ENV = ("CUDA_VERSION", "NVIDIA_REQUIRE_CUDA")  # set by NVIDIA's CUDA base images (checked 6 November 2026)
 
 
-def _platform(p: dict) -> str:
-    text = f"{p.get('os', '')}/{p.get('architecture', '')}"
-    return f"{text}/{p['variant']}" if p.get("variant") else text
+_ARCH_RE = re.compile(r"^[a-z0-9_]{1,16}$")
+_PORT_RE = re.compile(r"^\d{1,5}(/(tcp|udp|sctp))?$")
+_MAX_PLATFORMS = 32
+
+
+def _platform(p: dict) -> str | None:
+    """"linux/amd64" or "linux/arm64/v8"; None for anything that is not a plain platform."""
+    if not isinstance(p, dict) or p.get("os") not in ("linux", "windows"):
+        return None
+    arch, variant = p.get("architecture"), p.get("variant")
+    if not isinstance(arch, str) or not _ARCH_RE.match(arch):
+        return None
+    if variant is not None and (not isinstance(variant, str) or not _ARCH_RE.match(variant)):
+        return None
+    return f"{p['os']}/{arch}/{variant}" if variant else f"{p['os']}/{arch}"
+
+
+def _json(body: bytes) -> dict:
+    """Strict JSON: no Infinity or NaN, bounded nesting (a hostile manifest still matches its digest)."""
+    def no_constants(name: str) -> None:
+        raise RegistryError(f"the image's metadata holds {name}")
+    try:
+        doc = json.loads(body, parse_constant=no_constants)
+    except (json.JSONDecodeError, RecursionError, UnicodeDecodeError) as exc:
+        raise RegistryError("the image's metadata is not readable JSON") from exc
+    if not isinstance(doc, dict):
+        raise RegistryError("the image's metadata is not a JSON object")
+    return doc
 
 
 def image_info(get_manifest, get_blob, digest: str) -> ImageInfo:  # noqa: ANN001 (two fetch functions)
     """Read an image by its digest with `get_manifest(reference) -> bytes` and `get_blob(digest) -> bytes`."""
-    doc = json.loads(_verified(get_manifest(digest), digest, "manifest"))
+    doc = _json(_verified(get_manifest(digest), digest, "manifest"))
     platforms: list[str] = []
     if "manifests" in doc:  # an index: one image per platform (attestations have the platform "unknown")
-        entries = [m for m in doc["manifests"] if (m.get("platform") or {}).get("os") not in (None, "unknown")]
+        entries = [m for m in doc["manifests"] if isinstance(m, dict) and _platform(m.get("platform"))
+                   and isinstance(m.get("digest"), str) and _DIGEST_RE.match(m["digest"])][:_MAX_PLATFORMS]
         if not entries:
             raise RegistryError("the image has no runnable platform")
         platforms = sorted({_platform(m["platform"]) for m in entries})
         chosen = next((m for m in entries if m["platform"].get("os") == "linux"
                        and m["platform"].get("architecture") == "amd64"), entries[0])
-        doc = json.loads(_verified(get_manifest(chosen["digest"]), chosen["digest"], "manifest"))
-    config_digest = (doc.get("config") or {}).get("digest", "")
-    if not _DIGEST_RE.match(config_digest):
+        doc = _json(_verified(get_manifest(chosen["digest"]), chosen["digest"], "manifest"))
+    config_digest = (doc.get("config") or {}).get("digest", "") if isinstance(doc.get("config"), dict) else ""
+    if not isinstance(config_digest, str) or not _DIGEST_RE.match(config_digest):
         raise RegistryError("the image's manifest names no config")
-    config = json.loads(get_blob(config_digest))
-    inner = config.get("config") or {}
+    config = _json(get_blob(config_digest))
+    inner = config.get("config") if isinstance(config.get("config"), dict) else {}
     if not platforms:
-        platforms = [_platform(config)]
-    names = {str(e).split("=", 1)[0] for e in inner.get("Env") or []}
-    test = (inner.get("Healthcheck") or {}).get("Test") or []
-    size = sum(int(layer.get("size") or 0) for layer in doc.get("layers") or [])
+        own = _platform(config)
+        platforms = [own] if own else []
+    env = inner.get("Env") if isinstance(inner.get("Env"), list) else []
+    names = {e.split("=", 1)[0] for e in env if isinstance(e, str)}
+    health = inner.get("Healthcheck") if isinstance(inner.get("Healthcheck"), dict) else {}
+    test = health.get("Test") if isinstance(health.get("Test"), list) else []
+    exposed = inner.get("ExposedPorts") if isinstance(inner.get("ExposedPorts"), dict) else {}
+    layers = doc.get("layers") if isinstance(doc.get("layers"), list) else []
+    size = sum(int(layer["size"]) for layer in layers
+               if isinstance(layer, dict) and isinstance(layer.get("size"), int) and 0 <= layer["size"] < 1 << 50)
     return ImageInfo(platforms=platforms, cuda=any(n in names for n in CUDA_ENV),
-                     ports=sorted(str(port) for port in (inner.get("ExposedPorts") or {}))[:100],
+                     ports=sorted(p for p in exposed if isinstance(p, str) and _PORT_RE.match(p))[:100],
                      healthcheck=bool(test) and test[0] != "NONE", size_mb=-(-size // (1 << 20)))
 
 
+@_within(20)
 def inspect_image(image: str, credentials: tuple[str, str] | None, *, timeout: float = 15,
                   allow_private: bool = False) -> ImageInfo:
     """Read a pinned image (name@sha256:...) from its registry. Blocking; run it in a thread."""

@@ -490,11 +490,11 @@ class CreditRequest(Base):
 
 
 class ImageInfoCache(Base):
-    """What pool read from an image, by digest: an image never changes, so it is read once (Docker Hub counts
-    every manifest read against its pull limit)."""
+    """What pool read from an image, by registry/repository@digest: an image never changes, so it is read once
+    (Docker Hub counts every manifest read against its pull limit)."""
 
     __tablename__ = "image_infos"
-    digest: Mapped[str] = mapped_column(String(80), primary_key=True)
+    image: Mapped[str] = mapped_column(String(512), primary_key=True)
     info: Mapped[dict[str, Any]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now())
 

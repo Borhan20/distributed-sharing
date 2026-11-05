@@ -365,6 +365,9 @@ def group_platform(group: str) -> str:
         kinds = cli.api("GET", f"/api/v1/groups/{group}/platforms")
     except cli.ApiError:
         kinds = []
+    # Names come from the computers themselves: use and print only ones that look like a platform.
+    kinds = [k for k in kinds if isinstance(k.get("platform"), str)
+             and re.fullmatch(r"(linux|windows)/[a-z0-9_]{1,16}", k["platform"])]
     platform = kinds[0]["platform"] if kinds else "linux/amd64"
     if len(kinds) > 1:
         _say(f"Building for {platform}, the kind most of the group's computers are; others: "

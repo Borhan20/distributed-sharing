@@ -135,3 +135,95 @@ async def test_an_image_that_cannot_be_read_still_runs(group_with_device, monkey
     await agent.connect([share(g)], caps={**CAPS, "arch": "arm64"})
     assert isinstance(await agent.ready(), pm.Offer), "unknown platforms: any computer"
     await agent.close()
+
+
+# ---- from the security review of step C ----
+
+def test_a_slow_registry_runs_out_of_time():
+    import http.server
+    import threading
+    import time as _time
+
+    class Trickle(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            self.send_response(200)
+            self.end_headers()
+            for _ in range(100):
+                self.wfile.write(b"x")
+                self.wfile.flush()
+                _time.sleep(0.1)
+
+        def log_message(self, *a):  # quiet
+            pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Trickle)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        started = _time.monotonic()
+        with pytest.raises(RegistryError, match="too slow"):
+            registry._within(1.0)(registry._fetch_once)(f"http://127.0.0.1:{srv.server_port}/", {}, 5, True)
+        assert _time.monotonic() - started < 3, "the whole lookup has one deadline, not one per byte"
+    finally:
+        srv.shutdown()
+
+
+def test_odd_metadata_is_refused_or_left_out():
+    inf, inf_d = (b'{"config": {"digest": "' + CONFIG_D.encode() + b'"}, "layers": [{"size": Infinity}]}', None)
+    inf_d = "sha256:" + hashlib.sha256(inf).hexdigest()
+    with pytest.raises(RegistryError, match="Infinity"):
+        image_info({inf_d: inf}.__getitem__, STORE.__getitem__, inf_d)
+    deep = b"[" * 100_000 + b"]" * 100_000
+    deep_d = "sha256:" + hashlib.sha256(deep).hexdigest()
+    with pytest.raises(RegistryError):
+        image_info({deep_d: deep}.__getitem__, STORE.__getitem__, deep_d)
+    config, config_d = blob({"os": "linux", "architecture": "amd64", "config": {
+        "ExposedPorts": {"8000/tcp": {}, "x" * 5000: {}, "80": {}}}})
+    image, image_d = blob({"config": {"digest": config_d},
+                           "layers": [{"size": "big"}, {"size": -5}, {"size": 2 << 20}]})
+    index, index_d = blob({"manifests": [
+        {"digest": image_d, "platform": {"os": "linux", "architecture": "amd64"}},
+        {"digest": "sha256:" + "3" * 64, "platform": {"os": "linux", "architecture": "\x1b[31mred" * 10}},
+        {"digest": "not-a-digest", "platform": {"os": "linux", "architecture": "arm64"}},
+    ]})
+    store = {index_d: index, image_d: image, config_d: config}
+    info = image_info(store.__getitem__, store.__getitem__, index_d)
+    assert info.platforms == ["linux/amd64"] and info.ports == ["80", "8000/tcp"] and info.size_mb == 2
+
+
+def test_a_redirect_with_a_user_name_is_not_followed(monkeypatch):
+    ref = registry.ImageRef(registry="registry.example.org", repository="lab/app", api="https://registry.example.org",
+                            auth_key="registry.example.org")
+    sneaky = {"Location": "https://127.0.0.1:8443@cdn.example.net/b"}
+    monkeypatch.setattr(registry, "_fetch_once", lambda url, headers, timeout, allow_private: (307, sneaky, b""))
+    with pytest.raises(RegistryError, match="does not follow"):
+        registry._blob(ref, CONFIG_D, "TOKEN", 5, True)
+
+
+@pytest.mark.asyncio
+async def test_any_failure_while_reading_still_submits(group_with_device, monkeypatch):
+    def boom(image, cred, **kw):
+        raise RecursionError("deep")
+
+    monkeypatch.setattr("pool_cp.api.jobs.inspect_image", boom)
+    coord, g, agent = await group_with_device()
+    await coord.post(f"/api/v1/groups/{g}/jobs", {"image": img()}, expect=201)
+
+
+@pytest.mark.asyncio
+async def test_the_cache_is_per_image_name(group_with_device, read_as, db):
+    coord, g, agent = await group_with_device()
+    digest = __import__("secrets").token_hex(32)
+    read_as(info(cuda=True))
+    await coord.post(f"/api/v1/groups/{g}/jobs", {"image": f"registry.example.org/lab/a:1@sha256:{digest}"},
+                     expect=201)
+    read_as(info(cuda=False))
+    job = (await coord.post(f"/api/v1/groups/{g}/jobs", {"image": f"registry.example.org/other/b:1@sha256:{digest}"},
+                            expect=201)).json()
+    assert (await coord.get(f"/api/v1/jobs/{job['id']}"))["image_info"]["cuda"] is False, \
+        "another name with the same digest is read on its own"
+
+
+def test_a_device_cannot_report_an_odd_cpu_type():
+    with pytest.raises(Exception):
+        pm.Capabilities(os="linux", arch="\x1b[2Jamd64", cpu_cores=1, memory_mb=1, disk_mb=1, tiers=["T1"])
+    assert pm.Capabilities(os="linux", arch="arm64", cpu_cores=1, memory_mb=1, disk_mb=1, tiers=["T1"]).arch == "arm64"

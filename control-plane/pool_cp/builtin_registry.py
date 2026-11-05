@@ -47,6 +47,8 @@ from .registry import (
     normalize_registry,
     parse_image,
 )
+from .registry import _fetch_once as registry_fetch_once
+from .registry import _verified as verified
 
 log = logging.getLogger("pool_cp.builtin_registry")
 
@@ -211,8 +213,20 @@ class Registry:
                 raise RegistryError(f"the group's registry answered {status}")
             return body
 
-        return image_info(lambda d: get(f"/v2/{ref.repository}/manifests/{d}", _MANIFEST_TYPES),
-                          lambda d: get(f"/v2/{ref.repository}/blobs/{d}"), digest)
+        def blob(d: str) -> bytes:
+            # Storage behind the registry (S3, MinIO) may redirect blob reads: follow one hop without the token.
+            token, _ = self.issuer.token("pool-server", scopes, ttl_s=60)
+            status, got, body = registry_fetch_once(f"{self.base}/v2/{ref.repository}/blobs/{d}",
+                                                    {"Authorization": f"Bearer {token}"}, self.timeout, True)
+            if status in (301, 302, 303, 307, 308):
+                location = next((v for k, v in got.items() if k.lower() == "location"), "")
+                status, _, body = registry_fetch_once(urllib.parse.urljoin(self.base + "/", location), {},
+                                                      self.timeout, True)
+            if status != 200:
+                raise RegistryError(f"the group's registry answered {status} for the image's config")
+            return verified(body, d, "config")
+
+        return image_info(lambda d: get(f"/v2/{ref.repository}/manifests/{d}", _MANIFEST_TYPES), blob, digest)
 
     def pin(self, image: str) -> str:
         """'host/ml-lab/alice/app:3' -> 'host/ml-lab/alice/app:3@sha256:...'."""

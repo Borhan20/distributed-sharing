@@ -119,6 +119,7 @@
           "type": "boolean"
         },
         "arch": {
+          "pattern": "^[a-z0-9_]{1,16}$",
           "title": "Arch",
           "type": "string"
         },
