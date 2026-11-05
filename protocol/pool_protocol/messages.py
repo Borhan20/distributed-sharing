@@ -296,6 +296,9 @@ class Ready(_Msg):
     type: Literal["ready"] = "ready"
     free: Resources
     tiers: list[Tier]
+    # Digests of images the computer ran recently and still has (pool-decides §4.4): a preference only.
+    images: list[Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]] = Field(default_factory=list,
+                                                                                 max_length=200)
 
 
 class Offer(_Msg):

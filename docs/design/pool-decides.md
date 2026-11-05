@@ -429,3 +429,21 @@ Not built in step C: using the health check (it matters for apps), and
 checking that an image's architecture matches a computer's CPU variant
 (arm/v6 vs arm/v7); the scheduler compares the CPU type only.
 
+### Step D: place better (built 7 November 2026)
+
+Computers ask for work, so pool picks the best task for the computer that asks:
+
+| Order | Rule | Why |
+|---|---|---|
+| 1 | The owner's group priority | As before. |
+| 2 | Members with credits before members without (credits §3.8) | As before. |
+| 3 | On a computer with a GPU: GPU work first | A GPU waiting behind CPU work is wasted. |
+| 4 | Work that needs more than half of this computer's free memory first, where it fits | A small task on the only big computer blocks the big job behind it. |
+| 5 | Fair share: least use in the last 7 days | As before. Rules 3 and 4 come before it on purpose: small and CPU work can run elsewhere. |
+| 6 | Work whose image this computer already has | The agent sends the digests of the images it ran recently (at most 100) with each request for work. No download, so it starts at once. |
+| 7 | On a computer that often loses tasks (reliability under 0.5): short work first | Fewer long tasks have to move. |
+| 8 | The oldest first | As before. |
+
+Not built in step D: "likely to stay online" from a computer's online history,
+and "fast for this image" from measured run times per computer.
+

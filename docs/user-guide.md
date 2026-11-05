@@ -146,6 +146,19 @@ size you give is kept as it is.
 | Opens ports (`EXPOSE`) | Says so. Apps that listen on a port do not work yet ([§13](#13-what-is-not-possible-yet)). |
 | Is big | A first run asks for more disk: about 3 × the download. |
 
+**Which computer.** You never choose one. When a computer asks for work, pool
+gives it the task that fits it best:
+
+1. The owner's own priority for their groups comes first.
+2. With credits, members who have credits come before those who have none.
+3. A computer with a GPU takes GPU work first.
+4. A big computer takes work that needs a big computer first (more than half of
+   its free memory).
+5. Then fair share: whoever used the least in the last 7 days.
+6. Among equals: work whose image the computer already has (it starts without a
+   download), short work on a computer that often loses its tasks, then the
+   oldest.
+
 **Each task knows its number.** In the command, `{{index}}` is the task's
 number (0, 1, 2, …) and `{{count}}` the number of tasks. Inside the container
 the same values are in the environment variables `POOL_TASK_INDEX` and
@@ -968,7 +981,7 @@ ran it.
 - Checkpoints (resuming a long task where it stopped) are planned.
 - Combining results runs on your side (the results table, the merged CSV files, or your own script). A final step that runs on the group's computers after all tasks is not built.
 - Apps that listen on a port (web apps, APIs, databases, notebooks) do not work yet, and there is no interactive terminal. Programs that compute and write files work now. Apps are planned ([design](design/pool-run.md)).
-- pool chooses sizes from your earlier runs and reads the image (its platforms, CUDA, ports), but it does not yet place tasks by best fit or merge test reports. See [`design/pool-decides.md`](design/pool-decides.md).
+- pool chooses sizes from your earlier runs, reads the image (its platforms, CUDA, ports) and places tasks where they fit best, but it does not yet merge test reports or copy slow tasks. See [`design/pool-decides.md`](design/pool-decides.md).
 - There are no credits yet: sharing a computer does not give you more use. A design is proposed: [`design/credits.md`](design/credits.md).
 - `parts` splits work only for programs that can do part of it (by `POOL_TASK_INDEX`); one program cannot be spread over several computers, since tasks cannot talk to each other.
 - GPUs and stronger isolation (gVisor) are built but not tested on real hardware.

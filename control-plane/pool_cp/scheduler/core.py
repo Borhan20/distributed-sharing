@@ -165,6 +165,9 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
         "gpu_tier": gpu_tier_rank,
         "os": caps.get("os", device.os),
         "arch": caps.get("arch") or device.arch,
+        # Placement (pool-decides §4.4): images this computer has, and whether it often loses tasks.
+        "images": list(ready.images),
+        "unreliable": (device.reliability if device.reliability is not None else 1.0) < 0.5,
         "dedicated": device.org_owned_dedicated,
         "device": device.id,
         "decline_since": now - timedelta(seconds=settings.decline_cooldown_s),
@@ -224,9 +227,17 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
                            JOIN jobs fj ON fj.id = ft.job_id
                            WHERE fj.submitter_id = j.submitter_id AND fa.state IN ('assigned', 'running')
                              AND coalesce((fa.resources->>'first_run')::boolean, false))))
-        -- Group priority, then members with credits before those without, then fair share (§3.8).
+        -- The owner's group priority; members with credits before those without (credits §3.8); then where
+        -- the work fits best (pool-decides §4.4): on a computer with a GPU, GPU work first; work that needs a
+        -- big computer (more than half of what this one has free) first where it fits; then fair share; then
+        -- tasks whose image this computer already has (no download); short tasks first on a computer that
+        -- often loses them; then the oldest.
         ORDER BY sh.prio, (g.credits_enabled AND coalesce(bal.balance, g.credit_start) <= 0),
-                 coalesce(us.cpu_s, 0), j.created_at
+                 (j.gpus > 0) DESC, (j.memory_mb * 2 > :mem) DESC,
+                 coalesce(us.cpu_s, 0),
+                 (split_part(j.image, '@', 2) = ANY(CAST(:images AS text[]))) DESC,
+                 CASE WHEN :unreliable THEN coalesce(j.max_runtime_s, 3600) ELSE 0 END,
+                 j.created_at
         LIMIT 10
         """), params,
     )).all()

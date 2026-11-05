@@ -66,6 +66,9 @@ func (a *Agent) runAttempt(ctx context.Context, at *attempt) {
 	}
 	if err == nil {
 		res, err = a.cfg.Runtime.Run(ctx, spec, onStart, logs)
+		if err == nil {
+			a.rememberImage(env.Spec.Image)
+		}
 	}
 
 	a.mu.Lock()

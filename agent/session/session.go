@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -95,6 +96,8 @@ type Agent struct {
 	// be public ("public"); private-images.json in the profile directory, so it
 	// survives restarts.
 	privateImages map[string]string
+	// Digests of images this computer ran, newest last (at most maxRecentImages): sent with Ready.
+	recentImages []string
 
 	writeMu sync.Mutex
 	wake    chan struct{}
@@ -656,8 +659,31 @@ func (a *Agent) maybeReady() error {
 		return nil
 	}
 	a.readyPending, a.readySentAt = true, now
+	images := append([]string(nil), a.recentImages...)
 	a.mu.Unlock()
-	return a.send(protocol.TypeReady, &protocol.Ready{Free: free, Tiers: tiers})
+	return a.send(protocol.TypeReady, &protocol.Ready{Free: free, Tiers: tiers, Images: images})
+}
+
+const maxRecentImages = 100
+
+// rememberImage notes that this computer has an image (by digest) after running it.
+func (a *Agent) rememberImage(image string) {
+	_, digest, ok := strings.Cut(image, "@")
+	if !ok || !strings.HasPrefix(digest, "sha256:") {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for i, d := range a.recentImages {
+		if d == digest {
+			a.recentImages = append(a.recentImages[:i], a.recentImages[i+1:]...)
+			break
+		}
+	}
+	a.recentImages = append(a.recentImages, digest)
+	if len(a.recentImages) > maxRecentImages {
+		a.recentImages = a.recentImages[len(a.recentImages)-maxRecentImages:]
+	}
 }
 
 // handle dispatches one server message.
