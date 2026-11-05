@@ -60,7 +60,14 @@ async def run_for(db, agent, offer, hours=1.0, exit_code=0, usage=None):
 
 
 async def backdate(db, attempt_id, hours):
-    """As if the attempt started `hours` ago, after credits were turned on."""
+    """As if the attempt started `hours` ago, after credits were turned on. Waits until the server has recorded
+    the start: a start recorded after this would undo it (seen on a slow CI runner)."""
+    for _ in range(200):
+        started = (await db.execute(select(Attempt.started_at).where(Attempt.id == uuid.UUID(attempt_id)))).scalar()
+        await db.rollback()  # a fresh view each time
+        if started is not None:
+            break
+        await asyncio.sleep(0.05)
     await db.execute(update(Attempt).where(Attempt.id == uuid.UUID(attempt_id))
                      .values(started_at=text(f"now() - interval '{int(hours * 3600)} seconds'")))
     await db.execute(text("UPDATE groups SET credits_since = now() - interval '30 days' WHERE id = "
