@@ -54,7 +54,9 @@ func TestUsageMeterReadsAStream(t *testing.T) {
 	frame := func(cpu, mem string) string {
 		return "\x1b[H{\"CPUPerc\":\"" + cpu + "\",\"MemUsage\":\"" + mem + " / 1GiB\"}\x1b[K\n\x1b[K\n\x1b[J"
 	}
-	stream := frame("0.00%", "1MiB") + frame("100.00%", "64MiB") + frame("--", "--")
+	// Before the start and after the end, Docker reads "0B / 0.00%": those frames are not the program.
+	stream := frame("0.00%", "0B") + frame("0.00%", "1MiB") + frame("100.00%", "64MiB") + frame("0.00%", "0B") +
+		frame("--", "--")
 	clock := time.Unix(0, 0)
 	m := &usageMeter{}
 	m.read(strings.NewReader(stream), func() time.Time { clock = clock.Add(time.Second); return clock })

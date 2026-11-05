@@ -1,5 +1,6 @@
 """What a run used: stored from the device's commit, capped at the task's size, shown on the job (pool-decides §4.2)."""
 
+import json
 import uuid
 
 import pytest
@@ -100,3 +101,43 @@ def test_bounded_usage_and_summary():
     assert s["peak_memory_mb"] == 900 and s["max_wall_seconds"] == 30 and s["avg_cpu"] == 0.5 and s["measured"] == 2
     assert s["oom_killed"] == 1
     assert summarize([]) is None
+
+
+@pytest.mark.asyncio
+async def test_a_bad_measurement_never_costs_the_result(group_with_device, db):
+    """A value out of range drops the measurement, not the commit: the exit code and outputs still count."""
+    coord, g, agent = await group_with_device()
+    job = await submit(coord, g)
+    await agent.connect([share(g)])
+    offer = await agent.ready()
+    await agent.send(pm.Accept(attempt_id=offer.attempt_id, epoch=offer.epoch, tier="T2"))
+    await agent.send(pm.Started(attempt_id=offer.attempt_id, epoch=offer.epoch))
+    raw = {"type": "commit", "msg_id": "m-1", "idempotency_key": f"{offer.task_id}:{offer.attempt_id}",
+           "task_id": offer.task_id, "attempt_id": offer.attempt_id, "epoch": offer.epoch, "exit_code": 0,
+           "outputs": [], "error": None, "usage": {**MEASURED, "cpu_seconds": 1e15}}
+    await agent.ws.send(json.dumps(raw))
+    ack = await agent.recv_type(pm.CommitAck)
+    assert ack.accepted
+    tasks = await coord.get(f"/api/v1/jobs/{job['id']}/tasks")
+    assert tasks[0]["state"] == "succeeded" and tasks[0]["usage"] is None
+    await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_the_database_summary_matches_and_small_cpu_overshoot_is_not_odd(group_with_device, db):
+    coord, g, agent = await group_with_device()
+    job = await submit(coord, g, matrix={"x": [1, 2, 3]})
+    await agent.connect([share(g)])
+    stored = []
+    for peak, wall, oom in ((100, 10.0, False), (400, 30.0, False), (64, 1.0, True)):
+        offer = await agent.ready()
+        usage = {**MEASURED, "peak_memory_mb": peak, "wall_seconds": wall, "cpu_seconds": wall / 2,
+                 "peak_cpu": 1.01, "oom_killed": oom}
+        await agent.run_task(offer, exit_code=137 if oom else 0, usage=usage)
+        a = await db.get(Attempt, uuid.UUID(offer.attempt_id))
+        await db.refresh(a)
+        assert a.usage["capped"] == [], "101% of one CPU is Docker's rounding, not an odd device"
+        stored.append(a.usage)
+    j = await coord.get(f"/api/v1/jobs/{job['id']}")
+    assert j["used"] == summarize(stored)
+    await agent.close()

@@ -484,10 +484,13 @@ def run_local(p: Plan, out: Path) -> int:
             sys.stdout.flush()
             _remember(seen, line)
         code = proc.wait()
-        used = meter.stop(time.monotonic() - started)
-        inspect = subprocess.run([_docker(), "inspect", "--format", "{{.State.OOMKilled}}", name],
+        inspect = subprocess.run([_docker(), "inspect", "--format",
+                                  "{{.State.OOMKilled}} {{.State.StartedAt}} {{.State.FinishedAt}}", name],
                                  capture_output=True, text=True)
-        oom = inspect.stdout.strip() == "true" and code != 0
+        oom_text, _, times = inspect.stdout.strip().partition(" ")
+        oom = oom_text == "true" and code != 0
+        # Docker's own start and end: the run time without the image download and the container's creation.
+        used = meter.stop(_run_seconds(times) or time.monotonic() - started)
         _collect_local(name, out)
     except KeyboardInterrupt:
         _say("stopped")
@@ -507,6 +510,17 @@ def run_local(p: Plan, out: Path) -> int:
         _say(h)
     _say(f"exit {code}" if code else "done")
     return code
+
+
+def _run_seconds(times: str) -> float | None:
+    """Seconds between Docker's StartedAt and FinishedAt (RFC 3339, nanoseconds)."""
+    try:
+        start, end = (dt.datetime.fromisoformat(re.sub(r"(\.\d{6})\d*", r"\1", t.replace("Z", "+00:00")))
+                      for t in times.split())
+    except ValueError:
+        return None
+    seconds = (end - start).total_seconds()
+    return seconds if seconds > 0 else None
 
 
 def _local_requested(job: dict[str, Any], limit_s: float) -> dict[str, Any]:
@@ -660,7 +674,8 @@ def attach(job_id: str, out: Path, yes: bool = False, poll: float = 1.0) -> int:
     for line in usage_lines(job.get("requested"), job.get("used")):
         _say(line)
     codes = [(t.get("result") or {}).get("exit_code") for t in tasks]
-    oom = bool((job.get("used") or {}).get("oom_killed"))
+    # Only a task that failed for good for lack of memory: a try that ran out and then succeeded is not news.
+    oom = any(t["state"] == "failed" and (t.get("result") or {}).get("oom_killed") for t in tasks)
     memory = f"{job['requested']['memory_mb']} MiB" if job.get("requested") else None
     for h in hints.match("".join(seen)) + (hints.for_exit(codes[0], memory, oom) if single else
                                            hints.for_exit(None, memory, oom)):
@@ -736,10 +751,11 @@ def usage_lines(requested: dict | None, used: dict | None) -> list[str]:
         return []
     req = requested or {}
     mem, cpu = used["peak_memory_mb"], used["avg_cpu"]
-    parts = [f"memory {_size(mem)}" + (f" of {_size(req['memory_mb'])}" if req.get("memory_mb") else ""),
-             f"CPU {cpu:g}" + (f" of {req['cpu']:g}" if req.get("cpu") else "") + " on average",
-             "run time " + _duration(used["max_wall_seconds"])
-             + (f" of {_duration(req['time_limit_s'])}" if req.get("time_limit_s") else "")]
+    parts = [f"memory {_size(mem)}" + (f" of {_size(req['memory_mb'])}" if req.get("memory_mb") else "")]
+    if cpu is not None:
+        parts.append(f"CPU {cpu:g}" + (f" of {req['cpu']:g}" if req.get("cpu") else "") + " on average")
+    parts.append("run time " + _duration(used["max_wall_seconds"])
+                 + (f" of {_duration(req['time_limit_s'])}" if req.get("time_limit_s") else ""))
     many = used["measured"] > 1
     lines = [("Most used by one task: " if many else "It used: ") + ", ".join(parts) + "."]
     if req.get("memory_mb") and mem * 4 < req["memory_mb"] and req["memory_mb"] > 1024:

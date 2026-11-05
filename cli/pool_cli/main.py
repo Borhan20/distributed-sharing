@@ -411,8 +411,8 @@ def status(job_id: str) -> None:
     rows = api("GET", f"/api/v1/jobs/{job_id}/tasks")
     for r in rows:
         u = r.get("usage") or {}
-        r["used"] = (f"{u['peak_memory_mb']}MiB,cpu={u['avg_cpu']:g},{u['wall_seconds']:.0f}s"
-                     if u.get("samples") else None)
+        cpu = f",cpu={u['avg_cpu']:g}" if u.get("avg_cpu") is not None else ""
+        r["used"] = f"{u['peak_memory_mb']}MiB{cpu},{u['wall_seconds']:.0f}s" if u.get("samples") else None
     table(rows, ["index", "params", "state", "epoch", "attempts", "device", "used"])
 
 

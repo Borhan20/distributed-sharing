@@ -16,6 +16,7 @@ describe("usage texts", () => {
       "600 MiB · 0.8 CPU · 2 min",
     );
     expect(taskUsageText({ samples: 0, oom_killed: true })).toBe("out of memory");
+    expect(taskUsageText({ peak_memory_mb: 38, avg_cpu: null, wall_seconds: 1, samples: 1 })).toBe("38 MiB · 1 s");
     expect(taskUsageText(null)).toBe("–");
   });
 

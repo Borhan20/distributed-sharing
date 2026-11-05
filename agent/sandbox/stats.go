@@ -90,6 +90,11 @@ type usageMeter struct {
 const maxSampleGap = 30 * time.Second
 
 func (m *usageMeter) add(s statsSample, at time.Time) {
+	// A container that is created but not started, or has ended, reads "0B / 0.00%". Those readings are not
+	// the program: counting them would lower its average CPU.
+	if s.MemBytes == 0 {
+		return
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if s.MemBytes > m.peakMem {
@@ -132,10 +137,19 @@ func (m *usageMeter) usage(wall time.Duration) *protocol.RunUsage {
 		cpuSec = m.cpuSec / m.covered.Seconds() * wall.Seconds()
 	}
 	return &protocol.RunUsage{
-		PeakMemoryMB: (m.peakMem + (1<<20 - 1)) >> 20,
-		CPUSeconds:   math.Round(cpuSec*100) / 100,
-		PeakCPU:      math.Round(m.peakCPU*100) / 100,
-		WallSeconds:  math.Round(wall.Seconds()*100) / 100,
+		PeakMemoryMB: min((m.peakMem+(1<<20-1))>>20, maxUsageMemoryMB),
+		CPUSeconds:   math.Round(min(cpuSec, maxUsageCPUSeconds)*100) / 100,
+		PeakCPU:      math.Round(min(m.peakCPU, maxUsagePeakCPU)*100) / 100,
+		WallSeconds:  math.Round(min(wall.Seconds(), maxUsageWallSeconds)*100) / 100,
 		Samples:      m.samples,
 	}
 }
+
+// The upper bounds of RunUsage in the protocol (protocol/pool_protocol/messages.py). Staying inside them keeps
+// a strange reading from making the server refuse the whole result.
+const (
+	maxUsageMemoryMB    = 1 << 31
+	maxUsageCPUSeconds  = 1e9
+	maxUsagePeakCPU     = 4096
+	maxUsageWallSeconds = 1e8
+)

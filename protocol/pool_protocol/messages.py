@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
 
 PROTOCOL_VERSION = "v1alpha1"
 HELLO_SIGNATURE_CONTEXT = b"pool-agent-hello-v1:"
@@ -382,6 +382,15 @@ class Commit(_Msg):
     outputs: list[ArtifactRef] = Field(default_factory=list, max_length=1000)
     error: str | None = Field(default=None, max_length=4096)
     usage: RunUsage | None = None  # absent from agents that cannot measure (or are older)
+
+    @field_validator("usage", mode="wrap")
+    @classmethod
+    def _usage_is_optional(cls, v: Any, handler: Any) -> RunUsage | None:
+        """A measurement out of range is dropped, not the result: the exit code and outputs still count."""
+        try:
+            return handler(v)
+        except ValidationError:
+            return None
 
 
 class CommitAck(_Msg):

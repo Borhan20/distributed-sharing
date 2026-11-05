@@ -61,6 +61,8 @@ class Meter:
         return self
 
     def add(self, cpu: float, mem: int, at: float) -> None:
+        if mem == 0:  # "0B / 0.00%": created but not started yet, or already ended; not the program
+            return
         self.peak_mem = max(self.peak_mem, mem)
         if self._last is not None and 0 < at - self._last <= MAX_GAP_S:
             self.cpu_s += cpu / 100 * (at - self._last)
@@ -80,7 +82,7 @@ class Meter:
             self._proc.wait()
             if self.samples:
                 return
-            self._stop.wait(0.2)
+            self._stop.wait(1.0)  # still pulling or creating: try again, gently
 
     def stop(self, wall_s: float) -> dict | None:
         self._stop.set()
@@ -92,4 +94,5 @@ class Meter:
             return None
         cpu_s = self.cpu_s / self.covered * wall_s if self.covered else 0.0
         return {"measured": 1, "peak_memory_mb": -(-self.peak_mem // (1 << 20)),
-                "avg_cpu": round(cpu_s / wall_s, 2) if wall_s else 0.0, "max_wall_seconds": wall_s}
+                # CPU is the change between two readings: with one reading it is unknown.
+                "avg_cpu": round(cpu_s / wall_s, 2) if wall_s and self.covered else None, "max_wall_seconds": wall_s}

@@ -34,3 +34,26 @@ def test_usage_lines():
     many = usage_lines(req, {"measured": 3, "peak_memory_mb": 6000, "avg_cpu": 2, "max_wall_seconds": 60})
     assert many[0].startswith("Most used by one task: ") and len(many) == 1
     assert usage_lines(req, None) == [] and usage_lines(req, {"measured": 0, "oom_killed": 1}) == []
+
+
+def test_idle_frames_and_docker_run_times():
+    from pool_cli.run import _run_seconds
+
+    m = measure.Meter("docker", "x")
+    m.add(0, 0, 99.0)             # created, not started: not the program
+    m.add(0, 10 << 20, 100.0)
+    m.add(100, 10 << 20, 102.0)   # 1 core for 2 s
+    m.add(0, 0, 103.0)            # ended
+    m._stop.set()
+    assert m.stop(2.0)["avg_cpu"] == 1.0
+    assert _run_seconds("2026-11-06T10:00:00.123456789Z 2026-11-06T10:00:02.623456789Z") == 2.5
+    assert _run_seconds("0001-01-01T00:00:00Z 0001-01-01T00:00:00Z") is None and _run_seconds("x") is None
+
+
+def test_one_reading_has_no_cpu_figure():
+    m = measure.Meter("docker", "x")
+    m.add(0, 38 << 20, 100.0)
+    m._stop.set()
+    used = m.stop(2.0)
+    assert used["avg_cpu"] is None
+    assert usage_lines({"cpu": 1, "memory_mb": 1024}, used) == ["It used: memory 38 MiB of 1.0 GiB, run time 2 s."]

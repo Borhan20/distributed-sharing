@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import func, insert, select
+from sqlalchemy import func, insert, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pool_protocol.jobspec import JobSpecError, is_pinned, load_job_spec, parse_duration_s
@@ -28,7 +28,7 @@ from ..registry import RegistryError, parse_image, resolve_digest
 from ..registry_cleanup import mark_used
 from ..scheduler.core import cancel_tasks
 from ..scheduler.explain import auto_parts, explain_waiting
-from ..scheduler.usage import summarize
+from ..scheduler.usage import SUMMARY_SQL, summary_from_row
 from ..secretbox import SecretBoxError
 from ..timeutil import utcnow
 from .notify import notify_stops
@@ -83,10 +83,7 @@ async def _job_out(s: AsyncSession, job: Job, with_spec: bool = False) -> JobOut
         tasks=counts,
         spec=job.spec if with_spec else None,
         requested=_requested(job),
-        used=summarize(list((await s.execute(
-            select(Attempt.usage).join(Task, Task.id == Attempt.task_id)
-            .where(Task.job_id == job.id, Attempt.usage.isnot(None))
-        )).scalars())) if with_spec else None,
+        used=summary_from_row((await s.execute(text(SUMMARY_SQL), {"job": job.id})).first()) if with_spec else None,
     )
 
 
