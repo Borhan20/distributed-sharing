@@ -95,6 +95,7 @@ type Agent struct {
 	leaseTTL     time.Duration
 	uploadWait   map[string]chan protocol.UploadURLs
 	pullWait     map[string]chan protocol.PullAuth
+	tunnels      int // app connections open now (at most maxTunnels)
 	// Images this computer pulled with a group's token ("token") or found to
 	// be public ("public"); private-images.json in the profile directory, so it
 	// survives restarts.
@@ -971,6 +972,13 @@ func (a *Agent) checkOwner(ctx context.Context) {
 			actions = append(actions, action{at, "kill"})
 			continue
 		}
+		if at.env != nil && len(at.env.Spec.Ports) > 0 && (!share.Apps.Allow || !a.dev.Apps ||
+			float64(at.env.Spec.MaxRuntimeS) > share.Apps.MaxHours*3600) {
+			// The owner turned apps off, or now allows them for less time than this one may run.
+			at.stopReason = protocol.AbortPolicy
+			actions = append(actions, action{at, "kill"})
+			continue
+		}
 		active, _ := share.Active(now, st)
 		switch {
 		case !active && at.ownerAction == "":
@@ -1111,13 +1119,31 @@ func (a *Agent) isPrivate(image string) bool {
 func (a *Agent) openTunnel(ctx context.Context, m *protocol.TunnelOpen) {
 	a.mu.Lock()
 	at := a.attempts[m.AttemptID]
-	ok := at != nil && at.state == "running" && at.env != nil && slices.Contains(at.env.Spec.Ports, m.Port)
+	ok := at != nil && at.state == "running" && at.stopReason == "" && at.env != nil &&
+		slices.Contains(at.env.Spec.Ports, m.Port)
+	if ok { // the owner may have turned apps off since it started (checkOwner stops it soon)
+		share := a.pol.Find(at.group)
+		ok = share != nil && share.Apps.Allow && a.dev.Apps
+	}
+	full := a.tunnels >= maxTunnels
+	if ok && !full {
+		a.tunnels++
+	}
 	a.mu.Unlock()
 	if !ok {
 		a.log.Warn("tunnel refused: no such running app port here", "attempt", m.AttemptID, "port", m.Port)
 		return
 	}
-	u, err := a.tunnelURL(m.TunnelID, m.Secret)
+	if full {
+		a.log.Warn("tunnel refused: too many app connections open on this computer", "max", maxTunnels)
+		return
+	}
+	defer func() {
+		a.mu.Lock()
+		a.tunnels--
+		a.mu.Unlock()
+	}()
+	u, err := a.tunnelURL(m.TunnelID)
 	if err != nil {
 		a.log.Warn("tunnel", "err", err)
 		return
@@ -1131,7 +1157,8 @@ func (a *Agent) openTunnel(ctx context.Context, m *protocol.TunnelOpen) {
 		}
 		dialer = &websocket.Dialer{HandshakeTimeout: 20 * time.Second, TLSClientConfig: tlsCfg, Proxy: http.ProxyFromEnvironment}
 	}
-	ws, _, err := dialer.DialContext(ctx, u, nil)
+	// The one-time secret goes in a header, not the URL: servers and proxies log URLs.
+	ws, _, err := dialer.DialContext(ctx, u, http.Header{tunnelSecretHeader: {m.Secret}})
 	if err != nil {
 		a.log.Warn("tunnel: cannot reach the server", "err", err)
 		return
@@ -1173,8 +1200,16 @@ func (a *Agent) openTunnel(ctx context.Context, m *protocol.TunnelOpen) {
 	}
 }
 
+const (
+	// tunnelSecretHeader carries a tunnel's one-time secret to the server.
+	tunnelSecretHeader = "X-Pool-Tunnel-Secret"
+	// maxTunnels is the most app connections open at once on this computer. Each one is a `docker exec`
+	// process here, outside the share's limits (security review of pool-run step 2).
+	maxTunnels = 32
+)
+
 // tunnelURL is the server's agent tunnel endpoint for one tunnel.
-func (a *Agent) tunnelURL(id, secret string) (string, error) {
+func (a *Agent) tunnelURL(id string) (string, error) {
 	base, err := a.cfg.Profile.WSURL()
 	if err != nil {
 		return "", err
@@ -1184,6 +1219,6 @@ func (a *Agent) tunnelURL(id, secret string) (string, error) {
 		return "", err
 	}
 	u.Path = "/api/v1/agent/tunnels/" + url.PathEscape(id)
-	u.RawQuery = url.Values{"secret": {secret}}.Encode()
+	u.RawQuery = ""
 	return u.String(), nil
 }

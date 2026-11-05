@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,10 @@ import (
 
 // pipeWait is how long pipe keeps trying while the app is still starting to listen.
 const pipeWait = 10 * time.Second
+
+// pipeLinger is how long pipe waits for the app's last bytes after the other side has gone. Without it, an app
+// that never closes a connection would keep one pipe process per past connection in its container.
+var pipeLinger = 5 * time.Second
 
 func cmdPipe(args []string, in io.Reader, out io.Writer) error {
 	if len(args) != 1 {
@@ -45,14 +50,17 @@ func cmdPipe(args []string, in io.Reader, out io.Writer) error {
 		time.Sleep(200 * time.Millisecond)
 	}
 	defer conn.Close()
-	done := make(chan struct{})
 	go func() {
 		_, _ = io.Copy(conn, in)
 		if tc, ok := conn.(*net.TCPConn); ok {
 			_ = tc.CloseWrite() // the caller finished sending: let the app see the end
 		}
-		close(done)
+		// The caller is gone (the tunnel ended): give the app a moment to finish, then stop.
+		_ = conn.SetReadDeadline(time.Now().Add(pipeLinger))
 	}()
 	_, err = io.Copy(out, conn)
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return nil
+	}
 	return err
 }

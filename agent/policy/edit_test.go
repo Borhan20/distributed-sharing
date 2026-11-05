@@ -231,4 +231,12 @@ func TestShareAllowsApps(t *testing.T) {
 	if _, _, err := AddOrUpdateShare(out, ShareEdit{Group: "lab", AppHours: &bad}, ShareDefaults{}); err == nil {
 		t.Fatal("500 hours accepted")
 	}
+	// A hand-edited file: NaN and infinity are refused (NaN passed every comparison before).
+	for _, v := range []string{".nan", ".inf", "-.inf", "-1"} {
+		text := "shares:\n  - group: lab\n    limits: { cpu_percent: 50, memory: 1Gi, disk: 1Gi }\n" +
+			"    apps: { allow: true, max_hours: " + v + " }\n"
+		if _, err := Parse([]byte(text)); err == nil {
+			t.Errorf("max_hours %s accepted", v)
+		}
+	}
 }

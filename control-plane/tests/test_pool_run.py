@@ -312,15 +312,15 @@ async def test_pool_run_opens_the_apps_port_here(group_with_device, cli, tmp_pat
     got = asyncio.create_task(asyncio.to_thread(browser))
     msg = await agent.recv_type(pm.TunnelOpen, timeout=30)
     assert msg.port == 8000
-    url = base_url.replace("http", "ws", 1) + f"/api/v1/agent/tunnels/{msg.tunnel_id}?secret={msg.secret}"
-    async with websockets.connect(url) as t:
+    url = base_url.replace("http", "ws", 1) + f"/api/v1/agent/tunnels/{msg.tunnel_id}"
+    async with websockets.connect(url, additional_headers={"X-Pool-Tunnel-Secret": msg.secret}) as t:
         assert await t.recv() == b"GET / HTTP/1.0\r\n\r\n"
         await t.send(b"HTTP/1.0 200 OK\r\n\r\nhi")
         assert await asyncio.wait_for(got, 10) == b"HTTP/1.0 200 OK\r\n\r\nhi"
     await agent.commit(offer.attempt_id, offer.task_id, offer.epoch, 0, outputs=[])
     assert await asyncio.wait_for(run, 30) == 0
     err = capsys.readouterr().err
-    assert f"Open http://localhost:{here} for the app's port 8000" in err and "Only you can reach it" in err
+    assert f"Open http://localhost:{here} for the app's port 8000" in err and "on this computer only" in err
 
 
 @pytest.mark.parametrize("folder", sorted(p for p in (ROOT / "examples" / "run").iterdir() if p.is_dir()),

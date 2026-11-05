@@ -318,7 +318,7 @@ func (p *Policy) validate() error {
 			}
 			s.When.idle = d
 		}
-		if s.Apps.MaxHours < 0 || s.Apps.MaxHours > 168 {
+		if !(s.Apps.MaxHours >= 0 && s.Apps.MaxHours <= 168) { // also refuses NaN
 			return fmt.Errorf("shares[%d] (%s): apps.max_hours must be between 0 and 168", i, s.Group)
 		}
 		if s.Apps.Allow && s.Apps.MaxHours == 0 {

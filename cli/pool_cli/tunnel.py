@@ -1,13 +1,15 @@
 """Open an app's ports on this computer (docs/design/pool-run.md step 2).
 
-For each port, `pool` listens on 127.0.0.1 here (only this computer can connect). Each connection opens one
-WebSocket to the server's tunnel for the app's port, signed in as you; the server joins it to the computer that
-runs the app, which pipes it into the app's container. Only the person who started the app can open it.
+For each port, `pool` listens on 127.0.0.1 here (only this computer can connect, but any user of this computer
+can). Each connection opens one WebSocket to the server's tunnel for the app's port, signed in as you; the server
+joins it to the computer that runs the app, which pipes it into the app's container. Only the person who started
+the app can open a tunnel; the token never reaches the app or local clients.
 """
 
 from __future__ import annotations
 
 import contextlib
+import os
 import socket
 import threading
 from collections.abc import Callable
@@ -68,7 +70,10 @@ class Forwarder:
             sock = None
             for candidate in range(here, min(here + FREE_PORT_TRIES, 65536)):
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                if os.name == "nt":  # there, SO_REUSEADDR would let two programs share the port
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+                else:  # only lets it bind again soon after an earlier run
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 try:
                     s.bind(("127.0.0.1", candidate))
                 except OSError:

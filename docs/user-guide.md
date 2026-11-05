@@ -610,7 +610,7 @@ The flags are the same as for `docker run`:
 | `--entrypoint sh` | Run another command than the image's | the image's |
 | `--time-limit 2h` | Stop the job after this time | pool decides |
 | `--retries 1` | Try again after a failure | 0 |
-| `-p 8000`, `-p 8080:80` | Open the app's port on your computer (`HERE:APP`). Only you can reach it ([below](#run-an-app-web-apps-and-apis)). | the ports the image `EXPOSE`s |
+| `-p 8000`, `-p 8080:80` | Open the app's port on your computer (`HERE:APP`), on this computer only ([below](#run-an-app-web-apps-and-apis)). | the ports the image `EXPOSE`s |
 | `-d` | Start the job and return at once | – |
 | `-o DIR` | Where the files go | `./pool-out` |
 | `--name NAME` | Job name | the folder name |
@@ -738,7 +738,7 @@ your computer**:
 $ pool run -p 8000 ghcr.io/you/api:1
 pool: Submitted api (1 task(s)) to my-lab: job 6f1c…
 pool: Running on lab-pc-3
-pool: Open http://localhost:8000 for the app's port 8000. Only you can reach it.
+pool: Open http://localhost:8000 for the app's port 8000. It opens on this computer only; nobody else in the group can open your app.
 pool: Ctrl-C stops the app.
 ```
 
@@ -746,7 +746,7 @@ pool: Ctrl-C stops the app.
 |---|---|
 | Which ports | The ports the image `EXPOSE`s, or the ones you give: `-p 8000`, or `-p 8080:80` for the app's port 80 at `localhost:8080`. In a job file or `pool.yaml`: `port: 8000` or `ports: [8000, "8080:80"]`. At most 10, TCP only. |
 | The port on your computer | Only on `127.0.0.1`. The same number as the app's port; below 1024 it is 8000 + the number (`80` → `8080`). If it is taken, pool uses the next free one and says which. |
-| Who can open it | Only you, the person who started it. Not the group, not the computer's owner. |
+| Who can open it | Only you, the person who started it: not the group, not the computer's owner. While `pool run` or `pool attach` runs, the port is open on **your computer** (`127.0.0.1`). Other people signed in to the same computer (a shared lab server, for example) could connect to it too, and their requests would reach your app as yours. On a shared computer, stop `pool attach` when you are done. |
 | Its network | The app has **no network**: it cannot reach the internet, the owner's computer or other apps. Put everything it needs into the image. |
 | How long | Until you stop it (**Ctrl-C**, or **Stop** on the job page), at most its time limit: 8 hours unless you give `--time-limit`. |
 | Where | Only on computers whose owner allows apps ([§10](#10-share-your-computer)). The job page says when none does. |
@@ -861,7 +861,7 @@ tested; Macs are not supported for sharing yet).
    ```bash
    pool-agent share my-lab --allow-apps --app-hours 8
    ```
-   An app holds part of your computer for hours, so this is off by default. `--app-hours` is the longest one app may run here (default 8, at most 168). Apps get no network on your computer: they cannot reach the internet or anything on your computer or your network. Only the person who started an app can open it. The agent must be built with `CGO_ENABLED=0` for apps; it says so when it starts if it is not.
+   An app holds part of your computer for hours, so this is off by default. Turning apps off (`--allow-apps=false`) stops the apps running on your computer; they start again elsewhere. `--app-hours` is the longest one app may run here (default 8, at most 168). Apps get no network on your computer: they cannot reach the internet or anything on your computer or your network. Only the person who started an app can open it. The agent must be built with `CGO_ENABLED=0` for apps; it says so when it starts if it is not.
 4. **Start it** and leave it running: `pool-agent run`.
 
 **Control it:**

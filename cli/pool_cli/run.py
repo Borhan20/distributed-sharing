@@ -96,8 +96,8 @@ Run a program on a computer of your group, like `docker run` on yours.
       --platform P       Platform to build for (default: what most of the group's computers are)
       --name NAME        Job name (default: from the folder or image)
       --group GROUP      Group (default: from `pool login --group`)
-  -p, --publish PORT     Open the app's PORT here, e.g. -p 8000 or -p 8080:8000 (HERE:APP). Only you can
-                         reach it, on 127.0.0.1. Ports the image EXPOSEs are opened anyway.
+  -p, --publish PORT     Open the app's PORT here, e.g. -p 8000 or -p 8080:8000 (HERE:APP), on 127.0.0.1
+                         (this computer only). Ports the image EXPOSEs are opened anyway.
   -o, --out DIR          Where the job's /out files go (default ./pool-out)
   -d, --detach           Start it and return; `pool attach JOB` later
       --local            Run it here, with your Docker and the rules of a member's computer
@@ -697,7 +697,8 @@ def _open_ports(job_id: str, app_ports: list[int], wanted: dict[int, int] | None
     fw = tunnel.Forwarder(cfg.server, lambda: cli.Config.load().token, job_id, mapping, _say)
     for app_port, here in fw.start().items():
         moved = "" if here == mapping[app_port] else f" ({mapping[app_port]} is taken here)"
-        _say(f"Open http://localhost:{here} for the app's port {app_port}{moved}. Only you can reach it.")
+        _say(f"Open http://localhost:{here} for the app's port {app_port}{moved}. It opens on this computer only; "
+             "nobody else in the group can open your app.")
     return fw
 
 
