@@ -279,6 +279,53 @@
         }
       }
     },
+    "/api/v1/groups/{name}/platforms": {
+      "get": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Group Platforms",
+        "description": "The kinds of computer shared with the group, most common first: `pool run` builds for the first.",
+        "operationId": "group_platforms_api_v1_groups__name__platforms_get",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PlatformOut"
+                  },
+                  "title": "Response Group Platforms Api V1 Groups  Name  Platforms Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/groups/{name}/close": {
       "post": {
         "tags": [
@@ -5070,6 +5117,18 @@
               }
             ],
             "title": "Credits"
+          },
+          "image_info": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Info"
           }
         },
         "type": "object",
@@ -5345,6 +5404,24 @@
           "updated_at"
         ],
         "title": "MyRegistryOut"
+      },
+      "PlatformOut": {
+        "properties": {
+          "platform": {
+            "type": "string",
+            "title": "Platform"
+          },
+          "computers": {
+            "type": "integer",
+            "title": "Computers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "platform",
+          "computers"
+        ],
+        "title": "PlatformOut"
       },
       "RegistryCredentialIn": {
         "properties": {

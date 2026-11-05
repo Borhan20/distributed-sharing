@@ -164,6 +164,7 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
         "tier": tier_rank,
         "gpu_tier": gpu_tier_rank,
         "os": caps.get("os", device.os),
+        "arch": caps.get("arch") or device.arch,
         "dedicated": device.org_owned_dedicated,
         "device": device.id,
         "decline_since": now - timedelta(seconds=settings.decline_cooldown_s),
@@ -205,6 +206,8 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
           AND j.gpu_memory_mb <= :gpu_mem
           AND ((j.gpus = 0 AND j.min_tier_rank <= :tier) OR (j.gpus > 0 AND j.min_tier_rank <= :gpu_tier))
           AND (j.os IS NULL OR j.os = :os)
+          -- The image has a version for this computer's CPU type (pool-decides §4.1); NULL: not known.
+          AND (j.architectures IS NULL OR CAST(:arch AS text) = ANY(j.architectures))
           AND (j.data_class <> 'confidential' OR (:dedicated AND :tier >= 2))
           AND NOT j.egress
           AND (sh.accept_all OR sh.handles ? u.handle)
@@ -353,9 +356,11 @@ async def _assign(session: AsyncSession, settings: Settings, signer: EnvelopeSig
     job = await session.get(Job, task.job_id)
     # The sizes this attempt gets: the job's sizes now (pool may have changed them since the task was made).
     given = sizing.attempt_resources(job, int(task.spec.get("max_runtime_s") or 3600), free_memory_mb)
-    spec = {**task.spec, "max_runtime_s": given["max_runtime_s"],
-            "resources": {**task.spec.get("resources", {}), "cpu": given["cpu"], "memory_mb": given["memory_mb"],
-                          "disk_mb": given["disk_mb"]}}
+    resources = {**task.spec.get("resources", {}), "cpu": given["cpu"], "memory_mb": given["memory_mb"],
+                 "disk_mb": given["disk_mb"]}
+    if job.gpus and not resources.get("gpus"):  # pool chose a GPU from the image (a CUDA image)
+        resources.update(gpus=job.gpus, gpu_vendor=resources.get("gpu_vendor") or "nvidia")
+    spec = {**task.spec, "max_runtime_s": given["max_runtime_s"], "resources": resources}
     if group.credits_enabled:
         given["rates"] = credits.rates(group)
     attempt = Attempt(id=uuid.uuid4(), task_id=task.id, device_id=device.id, epoch=epoch, state="assigned",

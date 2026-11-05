@@ -9,6 +9,7 @@ import {
   formTaskCount,
   formToJob,
   formToYaml,
+  imageInfoText,
   jobToForm,
   parseJobText,
   parseValues,
@@ -160,3 +161,13 @@ describe("helpers", () => {
     expect(splitImage("busybox")).toEqual({ name: "busybox", digest: null });
   });
 });
+
+describe("image info", () => {
+  it("says what pool read from the image", () => {
+    expect(imageInfoText({ platforms: ["linux/amd64", "linux/arm64/v8"], cuda: true, ports: ["8000/tcp"] })).toBe(
+      "built for amd64, arm64 · NVIDIA CUDA · opens port 8000/tcp",
+    );
+    expect(imageInfoText(null)).toBeNull();
+  });
+});
+

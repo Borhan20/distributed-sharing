@@ -53,7 +53,7 @@ Every task runs with these rules. A program that breaks one of them fails.
 | One result row per task | Write one JSON object to `/out/result.json`. All tasks' rows become one table. |
 | Each task knows its number | `POOL_TASK_INDEX` (0, 1, ...) and `POOL_TASK_COUNT`. Each part takes its share, e.g. every n-th item. |
 | No ports and no interactive terminal yet | Servers and web apps do not work yet. Run programs that compute and end. |
-| Linux containers, built for `linux/amd64` by default | Use `--platform linux/arm64` only if the group's computers are ARM. |
+| Linux containers | `pool run` builds for the kind most of the group's computers are, and pool sends tasks only to computers the image has a version for. Use `--platform` only to choose another kind. |
 
 `pool run` refuses `-v`, `--mount`, `--network`, `--privileged`, `--cap-add`,
 `--device`, `-u` and `-p`. The message says why. Copy files into the image

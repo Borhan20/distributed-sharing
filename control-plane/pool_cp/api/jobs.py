@@ -13,6 +13,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import func, insert, select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pool_protocol.jobspec import JobSpecError, is_pinned, load_job_spec, parse_duration_s
@@ -23,8 +24,8 @@ from ..auth import Principal, current_principal, get_session
 from ..authz import ANY_MEMBER, MANAGERS, SUBMITTERS, load_group, membership, not_found, require_role
 from ..deletion import archive_runs_of_job, outputs_only_in_job
 from ..image_access import credential_for
-from ..models import Attempt, AuditEvent, Group, Job, Task, TaskLog, UsageLedger, User
-from ..registry import RegistryError, parse_image, resolve_digest
+from ..models import Attempt, AuditEvent, Group, ImageInfoCache, Job, Task, TaskLog, UsageLedger, User
+from ..registry import RegistryError, inspect_image, parse_image, resolve_digest
 from ..registry_cleanup import mark_used
 from ..scheduler import sizing
 from ..scheduler.core import cancel_tasks
@@ -57,6 +58,8 @@ class JobOut(BaseModel):
     sizing: dict[str, Any] | None = None
     # With credits on: the expected and the highest cost, and what it cost so far (docs/design/credits.md §2).
     credits: dict[str, Any] | None = None
+    # What pool read from the image: platforms, CUDA, ports (docs/design/pool-decides.md §4.1).
+    image_info: dict[str, Any] | None = None
 
 
 def _requested(job: Job) -> dict[str, Any]:
@@ -98,7 +101,46 @@ async def _job_out(s: AsyncSession, job: Job, with_spec: bool = False, show_reas
         {k: v for k, v in job.sizing.items() if k in ("auto", "first_run", "steps")},
         used=summary_from_row((await s.execute(text(SUMMARY_SQL), {"job": job.id})).first()) if with_spec else None,
         credits=await credits.job_credits(s, job, g) if (with_spec if with_credits is None else with_credits) else None,
+        image_info=job.image_info if with_spec else None,
     )
+
+
+async def _read_image(s: AsyncSession, request: Request, p: Principal, g: Group, image: str,
+                      builtin: bool) -> dict[str, Any] | None:
+    """What the pinned image says about itself (docs/design/pool-decides.md §4.1): platforms, CUDA, ports.
+    Read once per digest, then from the cache. Best effort: a job is never refused because this failed."""
+    if "@" not in image:
+        return None
+    digest = image.rsplit("@", 1)[1]
+    cached = await s.get(ImageInfoCache, digest)
+    if cached is not None:
+        return cached.info
+    settings = request.app.state.settings
+    try:
+        if builtin:
+            reg = builtin_registry.Registry(settings, request.app.state.registry_issuer)
+            info = await asyncio.to_thread(reg.inspect, image)
+        else:
+            cred = await credential_for(s, request.app.state.secretbox, user_id=p.user.id, group_id=g.id,
+                                        registry=parse_image(image).registry)
+            info = await asyncio.to_thread(inspect_image, image, cred[:2] if cred else None,
+                                           allow_private=settings.registry_private_networks)
+    except (RegistryError, SecretBoxError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        log.info("could not read the image %s: %s", image, exc)
+        return None
+    data = info.as_dict()
+    await s.execute(pg_insert(ImageInfoCache).values(digest=digest, info=data).on_conflict_do_nothing())
+    return data
+
+
+def _architectures(info: dict[str, Any] | None, os_name: str | None) -> list[str] | None:
+    """The CPU types (amd64, arm64, ...) the image has for the job's operating system; None: not known."""
+    if not info:
+        return None
+    wanted = os_name or "linux"
+    arches = sorted({p.split("/")[1] for p in info.get("platforms") or [] if p.count("/") >= 1
+                     and p.split("/")[0] == wanted})
+    return arches or None
 
 
 async def _pin_image(s: AsyncSession, request: Request, p: Principal, g: Group, image: str) -> str:
@@ -179,6 +221,7 @@ async def submit_job(
         js.spec.image = await _pin_builtin_image(request, p, g, js.spec.image)
     elif not is_pinned(js.spec.image):
         js.spec.image = await _pin_image(s, request, p, g, js.spec.image)
+    info = await _read_image(s, request, p, g, js.spec.image, builtin)
     res = js.resources()
     given = js.given_sizes()
     as_submitted["sizes"] = {k: v for k, v in (("cpu", js.spec.resources.cpu), ("memory", js.spec.resources.memory),
@@ -189,7 +232,8 @@ async def submit_job(
         s, user_id=p.user.id, group=g, image=js.spec.image, command=js.spec.command, args=js.spec.args,
         given={"cpu": res.cpu if given["cpu"] else None, "memory_mb": res.memory_mb if given["memory"] else None,
                "disk_mb": res.disk_mb if given["disk"] else None,
-               "max_runtime_s": parse_duration_s(js.spec.max_runtime) if given["time_limit"] else None})
+               "max_runtime_s": parse_duration_s(js.spec.max_runtime) if given["time_limit"] else None},
+        info=info, gpu_given=given["gpu"])
     job = Job(
         group_id=g.id,
         submitter_id=p.user.id,
@@ -201,7 +245,9 @@ async def submit_job(
         disk_mb=decision.disk_mb,
         max_runtime_s=decision.max_runtime_s,
         sizing=decision.sizing,
-        gpus=res.gpus,
+        image_info=info,
+        architectures=_architectures(info, js.spec.os),
+        gpus=decision.gpus if decision.gpus is not None else res.gpus,
         gpu_memory_mb=res.gpu_memory_mb,
         min_tier_rank=TIER_RANK[js.spec.isolation.min_tier],
         os=js.spec.os,

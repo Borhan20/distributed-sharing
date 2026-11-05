@@ -39,7 +39,14 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
 from .config import Settings
-from .registry import RegistryError, _is_loopback, normalize_registry, parse_image
+from .registry import (
+    ImageInfo,
+    RegistryError,
+    _is_loopback,
+    image_info,
+    normalize_registry,
+    parse_image,
+)
 
 log = logging.getLogger("pool_cp.builtin_registry")
 
@@ -191,6 +198,21 @@ class Registry:
         if status != 200:
             return None
         return next((v for k, v in headers.items() if k.lower() == "docker-content-digest"), None)
+
+    def inspect(self, image: str) -> ImageInfo:
+        """Read a pinned image in the group's registry (docs/design/pool-decides.md §4.1)."""
+        ref = parse_image(image)
+        digest = image.rsplit("@", 1)[1]
+        scopes = [{"type": "repository", "name": ref.repository, "actions": ["pull"]}]
+
+        def get(path: str, accept: str | None = None) -> bytes:
+            status, _, body = self._request("GET", path, scopes, {"Accept": accept} if accept else None)
+            if status != 200:
+                raise RegistryError(f"the group's registry answered {status}")
+            return body
+
+        return image_info(lambda d: get(f"/v2/{ref.repository}/manifests/{d}", _MANIFEST_TYPES),
+                          lambda d: get(f"/v2/{ref.repository}/blobs/{d}"), digest)
 
     def pin(self, image: str) -> str:
         """'host/ml-lab/alice/app:3' -> 'host/ml-lab/alice/app:3@sha256:...'."""

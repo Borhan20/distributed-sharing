@@ -90,7 +90,7 @@ async def test_the_plan_from_flags_and_pool_yaml(tmp_path):
     assert p.job == {"name": "trainer", "image": "pending-build", "command": "python train.py",
                      "args": ["--epochs", "9"], "cpu": 2, "memory": "4Gi", "gpu": 1, "retries": 0,
                      "env": {"MODE": "prod"}, "group": "ml-lab"}, "flags win over pool.yaml"
-    assert p.platform == "linux/amd64"
+    assert p.platform == "", "no --platform: pool run asks the group (group_platform); --local builds natively"
     p = pool_run.plan(parse(IMG, "a"), tmp_path)
     assert p.build_context is None and p.job["image"] == IMG and p.job["args"] == ["a"], "an image skips the build"
     p = pool_run.plan(parse(IMG), tmp_path)

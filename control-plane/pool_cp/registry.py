@@ -235,6 +235,23 @@ def can_read(ref: ImageRef, digest: str, token: str, *, timeout: float = 15, all
     return status == 200
 
 
+def _token_for(ref: ImageRef, credentials: tuple[str, str] | None, timeout: float, allow_private: bool,
+               name: str | None = None) -> str | None:
+    """A pull token for the image's repository, if the registry asks for one."""
+    params = _challenge(ref.api, timeout, allow_private)
+    if params is None:
+        return None
+    status, body = _token_request(ref, params, {"scope": f"repository:{ref.repository}:pull"},
+                                  _basic(*credentials) if credentials else None, timeout, allow_private)
+    if status in (401, 403):
+        raise RegistryError(f"{ref.registry} refused the stored credentials" if credentials else
+                            f"{ref.registry} wants credentials to look up {name or ref.repository}")
+    if status != 200:
+        raise RegistryError(f"{ref.registry}'s token service answered {status}")
+    token, _ = _read_token(ref, body)
+    return token
+
+
 def resolve_digest(image: str, credentials: tuple[str, str] | None, *, timeout: float = 15,
                    allow_private: bool = False) -> str:
     """Pin a tag: 'ghcr.io/lab/app:1' -> 'ghcr.io/lab/app:1@sha256:...', the version the tag names right now.
@@ -250,17 +267,7 @@ def resolve_digest(image: str, credentials: tuple[str, str] | None, *, timeout: 
         raise RegistryError(f"{tag!r} is not a valid tag")
     if ":" not in last:
         name = f"{name}:latest"
-    params = _challenge(ref.api, timeout, allow_private)
-    token = None
-    if params is not None:
-        status, body = _token_request(ref, params, {"scope": f"repository:{ref.repository}:pull"},
-                                      _basic(*credentials) if credentials else None, timeout, allow_private)
-        if status in (401, 403):
-            raise RegistryError(f"{ref.registry} refused the stored credentials" if credentials else
-                                f"{ref.registry} wants credentials to look up {name}")
-        if status != 200:
-            raise RegistryError(f"{ref.registry}'s token service answered {status}")
-        token, _ = _read_token(ref, body)
+    token = _token_for(ref, credentials, timeout, allow_private, name)
     status, headers, _ = _manifest(ref, tag, token, timeout, allow_private, "HEAD")
     if status in (401, 403, 404):
         if credentials:
@@ -295,3 +302,120 @@ def check_credentials(registry: str, username: str, secret: str, *, timeout: flo
         raise RegistryError(f"{registry} refused these credentials")
     if status != 200:
         raise RegistryError(f"{registry}'s token service answered {status}")
+
+
+# --------------------------------------------------------------------------
+# Reading an image (docs/design/pool-decides.md §4.1)
+# --------------------------------------------------------------------------
+
+_CONFIG_MAX = 1024 * 1024  # an image's config file is small
+_REDIRECTS = (301, 302, 303, 307, 308)
+
+
+class _NoRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, ANN201
+        return None  # the caller sees the redirect and decides
+
+
+_no_redirects = urllib.request.build_opener(_NoRedirects)
+
+
+def _fetch_once(url: str, headers: dict[str, str], timeout: float, allow_private: bool) -> tuple[int, dict, bytes]:
+    _check_address(url, allow_private)
+    req = urllib.request.Request(url, headers=headers)  # noqa: S310 (scheme checked above)
+    try:
+        with _no_redirects.open(req, timeout=timeout) as r:
+            return r.status, dict(r.headers), r.read(_CONFIG_MAX + 1)
+    except urllib.error.HTTPError as exc:
+        return exc.code, dict(exc.headers or {}), b""
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise RegistryError(f"cannot reach the registry: {getattr(exc, 'reason', exc)}") from None
+
+
+def _verified(body: bytes, digest: str, what: str) -> bytes:
+    """Content is addressed by its digest: whoever served it, it must hash to that digest."""
+    if len(body) > _CONFIG_MAX or "sha256:" + hashlib.sha256(body).hexdigest() != digest:
+        raise RegistryError(f"the registry sent a {what} that does not match its digest")
+    return body
+
+
+def _blob(ref: ImageRef, digest: str, token: str | None, timeout: float, allow_private: bool) -> bytes:
+    """A small blob (an image's config). Registries such as Docker Hub send blobs from another host (a CDN): one
+    redirect is followed, only to a public https address, and without the registry's token."""
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    status, got, body = _fetch_once(f"{ref.api}/v2/{ref.repository}/blobs/{digest}", headers, timeout, allow_private)
+    if status in _REDIRECTS:
+        location = urllib.parse.urljoin(ref.api + "/", _header(got, "location"))
+        if urllib.parse.urlsplit(location).scheme != "https":
+            raise RegistryError("the registry redirected to an address that is not https")
+        status, _, body = _fetch_once(location, {}, timeout, allow_private=False)
+    if status != 200:
+        raise RegistryError(f"{ref.registry} answered {status} for the image's config")
+    return _verified(body, digest, "config")
+
+
+@dataclass
+class ImageInfo:
+    """What pool reads from an image before it runs (§4.1). Values of environment variables are never kept."""
+
+    platforms: list[str]  # "linux/amd64", "linux/arm64/v8"
+    cuda: bool  # built on an NVIDIA CUDA image
+    ports: list[str]  # EXPOSE lines, e.g. "8000/tcp"
+    healthcheck: bool
+    size_mb: int  # compressed layers of the platform read
+
+    def as_dict(self) -> dict:
+        return {"platforms": self.platforms, "cuda": self.cuda, "ports": self.ports, "healthcheck": self.healthcheck,
+                "size_mb": self.size_mb}
+
+
+CUDA_ENV = ("CUDA_VERSION", "NVIDIA_REQUIRE_CUDA")  # set by NVIDIA's CUDA base images (checked 6 November 2026)
+
+
+def _platform(p: dict) -> str:
+    text = f"{p.get('os', '')}/{p.get('architecture', '')}"
+    return f"{text}/{p['variant']}" if p.get("variant") else text
+
+
+def image_info(get_manifest, get_blob, digest: str) -> ImageInfo:  # noqa: ANN001 (two fetch functions)
+    """Read an image by its digest with `get_manifest(reference) -> bytes` and `get_blob(digest) -> bytes`."""
+    doc = json.loads(_verified(get_manifest(digest), digest, "manifest"))
+    platforms: list[str] = []
+    if "manifests" in doc:  # an index: one image per platform (attestations have the platform "unknown")
+        entries = [m for m in doc["manifests"] if (m.get("platform") or {}).get("os") not in (None, "unknown")]
+        if not entries:
+            raise RegistryError("the image has no runnable platform")
+        platforms = sorted({_platform(m["platform"]) for m in entries})
+        chosen = next((m for m in entries if m["platform"].get("os") == "linux"
+                       and m["platform"].get("architecture") == "amd64"), entries[0])
+        doc = json.loads(_verified(get_manifest(chosen["digest"]), chosen["digest"], "manifest"))
+    config_digest = (doc.get("config") or {}).get("digest", "")
+    if not _DIGEST_RE.match(config_digest):
+        raise RegistryError("the image's manifest names no config")
+    config = json.loads(get_blob(config_digest))
+    inner = config.get("config") or {}
+    if not platforms:
+        platforms = [_platform(config)]
+    names = {str(e).split("=", 1)[0] for e in inner.get("Env") or []}
+    test = (inner.get("Healthcheck") or {}).get("Test") or []
+    size = sum(int(layer.get("size") or 0) for layer in doc.get("layers") or [])
+    return ImageInfo(platforms=platforms, cuda=any(n in names for n in CUDA_ENV),
+                     ports=sorted(str(port) for port in (inner.get("ExposedPorts") or {}))[:100],
+                     healthcheck=bool(test) and test[0] != "NONE", size_mb=-(-size // (1 << 20)))
+
+
+def inspect_image(image: str, credentials: tuple[str, str] | None, *, timeout: float = 15,
+                  allow_private: bool = False) -> ImageInfo:
+    """Read a pinned image (name@sha256:...) from its registry. Blocking; run it in a thread."""
+    ref = parse_image(image)
+    digest = image.rsplit("@", 1)[1]
+    token = _token_for(ref, credentials, timeout, allow_private)
+
+    def manifest(reference: str) -> bytes:
+        status, _, body = _manifest(ref, reference, token, timeout, allow_private, "GET")
+        if status != 200:
+            raise RegistryError(f"{ref.registry} answered {status} for the image's manifest")
+        return body
+
+    return image_info(manifest, lambda d: _blob(ref, d, token, timeout, allow_private), digest)
+

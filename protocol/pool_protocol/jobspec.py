@@ -331,7 +331,7 @@ class JobSpec(_Strict):
         """Which sizes the job file sets. The others are pool's to decide."""
         r = self.spec.resources
         return {"cpu": r.cpu is not None, "memory": r.memory is not None, "disk": r.disk is not None,
-                "time_limit": self.spec.max_runtime is not None}
+                "time_limit": self.spec.max_runtime is not None, "gpu": r.gpu is not None}
 
     def resources(self) -> TaskResources:
         r = self.spec.resources

@@ -236,6 +236,28 @@ async def update_group(name: str, body: GroupUpdate, request: Request, p: Princi
     return _group_out(g, m.role)
 
 
+class PlatformOut(BaseModel):
+    platform: str  # "linux/amd64"
+    computers: int
+
+
+@router.get("/groups/{name}/platforms", response_model=list[PlatformOut])
+async def group_platforms(name: str, p: Principal = Depends(current_principal), s: AsyncSession = Depends(get_session)):
+    """The kinds of computer shared with the group, most common first: `pool run` builds for the first."""
+    g = await load_group(s, name)
+    await require_role(s, g, p, ANY_MEMBER)
+    rows = (await s.execute(
+        select(Device).join(DeviceShare, DeviceShare.device_id == Device.id)
+        .where(DeviceShare.group_id == g.id, DeviceShare.enabled, DeviceShare.removed.is_(False),
+               Device.state == "active"))).scalars().all()
+    counts: dict[str, int] = {}
+    for d in rows:
+        caps = d.capabilities or {}
+        key = f"{caps.get('os') or d.os}/{caps.get('arch') or d.arch}"
+        counts[key] = counts.get(key, 0) + 1
+    return [PlatformOut(platform=k, computers=v) for k, v in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+
+
 class CloseBody(BaseModel):
     confirm: bool = False
 

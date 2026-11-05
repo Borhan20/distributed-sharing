@@ -137,6 +137,15 @@ size you give is kept as it is.
 - **Too small?** If a task runs out of memory or time with a size pool chose, pool tries it again with more: twice the memory (on a first run, a computer with more free memory) or twice the time. At most 3 times. These tries are not counted as your failures, and not in fair share.
 - **Why?** The job page (**Each task → Chosen by pool: why**), `pool run` and `pool submit` say why each size was chosen.
 
+**pool also reads the image** before it runs (once per image version):
+
+| The image | What pool does |
+|---|---|
+| Has versions for some kinds of computer (amd64, arm64) | Sends its tasks only to computers of those kinds. The job page shows them under **Image**. |
+| Is built on NVIDIA CUDA | Asks for 1 GPU, if a computer in the group shares one. Otherwise it runs on the CPU, and the job page says so. |
+| Opens ports (`EXPOSE`) | Says so. Apps that listen on a port do not work yet ([§13](#13-what-is-not-possible-yet)). |
+| Is big | A first run asks for more disk: about 3 × the download. |
+
 **Each task knows its number.** In the command, `{{index}}` is the task's
 number (0, 1, 2, …) and `{{count}}` the number of tasks. Inside the container
 the same values are in the environment variables `POOL_TASK_INDEX` and
@@ -569,7 +578,7 @@ The flags are the same as for `docker run`:
 | `--name NAME` | Job name | the folder name |
 | `--group GROUP` | Group | from `pool login --group` |
 | `--build DIR`, `-f FILE` | What to build | `.` and `Dockerfile` |
-| `--platform linux/arm64` | Build for this kind of computer | `linux/amd64` (most PCs) |
+| `--platform linux/arm64` | Build for this kind of computer | the kind most of the group's computers are (with `--local`: yours) |
 | `--local` | Run it on **your** computer, with the rules of a member's computer | – |
 
 Some `docker run` flags are refused. The message says why:
@@ -901,6 +910,7 @@ The job page explains every waiting job. The same reasons, in short:
 | This job asks for more than any shared computer offers | Lower `resources` in the job, or ask an owner to raise their limit. |
 | No available computer can run this job | The job needs something no computer offers (operating system, isolation level, GPU, confidential data) or the computers only accept certain members. |
 | … able to run this job | Nothing is wrong; it starts within seconds or when a computer finishes its current work. |
+| Its image is built for amd64, and no shared computer is | The group's computers are another kind (e.g. arm64). Build for them: `pool run --platform linux/arm64`, or ask for a computer of that kind. |
 | Part 0 runs first, to learn how much … each part needs | A first run: the other parts start when part 0 ends ([§4](#how-pool-chooses-sizes)). |
 | You have another first run going | Wait, or set the memory yourself (`memory:` or `-m`). |
 | The last try ran out of memory with all the free memory of a computer | The program needs more memory than that computer had. It waits for a computer that offers more. Ask an owner to raise their limit, or make the program use less. |
@@ -924,7 +934,7 @@ The job page explains every waiting job. The same reasons, in short:
 | `this server has no built-in registry` | Push your image elsewhere (ghcr.io, Docker Hub) and give it: `pool run IMAGE ...` |
 | `pushing the image ... failed: ... unauthorized` | Sign in again: `pool login ...` (the access token expired) |
 | `pushing the image ... failed: ... x509: certificate signed by unknown authority` | The server uses its own certificate authority: your Docker must trust it (ask the server admin, [admin guide](admin-guide.md)) |
-| `exec format error` in the job's log | The image was built for another kind of computer: `--platform linux/amd64` (or `linux/arm64`) |
+| `exec format error` in the job's log | The image was built for another kind of computer. pool now sends a job only to computers its image has a version for, so this happens only when pool could not read the image. Build with `--platform` for the group's computers. |
 | `pool run does not take -v ...` (or another flag) | The message says why; most often, copy the files into the image in the Dockerfile |
 
 ### A task failed
@@ -958,9 +968,8 @@ ran it.
 - Checkpoints (resuming a long task where it stopped) are planned.
 - Combining results runs on your side (the results table, the merged CSV files, or your own script). A final step that runs on the group's computers after all tasks is not built.
 - Apps that listen on a port (web apps, APIs, databases, notebooks) do not work yet, and there is no interactive terminal. Programs that compute and write files work now. Apps are planned ([design](design/pool-run.md)).
-- pool chooses sizes from your earlier runs ([§4](#how-pool-chooses-sizes)), but it does not yet read the image itself (ports, GPU, platform), place tasks by best fit, or merge test reports. See [`design/pool-decides.md`](design/pool-decides.md).
+- pool chooses sizes from your earlier runs and reads the image (its platforms, CUDA, ports), but it does not yet place tasks by best fit or merge test reports. See [`design/pool-decides.md`](design/pool-decides.md).
 - There are no credits yet: sharing a computer does not give you more use. A design is proposed: [`design/credits.md`](design/credits.md).
-- Computers are not yet matched to the image's platform: build for the kind of computer your group has (`--platform`, default `linux/amd64`).
 - `parts` splits work only for programs that can do part of it (by `POOL_TASK_INDEX`); one program cannot be spread over several computers, since tasks cannot talk to each other.
 - GPUs and stronger isolation (gVisor) are built but not tested on real hardware.
 - Windows computers are untested; Macs cannot share.
