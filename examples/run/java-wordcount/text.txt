@@ -1,0 +1,20 @@
+A group of people can share their computers with each other.
+Each computer runs a small agent that asks the server for work.
+The server keeps a list of jobs, and each job is split into tasks.
+A task is one run of a program in a container, with no network.
+When a computer has room, the server gives it the next task that fits.
+The task writes its files to the out folder, and its output goes to a log.
+When the task ends, the agent sends the files and the log back to the server.
+If a computer goes away in the middle of a task, the task moves to another computer.
+The person who sent the job can download every file at once.
+They can also read one table with a row for every task.
+A program that can do part of the work can be split into many tasks.
+Each task then knows its own number and the number of tasks.
+It takes every n-th item of the work, so the tasks never do the same item twice.
+A program that cannot be split runs once, on a computer that is big enough.
+The owner of a computer decides how much of it the group may use.
+The owner can stop all work on the computer at any time.
+The owner can see every task that ran on the computer, and who sent it.
+The group decides who may join, and who may send work.
+People who use less computer time go first when many jobs wait.
+This text is made up for the example; any text file works the same way.

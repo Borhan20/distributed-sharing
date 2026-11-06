@@ -13,11 +13,13 @@ import base64
 import json
 import os
 import platform
+import re
 import signal
 import subprocess
 import sys
 import time
 import uuid
+from pathlib import Path
 
 import httpx
 import pytest
@@ -32,6 +34,7 @@ from .test_object_store import cleanup, make_platform, seaweedfs, wait_object_st
 pytestmark = [pytest.mark.e2e, pytest.mark.docker, pytest.mark.asyncio]
 
 REGISTRY_IMAGE = "registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373"
+SKILL_SCRIPTS = Path(__file__).resolve().parents[2] / "skills" / "pool" / "scripts"
 PLATFORM = "linux/arm64" if platform.machine() in ("aarch64", "arm64") else "linux/amd64"
 
 RUN_SH = """\
@@ -181,3 +184,48 @@ async def test_attach_follows_a_job_submitted_elsewhere(run_platform):
     assert "args: from browser" in r.stdout
     assert (p["project"] / "attached" / "sub" / "args.txt").read_text() == "from browser\n"
     assert (await wait_job(p["http"], job_id, 60))["tasks"]["succeeded"] == 1
+
+
+def _job_id(stderr: str) -> str:
+    m = re.search(r"to \S+: job (\S+)$", stderr, re.M)
+    assert m, stderr
+    return m.group(1)
+
+
+def _script(env, *args, timeout=180) -> subprocess.CompletedProcess:
+    return subprocess.run([str(SKILL_SCRIPTS / args[0]), *args[1:]], env=env, capture_output=True, text=True,
+                          timeout=timeout)
+
+
+async def test_the_agent_skill_checks_waits_and_collects(run_platform):
+    """skills/pool, step by step as SKILL.md tells an agent: check.sh, pool run -d, wait.sh, pool attach."""
+    p = run_platform
+    env = {**os.environ, "POOL_CONFIG_DIR": str(p["cfg"]), "POOL_CMD": f"{sys.executable} -m pool_cli.main"}
+    env.pop("POOL_TOKEN", None)
+    env.pop("POOL_SERVER", None)
+    r = await asyncio.to_thread(_script, env, "check.sh")
+    assert r.returncode == 0 and "OK   signed in: e2e-researcher" in r.stdout, r.stdout + r.stderr
+
+    r = await asyncio.to_thread(pool, p["cfg"], p["project"], "run", "--platform", PLATFORM, "-d", "--", "skill")
+    job_id = _job_id(r.stderr)
+    r = await asyncio.to_thread(_script, env, "wait.sh", job_id, "120")
+    assert r.returncode == 0 and f"job {job_id} ended: succeeded" in r.stdout, r.stdout + r.stderr
+    await asyncio.to_thread(pool, p["cfg"], p["project"], "attach", job_id, "-o", "collected")
+    assert (p["project"] / "collected" / "sub" / "args.txt").read_text() == "skill\n"
+
+    # Still running at the timeout: exit 2, and the job is left alone (waiting never cancels).
+    r = await asyncio.to_thread(pool, p["cfg"], p["project"], "run", "--platform", PLATFORM, "-d", "--", "sleep", "300")
+    slow = _job_id(r.stderr)
+    r = await asyncio.to_thread(_script, env, "wait.sh", slow, "1")
+    assert r.returncode == 2 and "still" in r.stdout, r.stdout + r.stderr
+    assert (await p["http"].get(f"/api/v1/jobs/{slow}")).json()["state"] in ("pending", "running")
+    await asyncio.to_thread(pool, p["cfg"], p["project"], "cancel", slow)
+    assert (await wait_job(p["http"], slow, 60))["state"] == "cancelled"
+
+    # Errors exit 1 with the reason: an unknown job, and no sign-in.
+    r = await asyncio.to_thread(_script, env, "wait.sh", str(uuid.uuid4()), "5")
+    assert r.returncode == 1 and r.stderr, r.stdout + r.stderr
+    nobody = p["cfg"].parent / "nobody"
+    nobody.mkdir()
+    r = await asyncio.to_thread(_script, {**env, "POOL_CONFIG_DIR": str(nobody)}, "check.sh")
+    assert r.returncode == 1 and "MISSING sign-in" in r.stdout, r.stdout + r.stderr

@@ -16,6 +16,7 @@ from pool_cli import hints
 from pool_cli import main as cli
 from pool_cli import run as pool_run
 from pool_cp import storage
+from pool_protocol.jobspec import load_job_spec
 
 pytestmark = pytest.mark.asyncio
 
@@ -49,7 +50,7 @@ async def test_docker_run_command_lines():
     (["--network", "host", IMG], "no network"),
     (["--privileged", IMG], "owner's computer"),
     (["-u", "0", IMG], "unprivileged"),
-    (["-p", "8000:8000", IMG], "next step"),
+    (["-p", "8000:8000", IMG], "do not work yet"),
     (["--gpus", "all", IMG], "how many"),
     (["-m", "lots", IMG], "not a size"),
     (["-m", "512", IMG], "give a unit"),
@@ -100,7 +101,7 @@ async def test_the_plan_from_flags_and_pool_yaml(tmp_path):
     p = pool_run.plan(parse("--build", "ctx", "-f", "other.Dockerfile", "--", "x"), tmp_path)
     assert p.dockerfile == (tmp_path / "other.Dockerfile").resolve(), "-f is relative to where you run it"
     (tmp_path / "pool.yaml").write_text("port: 8000\n")
-    with pytest.raises(cli.ApiError, match="next step"):
+    with pytest.raises(cli.ApiError, match="do not work yet"):
         pool_run.plan(parse(IMG), tmp_path)
     (tmp_path / "pool.yaml").write_text("colour: red\n")
     with pytest.raises(cli.ApiError, match="unknown field"):
@@ -257,7 +258,11 @@ async def test_detach_then_attach_and_stop(group_with_device, cli, tmp_path, mon
     assert pool_run.attach(job_id, tmp_path / "out") == 130, "attaching to a finished job reports how it ended"
 
 
-@pytest.mark.parametrize("folder", sorted((ROOT / "examples" / "run").iterdir()), ids=lambda p: p.name)
+@pytest.mark.parametrize("folder", sorted(p for p in (ROOT / "examples" / "run").iterdir() if p.is_dir()),
+                         ids=lambda p: p.name)
 async def test_every_pool_run_example_is_a_valid_project(folder):
     p = pool_run.plan(parse(), folder)
-    assert p.build_context == folder.resolve() and p.dockerfile.exists() and p.job["args"]
+    assert p.build_context == folder.resolve() and p.dockerfile.exists()
+    # Plain `pool run` must be enough: the job the folder makes is one the server accepts.
+    spec = load_job_spec({**p.job, "image": "registry.example/e2e/me/x@sha256:" + "0" * 64})
+    assert spec.resources().memory_mb <= 1024, "examples fit the default memory, so they need no settings"

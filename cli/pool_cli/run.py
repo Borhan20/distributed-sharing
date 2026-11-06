@@ -167,8 +167,8 @@ def parse(argv: list[str]) -> RunOptions:
         if name in REFUSED:
             raise cli.ApiError(f"pool run does not take {name}: {REFUSED[name]}.")
         if name in LATER:
-            raise cli.ApiError(f"{name} (ports) comes in the next step of pool run (docs/design/pool-run.md §5). "
-                               "Programs that only compute and write files work now.")
+            raise cli.ApiError(f"{name}: apps that listen on a port do not work yet (planned: docs/design/pool-run.md "
+                               "§5, step 2). Programs that compute and write files to /out work now.")
         if name in IGNORED:
             i += 1
             continue
@@ -283,7 +283,8 @@ def load_project(folder: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise cli.ApiError(f"{PROJECT_FILE} must be a mapping, e.g. name: ..., command: ...")
     if "port" in data or "ports" in data:
-        raise cli.ApiError(f"{PROJECT_FILE}: ports come in the next step of pool run (docs/design/pool-run.md §5)")
+        raise cli.ApiError(f"{PROJECT_FILE}: apps that listen on a port do not work yet (planned: "
+                           "docs/design/pool-run.md §5, step 2)")
     unknown = sorted(set(data) - _PROJECT_KEYS)
     if unknown:
         raise cli.ApiError(f"{PROJECT_FILE}: unknown field(s) {', '.join(unknown)}; allowed: "

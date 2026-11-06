@@ -563,27 +563,39 @@ Some `docker run` flags are refused. The message says why:
 | `-v`, `--mount` | Your folders are not on that computer. | Copy the files into the image (`COPY` in the Dockerfile). |
 | `--network` | Jobs have no network. | Put everything the program needs into the image. |
 | `--privileged`, `--cap-add`, `--device`, `-u` | They would give the job power over the owner's computer. | – |
-| `-p`, `-it` | Ports and interactive terminals are not ready yet. | They come in the next step ([design](design/pool-run.md#5-delivery-order-and-acceptance-checks)). |
+| `-p` | Apps that listen on a port do not work yet. Nobody could reach the port: jobs have no network. | Run programs that compute and write files to `/out`. Apps (web apps, APIs, databases) are planned ([design](design/pool-run.md#5-delivery-order-and-acceptance-checks)). |
 
-### Any language
+`-it` is accepted, but there is no interactive terminal yet: the program's
+output streams to you, and its input is empty.
+
+### Any language, any kind of work
 
 The Dockerfile builds your program. These examples are ready to run, in
-[`examples/run/`](../examples/run):
+[`examples/run/`](../examples/run). Each one needs no settings: go to its
+folder and type `pool run`.
 
-| Example | Language | How the Dockerfile works |
-|---|---|---|
-| [`python-train`](../examples/run/python-train) | Python | Start from `python:3.12-slim`. Copy the script. Run it with `ENTRYPOINT`. |
-| [`go-primes`](../examples/run/go-primes) | Go | Build in `golang:1.23-alpine`. Copy only the program into an empty image. |
-| [`cpp-heat`](../examples/run/cpp-heat) | C++ | Build with CMake in `alpine`. Copy only the program into an empty image. |
+| Example | Kind of work | Language | What comes back |
+|---|---|---|---|
+| [`python-train`](../examples/run/python-train) | Training a model | Python | `model.json`, `result.json` |
+| [`sklearn-classifier`](../examples/run/sklearn-classifier) | Machine learning with a library | Python, scikit-learn | accuracy, scores, confusion matrix |
+| [`python-images`](../examples/run/python-images) | Image processing | Python, Pillow | thumbnails, edge pictures |
+| [`node-report`](../examples/run/node-report) | Data processing: a report from a dataset | JavaScript (Node.js) | `result.json`, a CSV |
+| [`node-tests`](../examples/run/node-tests) | A test suite with a test report | JavaScript (Node.js) | `junit.xml` |
+| [`java-wordcount`](../examples/run/java-wordcount) | Text processing | Java | top words as CSV |
+| [`r-stats`](../examples/run/r-stats) | Statistics | R | confidence intervals |
+| [`go-primes`](../examples/run/go-primes) | A CPU-heavy computation | Go | `result.json` |
+| [`cpp-heat`](../examples/run/cpp-heat) | A simulation | C++ | `heat.csv` |
 
-Java, Rust and .NET work the same way: build in one stage, run in a small
-image.
+Compiled languages (Go, C++, Java, and also Rust and .NET) build in one stage
+and run in a small image. Most examples read `POOL_TASK_INDEX` and
+`POOL_TASK_COUNT`, so they can also be split into parts.
 
 Two rules for every language:
 
 - Write your results to `/out`.
-- Size the memory of your runtime from the container's limit. Current Java
-  versions do this by themselves. For Node, use `--max-old-space-size`.
+- Size the memory of your runtime from the container's limit. Java does this
+  by itself, but uses only 25% for its heap: add `-XX:MaxRAMPercentage=75`.
+  For Node, use `--max-old-space-size`.
 
 ### Check on your computer first: `--local`
 
@@ -615,13 +627,15 @@ is a job file ([§4](#4-write-a-job)) with two extra fields: `build` and
 
 ```yaml
 name: train
-args: --epochs 300 --lr 0.1
 cpu: 2
 memory: 4Gi
 time_limit: 2h
 ```
 
-Then `pool run` alone is enough.
+Then `pool run` alone is enough. You only need `pool.yaml` when the defaults
+(1 CPU, 1 GiB memory, 1 hour) are not enough. The program's own options can
+go there too (`args: --epochs 300`), but a program with good defaults does not
+need them.
 
 ### Stop, run in the background, follow again
 
@@ -680,6 +694,15 @@ is packaged.
 | Delete a job | `pool jobs delete JOB-ID` |
 | Delete / restore a group | `pool groups delete my-lab` / `pool groups deleted` / `pool groups restore my-lab` |
 | Usage in a group | `pool groups usage my-lab --days 7` |
+
+### AI coding agents
+
+Claude Code, Codex, Gemini CLI and other agents that read Agent Skills can use
+pool for you. Install the skill in [`skills/`](../skills/README.md). It
+teaches the agent the container rules, how to run and wait for a job without
+cancelling it by accident, how to collect the files, and how to fix common
+errors. Sign in yourself first (`pool login`). The agent never asks for your
+token.
 
 ## 10. Share your computer
 
@@ -841,7 +864,9 @@ ran it.
 - Private images work with registries that use token authentication (ghcr.io, Docker Hub and similar), not with registries that only accept a password on every request.
 - Checkpoints (resuming a long task where it stopped) are planned.
 - Combining results runs on your side (the results table, the merged CSV files, or your own script). A final step that runs on the group's computers after all tasks is not built.
-- `pool run` has no ports and no interactive terminal yet: programs that compute and write files work now; apps you open in a browser come next ([design](design/pool-run.md)).
+- Apps that listen on a port (web apps, APIs, databases, notebooks) do not work yet, and there is no interactive terminal. Programs that compute and write files work now. Apps are planned ([design](design/pool-run.md)).
+- You must choose the size of each task (CPU, memory, disk, time). A design where pool measures and chooses it by itself is agreed, not built: [`design/pool-decides.md`](design/pool-decides.md).
+- There are no credits yet: sharing a computer does not give you more use. A design is proposed: [`design/credits.md`](design/credits.md).
 - Computers are not yet matched to the image's platform: build for the kind of computer your group has (`--platform`, default `linux/amd64`).
 - `parts` splits work only for programs that can do part of it (by `POOL_TASK_INDEX`); one program cannot be spread over several computers, since tasks cannot talk to each other.
 - GPUs and stronger isolation (gVisor) are built but not tested on real hardware.
