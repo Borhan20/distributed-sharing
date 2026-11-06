@@ -370,6 +370,9 @@ type Ready struct {
 	MsgID string    `json:"msg_id"`
 	Free  Resources `json:"free"`
 	Tiers []Tier    `json:"tiers"`
+	// Digests of images this computer ran recently and still has: the server prefers tasks that use them, so
+	// they start without a download (docs/design/pool-decides.md §4.4).
+	Images []string `json:"images,omitempty"`
 }
 
 type Offer struct {

@@ -95,6 +95,7 @@ EXAMPLES: dict[str, dict] = {
         "msg_id": "m-6",
         "free": {"cpu": 8, "memory_mb": 16384, "disk_mb": 102400, "gpus": 1},
         "tiers": ["T1", "T2"],
+        "images": ["sha256:" + "a" * 64],
     },
     "offer": {
         "type": "offer",

@@ -9,6 +9,7 @@ SECURITY-SENSITIVE: changes here need a security reviewer (plan §8.10).
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 from typing import Annotated, Any, Literal
@@ -292,10 +293,23 @@ class HeartbeatAck(_Msg):
     lease_expires_at: datetime
 
 
+_IMAGE_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
 class Ready(_Msg):
     type: Literal["ready"] = "ready"
     free: Resources
     tiers: list[Tier]
+    # Digests of images the computer ran recently and still has (pool-decides §4.4): a preference only, so
+    # entries that are not digests are dropped instead of refusing the whole message.
+    images: list[str] = Field(default_factory=list, max_length=200)
+
+    @field_validator("images", mode="before")
+    @classmethod
+    def _only_digests(cls, v: Any) -> Any:
+        if not isinstance(v, list):
+            return v
+        return [d for d in v if isinstance(d, str) and _IMAGE_DIGEST.match(d)]
 
 
 class Offer(_Msg):

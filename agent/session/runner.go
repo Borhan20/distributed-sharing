@@ -36,6 +36,7 @@ func (a *Agent) runAttempt(ctx context.Context, at *attempt) {
 		OutputsPath: env.Spec.OutputsPath,
 	}
 	onStart := func() {
+		a.rememberImage(env.Spec.Image) // pulled and started: the image is here now (for its other parts)
 		a.mu.Lock()
 		at.state, at.startedAt = "running", a.now()
 		a.mu.Unlock()

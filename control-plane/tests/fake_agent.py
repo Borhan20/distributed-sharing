@@ -93,8 +93,8 @@ class FakeAgent:
                 return m
             self.inbox.append(m)
 
-    async def ready(self, free: dict | None = None, tiers: list[str] | None = None):
-        await self.send(pm.Ready(free=free or FREE, tiers=tiers or ["T1", "T2"]))
+    async def ready(self, free: dict | None = None, tiers: list[str] | None = None, images: list[str] | None = None):
+        await self.send(pm.Ready(free=free or FREE, tiers=tiers or ["T1", "T2"], images=images or []))
         return await self.recv_type(pm.Offer, pm.NoWork)
 
     def open_envelope(self, offer: pm.Offer) -> pm.TaskEnvelope:

@@ -562,6 +562,14 @@
         "free": {
           "$ref": "#/$defs/Resources"
         },
+        "images": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 200,
+          "title": "Images",
+          "type": "array"
+        },
         "msg_id": {
           "title": "Msg Id",
           "type": "string"

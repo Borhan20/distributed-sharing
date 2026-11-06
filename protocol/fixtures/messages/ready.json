@@ -5,6 +5,9 @@
     "gpus": 1,
     "memory_mb": 16384
   },
+  "images": [
+    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  ],
   "msg_id": "m-6",
   "tiers": [
     "T1",

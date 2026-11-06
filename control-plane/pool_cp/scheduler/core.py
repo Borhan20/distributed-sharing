@@ -165,6 +165,9 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
         "gpu_tier": gpu_tier_rank,
         "os": caps.get("os", device.os),
         "arch": caps.get("arch") or device.arch,
+        # Placement (pool-decides §4.4): images this computer has, and whether it often loses tasks.
+        "images": list(ready.images),
+        "unreliable": (device.reliability if device.reliability is not None else 1.0) < 0.5,
         "dedicated": device.org_owned_dedicated,
         "device": device.id,
         "decline_since": now - timedelta(seconds=settings.decline_cooldown_s),
@@ -177,13 +180,14 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
     # be many). Order: the agent's group priority, then fair share (least
     # CPU-seconds in the last 7 days for the submitter in that group, plan
     # §7.7), then submission order. All hard filters except per-task ones.
-    jobs = (await session.execute(
-        text("""
+    query = text("""
         WITH sh AS (
             SELECT * FROM jsonb_to_recordset(CAST(:shares AS jsonb))
                 AS x(group_id uuid, prio int, accept_all bool, handles jsonb, accept_new bool)
         ), usage AS (
-            SELECT group_id, user_id, sum(cpu_seconds) AS cpu_s
+            -- Use counts CPU time and GPU time (one GPU hour as 10 CPU hours, as in credits): asking for a GPU
+            -- has a price in fair share too.
+            SELECT group_id, user_id, sum(cpu_seconds + 10 * gpu_seconds) AS cpu_s
             FROM usage_ledger
             WHERE created_at > :since AND group_id IN (SELECT group_id FROM sh) AND NOT pool_paid
             GROUP BY group_id, user_id
@@ -202,6 +206,7 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
         WHERE j.state IN ('pending', 'running')
           -- Credits (docs/design/credits.md §3.7): out of credits, a member waits when the group says so.
           AND NOT (g.credits_enabled AND g.out_of_credits = 'wait' AND coalesce(bal.balance, g.credit_start) <= 0)
+          AND NOT (j.id = ANY(CAST(:skip AS uuid[])))  -- jobs already tried for this computer (paging)
           AND j.cpu <= :cpu AND j.memory_mb <= :mem AND j.disk_mb <= :disk AND j.gpus <= :gpus
           AND j.gpu_memory_mb <= :gpu_mem
           AND ((j.gpus = 0 AND j.min_tier_rank <= :tier) OR (j.gpus > 0 AND j.min_tier_rank <= :gpu_tier))
@@ -224,12 +229,22 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
                            JOIN jobs fj ON fj.id = ft.job_id
                            WHERE fj.submitter_id = j.submitter_id AND fa.state IN ('assigned', 'running')
                              AND coalesce((fa.resources->>'first_run')::boolean, false))))
-        -- Group priority, then members with credits before those without, then fair share (§3.8).
+        -- The owner's group priority; members with credits before those without (credits §3.8); on a computer
+        -- with a GPU, GPU work first (GPU time counts in fair share); then fair share in bands that double
+        -- (0-1 h, 1-3 h, 3-7 h, ...), and inside a band the best fit (pool-decides §4.4): work that needs more
+        -- than half of this computer's free memory first; then exact fair share; then tasks whose image this
+        -- computer already has; short tasks first on a computer that often loses them; then the oldest.
+        -- The best fit only breaks near-ties: asking for more memory never jumps people who used much less.
         ORDER BY sh.prio, (g.credits_enabled AND coalesce(bal.balance, g.credit_start) <= 0),
-                 coalesce(us.cpu_s, 0), j.created_at
+                 (j.gpus > 0) DESC,
+                 floor(ln(1 + coalesce(us.cpu_s, 0) / 3600.0) / ln(2)),
+                 (j.memory_mb > :mem / 2.0) DESC,
+                 coalesce(us.cpu_s, 0),
+                 (split_part(j.image, '@', 2) = ANY(CAST(:images AS text[]))) DESC,
+                 CASE WHEN :unreliable THEN coalesce(j.max_runtime_s, 3600) ELSE 0 END,
+                 j.created_at
         LIMIT 10
-        """), params,
-    )).all()
+        """)
     # Step 2: lock one runnable task of the best job with SKIP LOCKED, so
     # concurrent agents never get the same task and never wait for each other
     # (plan D7). Index order (ix_tasks_job_pending) keeps this O(1) for large
@@ -267,6 +282,32 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
     row = None
     group_free: dict[uuid.UUID, int] = {}
     device.last_ready_at = now
+    tried: list[uuid.UUID] = []
+    for _page in range(CLAIM_PAGES):
+        jobs = (await session.execute(query, {**params, "skip": tried})).all()
+        if not jobs:
+            break
+        tried += [j[0] for j in jobs]
+        row = await _first_startable(session, device, ready, groups, jobs, group_free, pick, fallback, now,
+                                     params["decline_since"])
+        if row is not None:
+            break
+    if row is None:
+        return None
+    task_id, submitter_handle, on_probation = row
+    task = await session.get(Task, task_id)
+    group = next(g for g, _ in groups if g.id == task.group_id)
+    return await _assign(session, settings, signer, device, task, submitter_handle, group, on_probation, now,
+                         free_memory_mb=await _group_free_memory(session, device, group, ready.free.memory_mb))
+
+
+CLAIM_PAGES = 5  # 10 jobs a page
+
+
+async def _first_startable(session: AsyncSession, device: Device, ready: pm.Ready, groups: list, jobs: list,
+                           group_free: dict, pick: str, fallback: str, now: datetime,
+                           decline_since: datetime) -> tuple | None:
+    """Lock a task of the first job in `jobs` this computer can start now: (task id, submitter, on probation)."""
     for job_id, submitter_handle, on_probation, first_run, memory_mb, group_id in jobs:
         g = next(g for g, _ in groups if g.id == group_id)
         if g.credits_enabled and g.out_of_credits == "wait" and not await _can_pay(session, g, job_id):
@@ -278,21 +319,14 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
                 group_free[group_id] = await _group_free_memory(session, device, g, ready.free.memory_mb)
             if group_free[group_id] < memory_mb:
                 continue
-        args = {"job": job_id, "now": now, "device": device.id, "decline_since": params["decline_since"],
+        args = {"job": job_id, "now": now, "device": device.id, "decline_since": decline_since,
                 "first_run": first_run}
         task_id = (await session.execute(text(pick), args)).scalar()
         if task_id is None:
             task_id = (await session.execute(text(fallback), args)).scalar()
         if task_id is not None:
-            row = (task_id, submitter_handle, on_probation)
-            break
-    if row is None:
-        return None
-    task_id, submitter_handle, on_probation = row
-    task = await session.get(Task, task_id)
-    group = next(g for g, _ in groups if g.id == task.group_id)
-    return await _assign(session, settings, signer, device, task, submitter_handle, group, on_probation, now,
-                         free_memory_mb=await _group_free_memory(session, device, group, ready.free.memory_mb))
+            return task_id, submitter_handle, on_probation
+    return None
 
 
 FIRST_RUN_PREFERENCE_S = 60
