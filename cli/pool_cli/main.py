@@ -308,9 +308,21 @@ def _submit(data: dict, group: str | None) -> dict:
     g = group or spec.metadata.group or _group(None)
     job = api("POST", f"/api/v1/groups/{g}/jobs", json=data)
     typer.echo(f"submitted {job['name']} ({job['tasks']['total']} task(s)) id={job['id']}")
-    for line in sizing_lines(job):
+    for line in sizing_lines(job) + credit_lines(job):
         typer.echo(line)
     return job
+
+
+def credit_lines(job: dict, after: bool = False) -> list[str]:
+    """The cost of a job in credits (docs/design/credits.md §2), before it runs or after."""
+    c = job.get("credits")
+    if not c:
+        return []
+    if after:
+        return [f"It cost {c['spent']:g} credits."] if c.get("spent") else []
+    if c.get("expected") is not None:
+        return [f"This run costs about {c['expected']:g} credits (at most {c['most']:g})."]
+    return [f"This run costs at most {c['most']:g} credits; a first run is paid for by what it uses."]
 
 
 def sizing_lines(job: dict, new_only: bool = False) -> list[str]:
@@ -577,3 +589,103 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# ------------------------------------------------------------------ credits (docs/design/credits.md)
+
+credits_app = typer.Typer(help="Credits: earn by sharing your computer, spend by running jobs.",
+                          invoke_without_command=True, no_args_is_help=False)
+app.add_typer(credits_app, name="credits")
+
+
+def _amount(v: float) -> str:
+    return f"{v:g}"
+
+
+@credits_app.callback()
+def credits_balance(ctx: typer.Context, group: str = typer.Option(None, help="Group (default: from pool login)")):
+    """Your credits in a group."""
+    if ctx.invoked_subcommand is not None:
+        return
+    c = api("GET", f"/api/v1/groups/{_group(group)}/credits")
+    if not c["enabled"]:
+        typer.echo(f"{c['group']} does not use credits.")
+        return
+    typer.echo(f"{c['group']}: {_amount(c['balance'])} credits ({_amount(c['earned'])} earned, "
+               f"{_amount(c['free'])} free)")
+    if c.get("open_request"):
+        r = c["open_request"]
+        typer.echo(f"open request: {_amount(r['amount'])} credits ({r['reason']})")
+
+
+@credits_app.command("history")
+def credits_history(group: str = typer.Option(None), limit: int = typer.Option(30)) -> None:
+    """Your last changes: earned, spent, given, received, free, moved."""
+    rows = api("GET", f"/api/v1/groups/{_group(group)}/credits/history", params={"limit": limit})
+    for r in rows:
+        r["with"] = r.get("counterparty") or r.get("device")
+    table(rows, ["created_at", "kind", "amount", "with", "note"])
+
+
+@credits_app.command("give")
+def credits_give(to: str, amount: float, note: str = typer.Option(None), group: str = typer.Option(None)) -> None:
+    """Give credits to another member of the group."""
+    c = api("POST", f"/api/v1/groups/{_group(group)}/credits/give", json={"to": to, "amount": amount, "note": note})
+    typer.echo(f"gave {_amount(amount)} credits to {to}; you have {_amount(c['balance'])}")
+
+
+@credits_app.command("ask")
+def credits_ask(amount: float, reason: str = typer.Option(..., help="Why you need them"),
+                group: str = typer.Option(None)) -> None:
+    """Ask the coordinator for free credits."""
+    g = _group(group)
+    api("POST", f"/api/v1/groups/{g}/credits/requests", json={"amount": amount, "reason": reason})
+    typer.echo(f"asked the coordinator of {g} for {_amount(amount)} credits")
+
+
+@credits_app.command("requests")
+def credits_requests(group: str = typer.Option(None), all_: bool = typer.Option(False, "--all")) -> None:
+    """Open requests (the coordinator sees everyone's; you see your own)."""
+    rows = api("GET", f"/api/v1/groups/{_group(group)}/credits/requests",
+               params={"state": "all" if all_ else "open"})
+    table(rows, ["id", "member", "amount", "reason", "state", "granted", "created_at"])
+
+
+@credits_app.command("approve")
+def credits_approve(request_id: str, amount: float = typer.Argument(None, help="Less than asked: approve part"),
+                    group: str = typer.Option(None)) -> None:
+    """Approve a request (coordinator)."""
+    r = api("POST", f"/api/v1/groups/{_group(group)}/credits/requests/{request_id}/approve",
+            json={"amount": amount} if amount is not None else {})
+    typer.echo(f"approved {_amount(r['granted'])} credits for {r['member']}")
+
+
+@credits_app.command("decline")
+def credits_decline(request_id: str, group: str = typer.Option(None)) -> None:
+    """Decline a request (coordinator)."""
+    r = api("POST", f"/api/v1/groups/{_group(group)}/credits/requests/{request_id}/decline")
+    typer.echo(f"declined the request of {r['member']}")
+
+
+@credits_app.command("grant")
+def credits_grant(to: str, amount: float, reason: str = typer.Option(...), group: str = typer.Option(None)) -> None:
+    """Give a member free credits (coordinator; not to yourself)."""
+    r = api("POST", f"/api/v1/groups/{_group(group)}/credits/grant",
+            json={"to": to, "amount": amount, "reason": reason})
+    typer.echo(f"granted {_amount(amount)} credits to {to}; they have {_amount(r['balance'])}")
+
+
+@credits_app.command("members")
+def credits_members(group: str = typer.Option(None)) -> None:
+    """Every member's credits (coordinators and admins)."""
+    table(api("GET", f"/api/v1/groups/{_group(group)}/credits/members"), ["member", "balance", "earned", "free"])
+
+
+@credits_app.command("move")
+def credits_move(amount: float, from_group: str = typer.Option(..., "--from"),
+                 to_group: str = typer.Option(..., "--to")) -> None:
+    """Move earned credits from one of your groups to another."""
+    r = api("POST", "/api/v1/me/credits/move", json={"from_group": from_group, "to_group": to_group, "amount": amount})
+    typer.echo(f"moved {_amount(amount)} credits: {_amount(r['source']['balance'])} in {from_group}, "
+               f"{_amount(r['target']['balance'])} in {to_group}")
+

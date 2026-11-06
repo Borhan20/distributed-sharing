@@ -322,3 +322,37 @@ async def test_pool_chooses_sizes_learns_and_grows_after_out_of_memory(platform)
     task = (await http.get(f"/api/v1/jobs/{second}/tasks")).json()[0]
     assert task["failures"] == 0 and task["attempts"] >= 2 and task["given"]["memory_mb"] > learned
     assert any("ran out of memory" in r for r in j["sizing"]["reasons"]), j["sizing"]["reasons"]
+
+
+async def test_credits_move_from_the_user_to_the_computer_owner(platform, tmp_path):
+    """docs/design/credits.md with the real agent: a member's computer runs another member's job."""
+    cp, http, agents = platform
+    (await http.patch("/api/v1/groups/e2e", json={"credits_enabled": True, "credit_start": 20})).raise_for_status()
+    # A second member who shares a computer.
+    owner_token = await cp.token("e2e-owner")
+    owner = httpx.AsyncClient(base_url=cp.url, headers={"Authorization": f"Bearer {owner_token}"}, timeout=30)
+    inv = (await http.post("/api/v1/groups/e2e/invites", json={"role": "member"})).json()
+    (await owner.post("/api/v1/invites/accept", json={"token": inv["token"]})).raise_for_status()
+    theirs = Agent(tmp_path / "owner-agent", "e2e-owner-pc", cp.url, tmp_path)
+    code = (await owner.post("/api/v1/devices/enrollment-codes")).json()["code"]
+    await asyncio.to_thread(theirs.enroll, code)
+    theirs.write_policy("e2e")
+    device = next(d for d in (await owner.get("/api/v1/devices")).json() if d["name"] == "e2e-owner-pc")
+    (await owner.put(f"/api/v1/devices/{device['id']}/shares/e2e")).raise_for_status()
+    theirs.start()  # only their computer runs: the researcher's own computers stay off
+    try:
+        spec = job("paid", ["sh", "-c", "sleep 3; echo done"], resources={"cpu": 1, "memory": "128Mi"})
+        job_id = await submit(http, spec)
+        assert (await wait_job(http, job_id))["state"] == "succeeded"
+        mine = (await http.get("/api/v1/groups/e2e/credits")).json()
+        theirs_credits = (await owner.get("/api/v1/groups/e2e/credits")).json()
+        paid = 20 - mine["balance"]
+        assert paid > 0 and theirs_credits["balance"] == pytest.approx(20 + paid, abs=0.0002)
+        assert theirs_credits["earned"] == pytest.approx(paid, abs=0.0002) and mine["free"] < 20
+        j = (await http.get(f"/api/v1/jobs/{job_id}")).json()
+        assert j["credits"]["spent"] == pytest.approx(paid, abs=0.0002)
+        history = (await owner.get("/api/v1/groups/e2e/credits/history")).json()
+        assert history[0]["kind"] == "earn" and history[0]["counterparty"] == "e2e-researcher"
+    finally:
+        theirs.stop()
+        await owner.aclose()

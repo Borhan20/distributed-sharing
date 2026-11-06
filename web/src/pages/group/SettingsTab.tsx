@@ -15,6 +15,12 @@ export function SettingsTab({ group }: { group: Group }) {
   const [retention, setRetention] = useState(group.retention_days);
   // Hours, as people think of a time limit; the API takes seconds.
   const [firstRunHours, setFirstRunHours] = useState((group.default_time_limit_s ?? 14400) / 3600);
+  const [creditsOn, setCreditsOn] = useState(group.credits_enabled ?? false);
+  const [creditStart, setCreditStart] = useState(group.credit_start ?? 20);
+  const [outOfCredits, setOutOfCredits] = useState<"lowest" | "wait">((group.out_of_credits as "lowest" | "wait") ?? "lowest");
+  const [standby, setStandby] = useState(group.standby_percent ?? 0);
+  const [creditsFrom, setCreditsFrom] = useState((group.credits_from ?? []).join(", "));
+  const [creditsOut, setCreditsOut] = useState(group.credits_out ?? true);
   const [closing, setClosing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const navigate = useNavigate();
@@ -29,6 +35,15 @@ export function SettingsTab({ group }: { group: Group }) {
             probation_days: probation,
             retention_days: retention,
             default_time_limit_s: Math.round(firstRunHours * 3600),
+            credits_enabled: creditsOn,
+            credit_start: creditStart,
+            out_of_credits: outOfCredits,
+            standby_percent: standby,
+            credits_from: creditsFrom
+              .split(",")
+              .map((n) => n.trim())
+              .filter(Boolean),
+            credits_out: creditsOut,
           },
         }),
       ),
@@ -101,6 +116,40 @@ export function SettingsTab({ group }: { group: Group }) {
             When someone runs an image for the first time and sets no time limit, each task may run this long. After
             that, pool sets the limit to 3 × their longest run.
           </p>
+          <fieldset>
+            <legend>Credits</legend>
+            <label className="check">
+              <input type="checkbox" checked={creditsOn} onChange={(e) => setCreditsOn(e.target.checked)} disabled={!active} />
+              Use credits: members earn them by sharing a computer and spend them by running jobs
+            </label>
+            {creditsOn && (
+              <>
+                <label>
+                  Start credits for each member
+                  <input type="number" min={0} step={1} value={creditStart} onChange={(e) => setCreditStart(Number(e.target.value))} disabled={!active} />
+                </label>
+                <label>
+                  When a member has no credits left
+                  <select value={outOfCredits} onChange={(e) => setOutOfCredits(e.target.value as "lowest" | "wait")} disabled={!active}>
+                    <option value="lowest">Lowest priority: their jobs run only on computers nobody else needs</option>
+                    <option value="wait">Wait: their jobs wait until they have credits again</option>
+                  </select>
+                </label>
+                <label>
+                  Earn while waiting (% of the CPU rate for a shared computer that is online and idle, 0 = off)
+                  <input type="number" min={0} max={100} value={standby} onChange={(e) => setStandby(Number(e.target.value))} disabled={!active} />
+                </label>
+                <label>
+                  Members may bring earned credits from these groups (their short names, comma-separated; empty: none)
+                  <input value={creditsFrom} onChange={(e) => setCreditsFrom(e.target.value)} placeholder="e.g. vision-lab" disabled={!active} />
+                </label>
+                <label className="check">
+                  <input type="checkbox" checked={creditsOut} onChange={(e) => setCreditsOut(e.target.checked)} disabled={!active} />
+                  Members may take credits earned here to their other groups
+                </label>
+              </>
+            )}
+          </fieldset>
           <ErrorBox error={save.error} />
           {save.isSuccess && <p className="ok">Saved.</p>}
           <button type="submit" disabled={!active || save.isPending}>

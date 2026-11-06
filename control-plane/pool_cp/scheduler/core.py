@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pool_protocol import messages as pm
 
-from .. import audit, builtin_registry
+from .. import audit, builtin_registry, credits
 from ..ca import EnvelopeSigner
 from ..config import Settings
 from ..image_access import has_credential
@@ -186,15 +186,21 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
             FROM usage_ledger
             WHERE created_at > :since AND group_id IN (SELECT group_id FROM sh) AND NOT pool_paid
             GROUP BY group_id, user_id
+        ), bal AS (
+            SELECT group_id, user_id, balance FROM credit_balances WHERE group_id IN (SELECT group_id FROM sh)
         )
         SELECT j.id, u.handle, (m.probation_until IS NOT NULL AND m.probation_until > :now) AS on_probation,
                coalesce((j.sizing->>'first_run')::boolean, false) AS first_run, j.memory_mb, j.group_id
         FROM jobs j
         JOIN sh ON sh.group_id = j.group_id
+        JOIN groups g ON g.id = j.group_id
         JOIN users u ON u.id = j.submitter_id
         JOIN memberships m ON m.group_id = j.group_id AND m.user_id = j.submitter_id
         LEFT JOIN usage us ON us.group_id = j.group_id AND us.user_id = j.submitter_id
+        LEFT JOIN bal ON bal.group_id = j.group_id AND bal.user_id = j.submitter_id
         WHERE j.state IN ('pending', 'running')
+          -- Credits (docs/design/credits.md §3.7): out of credits, a member waits when the group says so.
+          AND NOT (g.credits_enabled AND g.out_of_credits = 'wait' AND coalesce(bal.balance, g.credit_start) <= 0)
           AND j.cpu <= :cpu AND j.memory_mb <= :mem AND j.disk_mb <= :disk AND j.gpus <= :gpus
           AND j.gpu_memory_mb <= :gpu_mem
           AND ((j.gpus = 0 AND j.min_tier_rank <= :tier) OR (j.gpus > 0 AND j.min_tier_rank <= :gpu_tier))
@@ -215,7 +221,9 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
                            JOIN jobs fj ON fj.id = ft.job_id
                            WHERE fj.submitter_id = j.submitter_id AND fa.state IN ('assigned', 'running')
                              AND coalesce((fa.resources->>'first_run')::boolean, false))))
-        ORDER BY sh.prio, coalesce(us.cpu_s, 0), j.created_at
+        -- Group priority, then members with credits before those without, then fair share (§3.8).
+        ORDER BY sh.prio, (g.credits_enabled AND coalesce(bal.balance, g.credit_start) <= 0),
+                 coalesce(us.cpu_s, 0), j.created_at
         LIMIT 10
         """), params,
     )).all()
@@ -255,7 +263,11 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
     """
     row = None
     group_free: dict[uuid.UUID, int] = {}
+    device.last_ready_at = now
     for job_id, submitter_handle, on_probation, first_run, memory_mb, group_id in jobs:
+        g = next(g for g, _ in groups if g.id == group_id)
+        if g.credits_enabled and g.out_of_credits == "wait" and not await _can_pay(session, g, job_id):
+            continue
         if first_run:
             # A first run needs this computer's share for its group to have room (more than the last try had).
             if group_id not in group_free:
@@ -289,6 +301,13 @@ def _share_memory(device: Device, group: str) -> int:
     share = next((r for r in device.reported_shares or [] if r.get("group") == group), None) or {}
     offered = int((share.get("limits") or {}).get("memory_mb") or 0)
     return min(offered, total) if total else offered
+
+
+async def _can_pay(session: AsyncSession, group: Group, job_id: uuid.UUID) -> bool:
+    """With "wait": the submitter's balance covers an hour of this task on top of what they already run."""
+    job = await session.get(Job, job_id)
+    hourly = credits.cost(credits.rates(group), cpu=job.cpu, memory_mb=job.memory_mb, gpus=job.gpus, seconds=3600)
+    return await credits.enough_for(session, group, job.submitter_id, hourly)
 
 
 async def _best_offered_memory(session: AsyncSession, settings: Settings, groups: list[str], now: datetime) -> int:
@@ -337,6 +356,8 @@ async def _assign(session: AsyncSession, settings: Settings, signer: EnvelopeSig
     spec = {**task.spec, "max_runtime_s": given["max_runtime_s"],
             "resources": {**task.spec.get("resources", {}), "cpu": given["cpu"], "memory_mb": given["memory_mb"],
                           "disk_mb": given["disk_mb"]}}
+    if group.credits_enabled:
+        given["rates"] = credits.rates(group)
     attempt = Attempt(id=uuid.uuid4(), task_id=task.id, device_id=device.id, epoch=epoch, state="assigned",
                       lease_expires_at=now + timedelta(seconds=settings.lease_ttl_s), resources=given)
     session.add(attempt)
@@ -371,7 +392,8 @@ async def fence(session: AsyncSession, device_id: uuid.UUID, attempt_id: str, ep
         aid = uuid.UUID(attempt_id)
     except ValueError:
         raise FenceError("unknown_attempt") from None
-    attempt = (await session.execute(select(Attempt).where(Attempt.id == aid).with_for_update())).scalar_one_or_none()
+    attempt = (await session.execute(select(Attempt).where(Attempt.id == aid).with_for_update()
+                                     .execution_options(populate_existing=True))).scalar_one_or_none()
     if attempt is None or attempt.device_id != device_id:
         raise FenceError("unknown_attempt")
     task = (await session.execute(select(Task).where(Task.id == attempt.task_id).with_for_update())).scalar_one()
@@ -394,9 +416,11 @@ def _end_attempt(attempt: Attempt, state: str, reason: str, now: datetime) -> No
 
 
 async def _record_usage(session: AsyncSession, attempt: Attempt, task: Task, now: datetime,
-                        pool_paid: bool = False) -> None:
+                        pool_paid: bool = False, outcome: str = "ran") -> None:
+    """Fair share (usage_ledger) and credits (docs/design/credits.md §3.2) for an attempt that ended."""
     if not attempt.started_at:
         return
+    await credits.charge_attempt(session, attempt, task, now, outcome=outcome)
     job = await session.get(Job, task.job_id)
     seconds = max((now - attempt.started_at).total_seconds(), 0.0)
     cpu = float((attempt.resources or {}).get("cpu") or job.cpu)
@@ -537,11 +561,16 @@ async def handle_commit(session: AsyncSession, settings: Settings, device_id: uu
         t.result = {"attempt_id": str(a.id), "epoch": a.epoch, "exit_code": 0, "outputs": a.outputs,
                     "usage": a.usage, "given": a.resources}
         await _update_reliability(session, device_id, True)
-        # The bigger size worked: the tries that were too small were pool's mistake, so they leave fair share.
+        # The bigger size worked: the tries that were too small were pool's mistake. They leave fair share, and
+        # pool gives the person back what they paid for them (the owner keeps what they earned).
+        resized_tries = (await session.execute(
+            select(Attempt).join(UsageLedger, UsageLedger.attempt_id == Attempt.id)
+            .where(Attempt.task_id == t.id, Attempt.end_reason.in_(("oom_resized", "timeout_resized")),
+                   UsageLedger.pool_paid.is_(False)))).scalars().all()
+        for tried in resized_tries:
+            await credits.refund_pool_retry(session, tried, t, now)
         await session.execute(
-            update(UsageLedger).where(UsageLedger.attempt_id.in_(
-                select(Attempt.id).where(Attempt.task_id == t.id,
-                                         Attempt.end_reason.in_(("oom_resized", "timeout_resized")))))
+            update(UsageLedger).where(UsageLedger.attempt_id.in_([x.id for x in resized_tries]))
             .values(pool_paid=True))
     elif resized:
         # Not the person's failure: no failure counted, no backoff, and not a failing device either.
@@ -569,8 +598,9 @@ NO_PENALTY_ABORTS = {"owner_returned", "kill_switch", "policy", "agent_shutdown"
 async def handle_abort(session: AsyncSession, settings: Settings, device_id: uuid.UUID, msg: pm.Abort) -> None:
     f = await fence(session, device_id, msg.attempt_id, msg.epoch)
     now = utcnow()
-    await _record_usage(session, f.attempt, f.task, now)
     penalty = msg.reason not in NO_PENALTY_ABORTS
+    # The owner took the computer back (or it stopped): nothing is charged for the lost part.
+    await _record_usage(session, f.attempt, f.task, now, outcome="ran" if penalty else "lost")
     _end_attempt(f.attempt, "failed" if penalty else "preempted", f"abort_{msg.reason}", now)
     await _requeue_or_fail(session, settings, f.task, count_failure=penalty, crashed=False, now=now)
     if f.task.state == "failed" and msg.detail:
@@ -628,6 +658,7 @@ async def reconcile_on_hello(session: AsyncSession, settings: Settings, device_i
     keep = {uuid.UUID(a) for a in renewed}
     active = (await session.execute(
         select(Attempt).where(Attempt.device_id == device_id, Attempt.state.in_(ACTIVE_ATTEMPT_STATES))
+        .with_for_update().execution_options(populate_existing=True)
     )).scalars().all()
     for a in active:
         if a.id not in keep:
@@ -635,11 +666,29 @@ async def reconcile_on_hello(session: AsyncSession, settings: Settings, device_i
     return stale
 
 
+TIME_LIMIT_GRACE_S = 300
+
+
+async def enforce_time_limits(session: AsyncSession, settings: Settings, limit: int = 200) -> int:
+    """Attempts that run well past their time limit end on the server too (the agent stops them itself; this
+    is for one that does not): the task goes back to the queue, and nothing more is charged for it."""
+    now = utcnow()
+    rows = (await session.execute(
+        select(Attempt).where(
+            Attempt.state == "running", Attempt.started_at.isnot(None),
+            text("attempts.started_at + make_interval(secs => coalesce((attempts.resources->>'max_runtime_s')"
+                 f"::float8, 86400) + {TIME_LIMIT_GRACE_S}) < :now"))
+        .with_for_update(skip_locked=True).limit(limit), {"now": now})).scalars().all()
+    for a in rows:
+        await lose_attempt(session, settings, a, reason="time_limit")
+    return len(rows)
+
+
 async def lose_attempt(session: AsyncSession, settings: Settings, attempt: Attempt, reason: str) -> None:
     task = (await session.execute(select(Task).where(Task.id == attempt.task_id).with_for_update())).scalar_one()
     now = utcnow()
     was_running = attempt.state == "running"
-    await _record_usage(session, attempt, task, now)
+    await _record_usage(session, attempt, task, now, outcome="lost")
     _end_attempt(attempt, "lost", reason, now)
     if task.current_attempt_id == attempt.id and task.state in ("assigned", "running"):
         await _requeue_or_fail(session, settings, task, count_failure=was_running, crashed=False, now=now,
@@ -675,9 +724,11 @@ async def cancel_tasks(session: AsyncSession, task_filter, reason: str) -> list[
     to_stop: list[tuple[str, uuid.UUID]] = []
     for t in tasks:
         if t.current_attempt_id:
-            a = await session.get(Attempt, t.current_attempt_id)
+            a = (await session.execute(select(Attempt).where(Attempt.id == t.current_attempt_id).with_for_update()
+                                       .execution_options(populate_existing=True))).scalar_one_or_none()
             if a and a.state in ACTIVE_ATTEMPT_STATES:
-                await _record_usage(session, a, t, now)  # the computer worked until now: it counts for fair share
+                # The computer worked until now: it counts for fair share, and it is paid for in credits.
+                await _record_usage(session, a, t, now)
                 _end_attempt(a, "cancelled", reason, now)
                 to_stop.append((str(a.id), a.device_id))
         t.state = "cancelled"

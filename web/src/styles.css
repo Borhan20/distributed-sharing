@@ -147,3 +147,24 @@ ul.plain li { padding: 6px 0; border-bottom: 1px solid var(--border); }
 /* Two-step sign-in prompt for coordinators and admins */
 .mfa-banner { background: var(--warn-bg); border-radius: 10px; padding: 12px 16px; margin: 12px 0; }
 .mfa-banner p { margin: 0 0 8px; }
+
+/* Credits tab */
+.big-number {
+  font-size: 2rem;
+  font-weight: 600;
+  margin: 0.25rem 0;
+}
+.card-inset {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  flex: 1 1 280px;
+  min-width: 0;
+}
+.card-inset h3 {
+  margin-top: 0;
+  font-size: 1rem;
+}
+.danger-text {
+  color: var(--danger);
+}

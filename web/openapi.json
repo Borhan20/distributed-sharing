@@ -901,6 +901,533 @@
         }
       }
     },
+    "/api/v1/groups/{name}/credits": {
+      "get": {
+        "tags": [
+          "credits"
+        ],
+        "summary": "My Credits",
+        "operationId": "my_credits_api_v1_groups__name__credits_get",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreditsOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/groups/{name}/credits/history": {
+      "get": {
+        "tags": [
+          "credits"
+        ],
+        "summary": "My History",
+        "operationId": "my_history_api_v1_groups__name__credits_history_get",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "before_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EntryOut"
+                  },
+                  "title": "Response My History Api V1 Groups  Name  Credits History Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/groups/{name}/credits/members": {
+      "get": {
+        "tags": [
+          "credits"
+        ],
+        "summary": "Member Credits",
+        "description": "Every member's balance: for coordinators and admins (credits.md \u00a77, privacy).",
+        "operationId": "member_credits_api_v1_groups__name__credits_members_get",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MemberCreditsOut"
+                  },
+                  "title": "Response Member Credits Api V1 Groups  Name  Credits Members Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/groups/{name}/credits/give": {
+      "post": {
+        "tags": [
+          "credits"
+        ],
+        "summary": "Give Credits",
+        "operationId": "give_credits_api_v1_groups__name__credits_give_post",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GiveIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreditsOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/groups/{name}/credits/requests": {
+      "post": {
+        "tags": [
+          "credits"
+        ],
+        "summary": "Ask For Credits",
+        "operationId": "ask_for_credits_api_v1_groups__name__credits_requests_post",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "credits"
+        ],
+        "summary": "List Requests",
+        "description": "The coordinator sees every member's requests; a member sees their own.",
+        "operationId": "list_requests_api_v1_groups__name__credits_requests_get",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "open",
+              "title": "State"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RequestOut"
+                  },
+                  "title": "Response List Requests Api V1 Groups  Name  Credits Requests Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/groups/{name}/credits/requests/{request_id}/approve": {
+      "post": {
+        "tags": [
+          "credits"
+        ],
+        "summary": "Approve Request",
+        "operationId": "approve_request_api_v1_groups__name__credits_requests__request_id__approve_post",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/groups/{name}/credits/requests/{request_id}/decline": {
+      "post": {
+        "tags": [
+          "credits"
+        ],
+        "summary": "Decline Request",
+        "operationId": "decline_request_api_v1_groups__name__credits_requests__request_id__decline_post",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/groups/{name}/credits/grant": {
+      "post": {
+        "tags": [
+          "credits"
+        ],
+        "summary": "Grant Credits",
+        "operationId": "grant_credits_api_v1_groups__name__credits_grant_post",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrantIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberCreditsOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/credits/move": {
+      "post": {
+        "tags": [
+          "credits"
+        ],
+        "summary": "Move Credits",
+        "operationId": "move_credits_api_v1_me_credits_move_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MoveOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/devices/enrollment-codes": {
       "post": {
         "tags": [
@@ -2775,6 +3302,47 @@
   },
   "components": {
     "schemas": {
+      "ApproveIn": {
+        "properties": {
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1000000.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          }
+        },
+        "type": "object",
+        "title": "ApproveIn"
+      },
+      "AskIn": {
+        "properties": {
+          "amount": {
+            "type": "number",
+            "maximum": 1000000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Amount"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "amount",
+          "reason"
+        ],
+        "title": "AskIn"
+      },
       "AuditOut": {
         "properties": {
           "id": {
@@ -2874,6 +3442,112 @@
         },
         "type": "object",
         "title": "CloseBody"
+      },
+      "CreditRates": {
+        "properties": {
+          "cpu_hour": {
+            "type": "number",
+            "maximum": 10.0,
+            "minimum": 0.1,
+            "title": "Cpu Hour",
+            "default": 1
+          },
+          "gib_hours_per_credit": {
+            "type": "number",
+            "maximum": 64.0,
+            "minimum": 0.5,
+            "title": "Gib Hours Per Credit",
+            "default": 4
+          },
+          "gpu_hour": {
+            "type": "number",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Gpu Hour",
+            "default": 10
+          }
+        },
+        "type": "object",
+        "title": "CreditRates"
+      },
+      "CreditsOut": {
+        "properties": {
+          "group": {
+            "type": "string",
+            "title": "Group"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "balance": {
+            "type": "number",
+            "title": "Balance"
+          },
+          "free": {
+            "type": "number",
+            "title": "Free"
+          },
+          "earned": {
+            "type": "number",
+            "title": "Earned"
+          },
+          "start": {
+            "type": "number",
+            "title": "Start"
+          },
+          "rates": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Rates"
+          },
+          "out_of_credits": {
+            "type": "string",
+            "title": "Out Of Credits"
+          },
+          "standby_percent": {
+            "type": "integer",
+            "title": "Standby Percent"
+          },
+          "credits_from": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Credits From"
+          },
+          "credits_out": {
+            "type": "boolean",
+            "title": "Credits Out"
+          },
+          "open_request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RequestOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "group",
+          "enabled",
+          "balance",
+          "free",
+          "earned",
+          "start",
+          "rates",
+          "out_of_credits",
+          "standby_percent",
+          "credits_from",
+          "credits_out"
+        ],
+        "title": "CreditsOut"
       },
       "DeleteGroupBody": {
         "properties": {
@@ -3253,6 +3927,152 @@
         ],
         "title": "EnrollmentCodeOut"
       },
+      "EntryOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "amount": {
+            "type": "number",
+            "title": "Amount"
+          },
+          "free": {
+            "type": "number",
+            "title": "Free"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "device": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device"
+          },
+          "counterparty": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Counterparty"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "amount",
+          "free",
+          "note",
+          "job_id",
+          "device",
+          "counterparty",
+          "created_at"
+        ],
+        "title": "EntryOut"
+      },
+      "GiveIn": {
+        "properties": {
+          "to": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "To"
+          },
+          "amount": {
+            "type": "number",
+            "maximum": 1000000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Amount"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "to",
+          "amount"
+        ],
+        "title": "GiveIn"
+      },
+      "GrantIn": {
+        "properties": {
+          "to": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "To"
+          },
+          "amount": {
+            "type": "number",
+            "maximum": 1000000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Amount"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "to",
+          "amount",
+          "reason"
+        ],
+        "title": "GrantIn"
+      },
       "GroupCreate": {
         "properties": {
           "name": {
@@ -3524,6 +4344,45 @@
             "title": "Default Time Limit S",
             "default": 14400
           },
+          "credits_enabled": {
+            "type": "boolean",
+            "title": "Credits Enabled",
+            "default": false
+          },
+          "credit_start": {
+            "type": "number",
+            "title": "Credit Start",
+            "default": 20
+          },
+          "credit_rates": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Credit Rates"
+          },
+          "out_of_credits": {
+            "type": "string",
+            "title": "Out Of Credits",
+            "default": "lowest"
+          },
+          "standby_percent": {
+            "type": "integer",
+            "title": "Standby Percent",
+            "default": 0
+          },
+          "credits_from": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Credits From"
+          },
+          "credits_out": {
+            "type": "boolean",
+            "title": "Credits Out",
+            "default": true
+          },
           "state": {
             "type": "string",
             "title": "State"
@@ -3740,6 +4599,94 @@
               }
             ],
             "title": "Default Time Limit S"
+          },
+          "credits_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credits Enabled"
+          },
+          "credit_start": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credit Start"
+          },
+          "credit_rates": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CreditRates"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "out_of_credits": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "lowest",
+                  "wait"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Out Of Credits"
+          },
+          "standby_percent": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Standby Percent"
+          },
+          "credits_from": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credits From"
+          },
+          "credits_out": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credits Out"
           }
         },
         "type": "object",
@@ -4111,6 +5058,18 @@
               }
             ],
             "title": "Sizing"
+          },
+          "credits": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credits"
           }
         },
         "type": "object",
@@ -4251,6 +5210,34 @@
         ],
         "title": "LogLine"
       },
+      "MemberCreditsOut": {
+        "properties": {
+          "member": {
+            "type": "string",
+            "title": "Member"
+          },
+          "balance": {
+            "type": "number",
+            "title": "Balance"
+          },
+          "free": {
+            "type": "number",
+            "title": "Free"
+          },
+          "earned": {
+            "type": "number",
+            "title": "Earned"
+          }
+        },
+        "type": "object",
+        "required": [
+          "member",
+          "balance",
+          "free",
+          "earned"
+        ],
+        "title": "MemberCreditsOut"
+      },
       "MemberOut": {
         "properties": {
           "user_id": {
@@ -4293,6 +5280,47 @@
           "joined_at"
         ],
         "title": "MemberOut"
+      },
+      "MoveIn": {
+        "properties": {
+          "from_group": {
+            "type": "string",
+            "title": "From Group"
+          },
+          "to_group": {
+            "type": "string",
+            "title": "To Group"
+          },
+          "amount": {
+            "type": "number",
+            "maximum": 1000000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Amount"
+          }
+        },
+        "type": "object",
+        "required": [
+          "from_group",
+          "to_group",
+          "amount"
+        ],
+        "title": "MoveIn"
+      },
+      "MoveOut": {
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/CreditsOut"
+          },
+          "target": {
+            "$ref": "#/components/schemas/CreditsOut"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "target"
+        ],
+        "title": "MoveOut"
       },
       "MyRegistryOut": {
         "properties": {
@@ -4421,6 +5449,71 @@
           "removed_at"
         ],
         "title": "RemovedDeviceOut"
+      },
+      "RequestOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "member": {
+            "type": "string",
+            "title": "Member"
+          },
+          "amount": {
+            "type": "number",
+            "title": "Amount"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "granted": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Granted"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "member",
+          "amount",
+          "reason",
+          "state",
+          "granted",
+          "created_at",
+          "decided_at"
+        ],
+        "title": "RequestOut"
       },
       "ResultsTable": {
         "properties": {
@@ -4573,6 +5666,18 @@
               }
             ],
             "title": "Usage"
+          },
+          "given": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Given"
           }
         },
         "type": "object",

@@ -731,6 +731,7 @@ is packaged.
 | Delete a job | `pool jobs delete JOB-ID` |
 | Delete / restore a group | `pool groups delete my-lab` / `pool groups deleted` / `pool groups restore my-lab` |
 | Usage in a group | `pool groups usage my-lab --days 7` |
+| Credits ([§10](#credits-share-to-earn-use-to-spend)) | `pool credits`, `pool credits history`, `pool credits give USER N`, `pool credits ask N --reason TEXT`, `pool credits move N --from G1 --to G2` |
 
 ### AI coding agents
 
@@ -788,6 +789,52 @@ path). The server can never widen them. **Turn off** in the browser can only
 narrow them. A group's coordinator can also remove your computer from their
 group; your computer's page then says so, and only they can let it back in.
 
+### Credits: share to earn, use to spend
+
+In a group that uses credits, the more you share, the more you can use.
+
+| What happens | Credits |
+|---|---|
+| Your computer runs someone else's task | You **earn** what they pay |
+| Your task runs on someone else's computer | You **pay**: 1 credit for 1 CPU for 1 hour, 1 credit for 4 GiB of memory for 1 hour, 10 for a GPU for 1 hour |
+| Your task runs on your own computer | Free |
+| A size pool chose was too small, and pool tries again | You pay for the small try at first. When a bigger try works, the small try's charge is reversed: you get it back, and the owner gives back what it earned. |
+| A task runs longer than its time limit | Never billed for more than its time limit |
+| The computer went away during your task | Nothing for the lost part |
+| You join the group | Free **start credits** (20 by default, at most 100) |
+
+When pool chose the size, you pay for what the task used, not for what it
+held. A first run, which holds a whole computer's free memory, costs only what
+it used.
+
+**Where you see it:** the group's **Credits** tab (your balance and history),
+the job page (**Credits**: the expected cost and what it cost), and after
+`pool run` (`It cost 1.25 credits.`).
+
+**Out of credits?** Your jobs still run, but only on computers nobody with
+credits is waiting for. (A coordinator can choose instead that they wait.) To
+get credits:
+
+1. Share a computer: `pool-agent share GROUP`.
+2. Ask a member to give you some.
+3. Ask the coordinator: **Credits → Ask the coordinator**, or `pool credits ask 50 --reason "thesis experiments"`.
+
+| You want to | In the browser (**Credits** tab) | On the command line |
+|---|---|---|
+| See your credits | **Your credits** | `pool credits` |
+| See what changed | **History** | `pool credits history` |
+| Give credits to a member | **Give credits to a member** | `pool credits give bob 10` |
+| Ask the coordinator | **Ask the coordinator for credits** | `pool credits ask 50 --reason "..."` |
+| Use earned credits in another group | – | `pool credits move 30 --from my-lab --to vision-lab` |
+
+**Free and earned credits.** Start credits, credits from the coordinator and
+"earn while waiting" are **free**: they are spent first, and they stay in their
+group. **Earned** credits can also move to another group you belong to, but
+only if that group's coordinator has named this group under **Settings →
+Credits** (none by default). They are converted by the two groups' CPU rates.
+Credits you earn from someone who paid with credits they did not have stay in
+the group.
+
 ## 11. Run a group (coordinators and admins)
 
 ### Roles
@@ -800,6 +847,8 @@ group; your computer's page then says so, and only they can let it back in.
 | Vote on join requests (when the rule asks members) | ✓ | ✓ | ✓ | – | – |
 | Create invite links, read the audit log, cancel or delete anyone's job | ✓ | ✓ | – | – | – |
 | Remove a computer from the group, and let it back in | ✓ | ✓ | – | – | – |
+| See every member's credits | ✓ | ✓ | – | – | – |
+| Give free credits, answer requests for credits | ✓ | – | – | – | – |
 | Change settings and roles, remove members, close, delete or restore the group | ✓ | – | – | – | – |
 
 A **contributor** fits a lab machine's account that only shares; a
@@ -817,7 +866,9 @@ who only run jobs or share computers are not asked.
 - **Invite someone:** tab **Invites** → role, number of uses, expiry → **Create invite** → copy the link and send it. On the CLI: `pool invite create my-lab --role member --max-uses 5 --hours 72`. Admins can invite members, contributors and submitters; only the coordinator can invite admins.
 - **Join requests:** tab **Join requests**, or `pool requests list my-lab` and `pool requests vote my-lab REQUEST-ID approve`. The rule is one of: the coordinator alone, any *k* members, or a majority.
 - **Roles and removal:** tab **Members**, or `pool members role my-lab bob admin` and `pool members remove my-lab bob --yes`. When someone is removed, work running on their computers for this group stops and goes back to the queue.
-- **Fair use:** tab **Usage**, or `pool groups usage my-lab`. When several people's jobs wait, the person who used the least computer time in the last 7 days goes first.
+- **Fair use:** tab **Usage**, or `pool groups usage my-lab`. When several people's jobs wait, the person who used the least computer time in the last 7 days goes first. With credits on, people with credits go before people without.
+- **Credits:** tab **Settings → Credits** turns them on, and sets the start credits (at most 100), what happens when a member has none left (lowest priority, or wait), "earn while waiting", which groups' earned credits members may bring in (none by default), and whether credits earned here may go out. Rates stay close to 1 credit per CPU hour (0.1 to 10). They are on for new Dev team, Student group and Hackathon groups, and off for Research team and Course. Turning them on gives every member their start credits.
+- **Free credits:** tab **Credits**. **Give free credits** to a member (not to yourself), with a reason. Under **Requests for credits**, approve a request (all of it, or less) or decline it. On the CLI: `pool credits grant bob 30 --reason "thesis"`, `pool credits requests`, `pool credits approve ID [AMOUNT]`, `pool credits decline ID`. Everything is in the audit log.
 - **Records:** tab **Audit log** (coordinators and admins) lists every important action. It is hash-chained, so changes are detectable.
 - **Time limit of a first run:** tab **Settings** (coordinator only). The longest a task may run when someone runs an image for the first time and sets no limit. 4 hours by default.
 - **Settings and closing:** tab **Settings** (coordinator only). Close the group when the work is done (`pool groups close my-lab --yes`): work stops, everything stays visible.

@@ -11,8 +11,9 @@ import { DevicesTab, UsageTab } from "./group/DevicesTab";
 import { AuditTab } from "./group/AuditTab";
 import { SettingsTab } from "./group/SettingsTab";
 import { ImagesTab } from "./group/ImagesTab";
+import { CreditsTab } from "./group/CreditsTab";
 
-type TabId = "jobs" | "members" | "invites" | "requests" | "devices" | "images" | "usage" | "audit" | "settings";
+type TabId = "jobs" | "members" | "invites" | "requests" | "devices" | "images" | "usage" | "credits" | "audit" | "settings";
 
 const MANAGERS = new Set(["coordinator", "admin"]);
 const VOTERS = new Set(["coordinator", "admin", "member"]);
@@ -37,6 +38,7 @@ export function GroupPage() {
     tabs.push({ id: "requests", label: "Join requests" });
   }
   tabs.push({ id: "devices", label: "Devices" }, { id: "images", label: "Images" }, { id: "usage", label: "Usage" });
+  tabs.push({ id: "credits", label: "Credits" });
   if (MANAGERS.has(role)) tabs.push({ id: "audit", label: "Audit log" });
   if (role === "coordinator") tabs.push({ id: "settings", label: "Settings" });
   const requested = params.get("tab") as TabId | null;
@@ -64,6 +66,7 @@ export function GroupPage() {
         {active === "devices" && <DevicesTab group={g} />}
         {active === "images" && <ImagesTab group={g} />}
         {active === "usage" && <UsageTab group={g} />}
+        {active === "credits" && <CreditsTab group={g} />}
         {active === "audit" && <AuditTab group={g} />}
         {active === "settings" && <SettingsTab group={g} />}
       </div>

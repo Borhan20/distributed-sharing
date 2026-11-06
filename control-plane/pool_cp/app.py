@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from . import agent_ws, builtin_registry, storage
-from .api import devices, groups, jobs, registries, registry_api, results
+from .api import credits, devices, groups, jobs, registries, registry_api, results
 from .auth import TokenVerifier
 from .auth.dev_idp import DEV_AUDIENCE, DEV_ISSUER, DevIdP
 from .auth.dev_idp import router as dev_router
@@ -91,6 +91,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                                  settings.oidc_jwks_url)
 
     app.include_router(groups.router)
+    app.include_router(credits.router)
     app.include_router(devices.router)
     app.include_router(jobs.router)
     app.include_router(registries.router)

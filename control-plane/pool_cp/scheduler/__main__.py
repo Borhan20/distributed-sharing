@@ -14,7 +14,7 @@ import signal
 
 from sqlalchemy import text
 
-from .. import builtin_registry, storage
+from .. import builtin_registry, credits, storage
 from ..config import get_settings
 from ..db import make_engine, make_sessionmaker
 from ..deletion import purge_deleted_groups
@@ -83,6 +83,12 @@ async def run(stop: asyncio.Event, settings=None, on_tick=None) -> None:
                 async with maker() as s:
                     await core.rollup_jobs(s)
                     await s.commit()
+                async with maker() as s:  # a device cannot keep a task past its time limit
+                    await core.enforce_time_limits(s, settings)
+                    await s.commit()
+                # Credits: long tasks every hour, "earn while waiting" (each item in its own transaction).
+                await credits.charge_running(maker, utcnow())
+                await credits.pay_standby(maker, utcnow(), settings.heartbeat_interval_s)
             except Exception:  # keep the loop alive; errors are logged with traceback
                 log.exception("scheduler iteration failed")
             if on_tick is not None:
