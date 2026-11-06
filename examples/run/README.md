@@ -29,7 +29,8 @@ Until the CLI is packaged, type `uv run pool run` instead of `pool run`.
 
 ## What they have in common
 
-- **No settings needed.** They fit the defaults: 1 CPU, 1 GiB memory, 1 hour.
+- **No settings needed.** pool chooses the sizes from your earlier runs. With
+  `--local` they run with 1 CPU, 1 GiB memory and 1 hour, which is enough.
   Only `go-primes` has a `pool.yaml`, to show how to save a setting (`cpu: 4`).
 - **Everything is in the image.** Packages are installed in the `Dockerfile`,
   because jobs have no network while they run. The data is made up and is

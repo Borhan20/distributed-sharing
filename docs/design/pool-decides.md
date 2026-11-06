@@ -359,3 +359,39 @@ Not built in step A: measuring the agent's own disk writes outside `/out`
 (the file system is read-only, and `/tmp` counts as memory), and per-computer
 run times for "fast for this image" ([§4.4](#44-choose-the-computer)).
 
+### Step B: size by itself (built 6 November 2026)
+
+| Topic | Choice | Why |
+|---|---|---|
+| What is "left out" | `cpu`, `memory`, `disk`, `time_limit` missing from the job (form: **Let pool decide**, the default; `pool run` without `--cpus`, `-m`, `--disk`, `--time-limit`) | The job file stays the one input. A size given is firm. |
+| History | The person's own measured attempts (newest 200), filtered by image name without tag or digest; the closest of: same command and arguments, same command, same image; at most 10 runs | §10: per person. A general image (`python`) runs many programs, so the command counts. |
+| Memory | Highest use × 1.25, in 64 MiB steps. Out-of-memory runs newer than the last good run count as "needs twice that". | A later success shows the real need. |
+| CPU | Average use × 1.2, in half CPUs; twice the last run's CPU if it used 85% or more of it | Burst above the reserved CPU (§4.3) is not built, so pool learns from the next run instead. |
+| Time limit | 3 × the longest run, at least 30 min, at most 7 days. First run: the group's `default_time_limit_s` (4 h; **Settings** tab, coordinator) | §10. |
+| Disk | Image + 1.5 × the largest output, at least 1 GiB; first run 1 GiB | Disk only decides where a task fits; the file system is read-only. A first run asked for 2 GiB at first, more than a small share offers, so it never started (found by the e2e test). |
+| First run | The job holds a 256 MiB placeholder for matching; each attempt gets the computer's whole free memory. For 60 s the job only goes to a computer with at least 75% of the most memory any online computer offers. | §10: "the most a free computer offers". After a minute any computer will do, so a busy big computer cannot block it. |
+| One first run per person | A first-run job is skipped while the person has another first-run attempt assigned or running | A first run holds a whole computer. |
+| Part 0 first | While the job is a first run, only task 0 is offered. When it ends (not out of memory or time), the job's sizes are set from it. | §4.5. Before, it waited only until the end, not "after a minute": measuring while it runs would need usage in heartbeats. |
+| Growing | Out of memory or out of time on a size pool chose: memory × 2 (a first run: a computer with more free memory than it had), time × 2; at most 3 steps. The attempt ends as `preempted` (`oom_resized`, `timeout_resized`), the task's failures do not change, and its usage row is `pool_paid` (left out of fair share). | §3 rule 3. |
+| Each attempt's size | Stored on the attempt (`attempts.resources`) and put into the signed task envelope | The job's sizes can change while it runs; the device only ever gets concrete numbers. |
+| Reasons | `jobs.sizing.reasons`: one line per size at submit, more lines when pool grows or learns. `decided` marks where the later ones start. | §4.9. Shown by `pool run`, `pool submit`, `pool attach` and the job page. |
+
+**Changed after the security review of step B:**
+
+| Problem found | Now |
+|---|---|
+| Part 0 of a first run failed without a result (e.g. its image could not be pulled): the other parts waited for ever, and such jobs took the scheduler's slots | Once part 0 has ended in any way, the other parts may start (as first runs). A job is only ranked when it has a task it may start now. |
+| A run with one reading has no CPU figure, and sizing crashed on it (submit gave an error, the device's connection dropped) | CPU comes only from runs with a figure. Sizing errors are logged and never cost a result. One message the server cannot handle no longer drops the device's connection. |
+| A first run took the free memory the device claimed | It gets at most the device's share for that group, minus what that group's tasks already hold there. A device whose share is too small is skipped. |
+| A dishonest device could make sizes huge | Learned sizes never go above the biggest computer shared with the group. Runs with capped numbers are ignored, and so is a device whose runs peaked more than 2 × above every other device. Image sizes are capped at 1 TiB. |
+| Tries pool caused were left out of fair share at once, so timing out on purpose avoided fair share | They count until a try with the bigger size succeeds; then they leave fair share. Cancelled runs now count too. |
+| Parts that ran out of memory together used up the growth steps | A try with a size already grown by another part counts as pool's, without a step. |
+| Sizing reasons showed numbers from the submitter's other groups to everyone | Only the submitter and the group's coordinators and admins see the reasons. |
+| An explicit time limit of 0, a negative one, or huge sizes gave a server error | They are refused with a plain message (1 s to 365 days; at most 4096 CPUs, 1024 TiB). |
+
+Not built in step B: CPU above the reserved amount (needs one parent control
+group per computer), "stuck" detection, `--dry-run`, growing the disk, and an
+owner's maximum time limit (the agent has none yet; pool's own limits stop at
+7 days). "One first run per person" can let two through when two computers ask
+at the same moment.
+

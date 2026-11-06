@@ -290,3 +290,35 @@ async def test_each_run_is_measured_and_out_of_memory_is_named(platform):
     task = (await http.get(f"/api/v1/jobs/{oom}/tasks")).json()[0]
     assert j["state"] == "failed" and task["result"]["oom_killed"] is True, task
     assert "out of memory" in task["result"]["error"]
+
+
+async def test_pool_chooses_sizes_learns_and_grows_after_out_of_memory(platform):
+    """docs/design/pool-decides.md step B with the real agent: no sizes given."""
+    cp, http, agents = platform
+    agents[0].start()
+    # sh -c SCRIPT NAME MiB: holds MiB of memory for 3 s. The command stays the same; only the argument changes.
+    hold = ["sh", "-c", "a=$(dd if=/dev/zero bs=1048576 count=$1 2>/dev/null | tr '\\000' 'a'); sleep 3; echo ${#a}",
+            "hold"]
+
+    def spec(name: str, mib: int) -> dict:
+        return {"apiVersion": "pool/v1alpha1", "kind": "Job", "metadata": {"name": name},
+                "spec": {"image": busybox_image(), "command": hold, "args": [str(mib)], "retries": 0}}
+
+    first = await submit(http, spec("first", 100))
+    j = await wait_job(http, first)
+    assert j["state"] == "succeeded", j
+    task = (await http.get(f"/api/v1/jobs/{first}/tasks")).json()[0]
+    assert task["given"]["first_run"] is True and task["given"]["memory_mb"] >= 1024, task["given"]
+    assert 90 <= task["usage"]["peak_memory_mb"] <= 260
+
+    # The same command needs twice as much now: the learned size is too small, so pool grows it.
+    second = await submit(http, spec("second", 200))
+    j = (await http.get(f"/api/v1/jobs/{second}")).json()
+    assert j["sizing"]["first_run"] is False and j["sizing"]["match"] == "image and command"
+    learned = j["requested"]["memory_mb"]
+    assert 128 <= learned < 400, j["sizing"]
+    j = await wait_job(http, second)
+    assert j["state"] == "succeeded", j
+    task = (await http.get(f"/api/v1/jobs/{second}/tasks")).json()[0]
+    assert task["failures"] == 0 and task["attempts"] >= 2 and task["given"]["memory_mb"] > learned
+    assert any("ran out of memory" in r for r in j["sizing"]["reasons"]), j["sizing"]["reasons"]

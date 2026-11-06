@@ -7,7 +7,8 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
  */
 
 export type RunMode = "once" | "parts" | "sweep";
-export type Size = "small" | "medium" | "large" | "custom";
+// "auto": leave the sizes out, so pool chooses them from your earlier runs (docs/design/pool-decides.md).
+export type Size = "auto" | "small" | "medium" | "large" | "custom";
 
 export type SweepRow = { name: string; values: string };
 
@@ -27,7 +28,7 @@ export type JobForm = {
   retries: number;
 };
 
-export const SIZES: Record<Exclude<Size, "custom">, { label: string; cpu: number; memory: string; disk: string }> = {
+export const SIZES: Record<Exclude<Size, "custom" | "auto">, { label: string; cpu: number; memory: string; disk: string }> = {
   small: { label: "Small: 0.5 CPU, 512 MiB memory, 1 GiB disk", cpu: 0.5, memory: "512Mi", disk: "1Gi" },
   medium: { label: "Medium: 2 CPU, 4 GiB memory, 10 GiB disk", cpu: 2, memory: "4Gi", disk: "10Gi" },
   large: { label: "Large: 8 CPU, 16 GiB memory, 20 GiB disk", cpu: 8, memory: "16Gi", disk: "20Gi" },
@@ -50,12 +51,12 @@ export const EXAMPLE_FORM: JobForm = {
   mode: "parts",
   parts: "auto",
   sweep: [{ name: "seed", values: "0..4" }],
-  size: "small",
+  size: "auto",
   cpu: SIZES.small.cpu,
   memory: SIZES.small.memory,
   disk: SIZES.small.disk,
   gpu: 0,
-  timeLimit: "10m",
+  timeLimit: "",
   retries: 2,
 };
 
@@ -97,10 +98,12 @@ export function formToJob(f: JobForm): Record<string, unknown> {
     }
     job.sweep = sweep;
   }
-  const size = f.size === "custom" ? f : SIZES[f.size];
-  job.cpu = size.cpu;
-  job.memory = size.memory;
-  job.disk = size.disk;
+  if (f.size !== "auto") {
+    const size = f.size === "custom" ? f : SIZES[f.size];
+    job.cpu = size.cpu;
+    job.memory = size.memory;
+    job.disk = size.disk;
+  }
   if (f.gpu > 0) job.gpu = f.gpu;
   if (f.timeLimit.trim()) job.time_limit = f.timeLimit.trim();
   job.retries = f.retries;
@@ -195,9 +198,11 @@ export function jobToForm(doc: Record<string, unknown>): JobForm {
   const meta = (full ? doc.metadata : doc) as Record<string, unknown> | undefined;
   const asked = (doc.as_submitted ?? {}) as { image?: string; parts?: "auto" | number | null };
   const resources = (full ? spec.resources : spec) as Record<string, unknown> | undefined;
-  const cpu = Number(resources?.cpu ?? 1);
-  const memory = String(resources?.memory ?? "1Gi");
-  const disk = String(resources?.disk ?? "1Gi");
+  // Sizes left out (null in a stored job) were pool's to choose: "Run again" leaves them to pool again.
+  const auto = resources?.cpu == null && resources?.memory == null && resources?.disk == null;
+  const cpu = Number(resources?.cpu ?? SIZES.small.cpu);
+  const memory = String(resources?.memory ?? SIZES.small.memory);
+  const disk = String(resources?.disk ?? SIZES.small.disk);
   const gpuRaw = resources?.gpu;
   const gpu = typeof gpuRaw === "number" ? gpuRaw : Number((gpuRaw as { count?: number } | undefined)?.count ?? 0);
   const matrix = (spec.matrix ?? spec.sweep) as Record<string, unknown> | undefined;
@@ -211,12 +216,12 @@ export function jobToForm(doc: Record<string, unknown>): JobForm {
     mode,
     parts: parts === "auto" || parts === undefined || parts === null ? "auto" : Number(parts),
     sweep: matrix ? Object.entries(matrix).map(([name, v]) => ({ name, values: valuesText(v) })) : [],
-    size: sizeOf(cpu, memory, disk),
+    size: auto ? "auto" : sizeOf(cpu, memory, disk),
     cpu,
     memory,
     disk,
     gpu,
-    timeLimit: String(spec.max_runtime ?? spec.time_limit ?? "1h"),
+    timeLimit: String(spec.max_runtime ?? spec.time_limit ?? ""),
     retries: Number(spec.retries ?? 3),
   };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { durationText, oversizeHint, sizeText, taskUsageText, usedText } from "./usage";
+import { durationText, oversizeHint, requestedText, sizeText, taskUsageText, usedText } from "./usage";
 
 describe("usage texts", () => {
   it("formats sizes and durations", () => {
@@ -27,5 +27,15 @@ describe("usage texts", () => {
     expect(usedText(req, { measured: 0 })).toBeNull();
     expect(oversizeHint(req, used)).toContain("about 1.2 GiB");
     expect(oversizeHint({ memory_mb: 1024 }, used)).toBeNull();
+  });
+
+  it("describes the sizes each task gets", () => {
+    expect(requestedText({ cpu: 1, memory_mb: 1792, disk_mb: 2048, gpus: 0, time_limit_s: 1800 })).toBe(
+      "1 CPU, 1.8 GiB memory, 2.0 GiB disk, time limit 30 min",
+    );
+    expect(requestedText(null)).toBeNull();
+    expect(requestedText({ cpu: 1, memory_mb: null, first_run: true, time_limit_s: 14400 })).toBe(
+      "1 CPU, all the free memory of its computer (first run), time limit 4 h",
+    );
   });
 });

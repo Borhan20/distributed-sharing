@@ -23,9 +23,9 @@ many files, many test files.
 | `workdir` | Working directory in the container | the image's |
 | `parts` | Run this many copies, or `auto` | run once |
 | `sweep` | One task per combination of values | – |
-| `cpu`, `memory`, `disk` | Per task. Cores may be fractional. Sizes like `512Mi`, `4Gi`. | `1`, `1Gi`, `1Gi` |
+| `cpu`, `memory`, `disk` | Per task. Cores may be fractional. Sizes like `512Mi`, `4Gi`. | pool decides from earlier runs |
 | `gpu` | GPUs per task | `0` |
-| `time_limit` | Per task, e.g. `30m`, `2h` | `1h` |
+| `time_limit` | Per task, e.g. `30m`, `2h` | pool decides from earlier runs |
 | `retries` | Tries after a failure, 0–20. A task that fails on 2 different computers is marked failed. | `3` |
 | `name`, `group` | The job's name and group (or `--group`) | from the image, from `pool login --group` |
 | `env` | Environment variables. Not for secrets. | – |

@@ -82,21 +82,22 @@ To stop a job on purpose, use `pool cancel JOB-ID`.
 
 ## 5. Choose the size
 
-| Flag | Default | Notes |
+Leave sizes out and pool chooses them from the user's earlier runs of the same
+image. It prints why after submitting. Set a size only when it is known.
+
+| Flag | If left out | Notes |
 |---|---|---|
-| `--cpus N` | 1 | |
-| `-m SIZE` | 1g | |
-| `--disk SIZE` | 1g | |
+| `--cpus N` | pool decides | |
+| `-m SIZE` | pool decides | A first run of an image gets all the free memory of its computer. |
+| `--disk SIZE` | pool decides | |
 | `--gpus N` | 0 | GPUs are not yet tested on real hardware. |
-| `--time-limit T` | 1h | e.g. `30m`, `6h` |
+| `--time-limit T` | pool decides | First run: the group's default (4 h unless changed). Later: 3 × the longest run. |
 | `--retries N` | 0 | Only for flaky programs. A failing program fails the same way again. |
 
-pool does not choose sizes by itself yet. When the user does not know them:
-
-1. Measure with `pool run --local`. At the end it prints `pool: It used: memory ..., CPU ..., run time ...`. Ask for about 1.25 × that memory.
-2. `Out of memory` in the result or the hints (or exit code 137) means the program hit its memory limit. Run it again with twice the memory.
-3. Stopped at the time limit: run it again with a longer `--time-limit`.
-4. Ask only for what the program needs. Smaller tasks fit on more computers and start sooner.
+- **Out of memory or time with a size pool chose:** pool tries again with more by itself (at most 3 times). Do not resubmit.
+- **Out of memory with a size you set:** run it again with about twice the memory, or leave `-m` out.
+- **To learn a size first:** `pool run --local` prints `pool: It used: memory ..., CPU ..., run time ...`.
+- **A first run waits** while the user has another first run going. Setting `-m` skips that wait.
 
 ## 6. Exit codes
 

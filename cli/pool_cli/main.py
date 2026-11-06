@@ -308,7 +308,18 @@ def _submit(data: dict, group: str | None) -> dict:
     g = group or spec.metadata.group or _group(None)
     job = api("POST", f"/api/v1/groups/{g}/jobs", json=data)
     typer.echo(f"submitted {job['name']} ({job['tasks']['total']} task(s)) id={job['id']}")
+    for line in sizing_lines(job):
+        typer.echo(line)
     return job
+
+
+def sizing_lines(job: dict, new_only: bool = False) -> list[str]:
+    """Why each size was chosen (docs/design/pool-decides.md §4.9): pool's own choices, not the ones you set."""
+    sizing = job.get("sizing") or {}
+    reasons = sizing.get("reasons") or []
+    if new_only:
+        return list(reasons[sizing.get("decided", len(reasons)):])
+    return [r for r in reasons[: sizing.get("decided", len(reasons))] if not r.endswith(": as you asked.")]
 
 
 @app.command()

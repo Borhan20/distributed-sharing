@@ -41,6 +41,7 @@ from ..models import (
 )
 from ..registry import RegistryError, parse_image
 from ..timeutil import utcnow
+from . import sizing
 from .usage import bounded_usage
 
 log = logging.getLogger(__name__)
@@ -166,6 +167,10 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
         "dedicated": device.org_owned_dedicated,
         "device": device.id,
         "decline_since": now - timedelta(seconds=settings.decline_cooldown_s),
+        # A first run gets a computer's whole free memory (sizing). For its first minute it waits for one of
+        # the computers that offer the most; after that, any computer will do.
+        "best_mem": await _best_offered_memory(session, settings, [g.name for g, _ in groups], now),
+        "first_wait": now - timedelta(seconds=FIRST_RUN_PREFERENCE_S),
     }
     # Step 1: rank the active jobs this device may run (jobs are few; tasks can
     # be many). Order: the agent's group priority, then fair share (least
@@ -179,10 +184,11 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
         ), usage AS (
             SELECT group_id, user_id, sum(cpu_seconds) AS cpu_s
             FROM usage_ledger
-            WHERE created_at > :since AND group_id IN (SELECT group_id FROM sh)
+            WHERE created_at > :since AND group_id IN (SELECT group_id FROM sh) AND NOT pool_paid
             GROUP BY group_id, user_id
         )
-        SELECT j.id, u.handle, (m.probation_until IS NOT NULL AND m.probation_until > :now) AS on_probation
+        SELECT j.id, u.handle, (m.probation_until IS NOT NULL AND m.probation_until > :now) AS on_probation,
+               coalesce((j.sizing->>'first_run')::boolean, false) AS first_run, j.memory_mb, j.group_id
         FROM jobs j
         JOIN sh ON sh.group_id = j.group_id
         JOIN users u ON u.id = j.submitter_id
@@ -197,7 +203,18 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
           AND NOT j.egress
           AND (sh.accept_all OR sh.handles ? u.handle)
           AND (m.probation_until IS NULL OR m.probation_until <= :now OR sh.accept_new)
-          AND EXISTS (SELECT 1 FROM tasks p WHERE p.job_id = j.id AND p.state = 'pending' AND p.not_before <= :now)
+          -- A task it may start now. A first run starts with part 0 alone, until part 0 has ended in any way.
+          AND EXISTS (SELECT 1 FROM tasks p WHERE p.job_id = j.id AND p.state = 'pending' AND p.not_before <= :now
+                      AND (NOT coalesce((j.sizing->>'first_run')::boolean, false) OR p.index = 0
+                 OR EXISTS (SELECT 1 FROM tasks z WHERE z.job_id = j.id AND z.index = 0
+                            AND z.state IN ('succeeded', 'failed', 'cancelled'))))
+          -- A first run (sizing): one per person at a time, on a computer that offers about the most memory.
+          AND NOT (coalesce((j.sizing->>'first_run')::boolean, false) AND (
+                (:mem < :best_mem * 0.75 AND j.created_at > :first_wait)
+                OR EXISTS (SELECT 1 FROM attempts fa JOIN tasks ft ON ft.id = fa.task_id
+                           JOIN jobs fj ON fj.id = ft.job_id
+                           WHERE fj.submitter_id = j.submitter_id AND fa.state IN ('assigned', 'running')
+                             AND coalesce((fa.resources->>'first_run')::boolean, false))))
         ORDER BY sh.prio, coalesce(us.cpu_s, 0), j.created_at
         LIMIT 10
         """), params,
@@ -207,9 +224,13 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
     # (plan D7). Index order (ix_tasks_job_pending) keeps this O(1) for large
     # arrays. Tasks that already failed on this device are only taken when
     # nothing else is left.
+    # A first run starts with part 0 alone; the other parts are sized from it (sizing.learn_first_run).
     pick = """
         SELECT t.id FROM tasks t
         WHERE t.job_id = :job AND t.state = 'pending' AND t.not_before <= :now
+          AND (NOT :first_run OR t.index = 0
+               OR EXISTS (SELECT 1 FROM tasks z WHERE z.job_id = :job AND z.index = 0
+                          AND z.state IN ('succeeded', 'failed', 'cancelled')))
           AND NOT EXISTS (
               SELECT 1 FROM attempts a
               WHERE a.task_id = t.id AND a.device_id = :device
@@ -221,6 +242,9 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
     fallback = """
         SELECT t.id FROM tasks t
         WHERE t.job_id = :job AND t.state = 'pending' AND t.not_before <= :now
+          AND (NOT :first_run OR t.index = 0
+               OR EXISTS (SELECT 1 FROM tasks z WHERE z.job_id = :job AND z.index = 0
+                          AND z.state IN ('succeeded', 'failed', 'cancelled')))
           AND NOT EXISTS (
               SELECT 1 FROM attempts a
               WHERE a.task_id = t.id AND a.device_id = :device
@@ -230,8 +254,17 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
         FOR UPDATE OF t SKIP LOCKED
     """
     row = None
-    for job_id, submitter_handle, on_probation in jobs:
-        args = {"job": job_id, "now": now, "device": device.id, "decline_since": params["decline_since"]}
+    group_free: dict[uuid.UUID, int] = {}
+    for job_id, submitter_handle, on_probation, first_run, memory_mb, group_id in jobs:
+        if first_run:
+            # A first run needs this computer's share for its group to have room (more than the last try had).
+            if group_id not in group_free:
+                g = next(g for g, _ in groups if g.id == group_id)
+                group_free[group_id] = await _group_free_memory(session, device, g, ready.free.memory_mb)
+            if group_free[group_id] < memory_mb:
+                continue
+        args = {"job": job_id, "now": now, "device": device.id, "decline_since": params["decline_since"],
+                "first_run": first_run}
         task_id = (await session.execute(text(pick), args)).scalar()
         if task_id is None:
             task_id = (await session.execute(text(fallback), args)).scalar()
@@ -243,7 +276,42 @@ async def claim_task(session: AsyncSession, settings: Settings, signer: Envelope
     task_id, submitter_handle, on_probation = row
     task = await session.get(Task, task_id)
     group = next(g for g, _ in groups if g.id == task.group_id)
-    return await _assign(session, settings, signer, device, task, submitter_handle, group, on_probation, now)
+    return await _assign(session, settings, signer, device, task, submitter_handle, group, on_probation, now,
+                         free_memory_mb=await _group_free_memory(session, device, group, ready.free.memory_mb))
+
+
+FIRST_RUN_PREFERENCE_S = 60
+
+
+def _share_memory(device: Device, group: str) -> int:
+    """The memory this computer offers to the group: its share's limit, within the computer."""
+    total = int((device.capabilities or {}).get("memory_mb") or 0)
+    share = next((r for r in device.reported_shares or [] if r.get("group") == group), None) or {}
+    offered = int((share.get("limits") or {}).get("memory_mb") or 0)
+    return min(offered, total) if total else offered
+
+
+async def _best_offered_memory(session: AsyncSession, settings: Settings, groups: list[str], now: datetime) -> int:
+    """The most memory an online computer offers to any of these groups. Only computers the server shares with
+    the group count: a device naming a group it is not in cannot hold that group's first runs back."""
+    since = now - timedelta(seconds=settings.heartbeat_interval_s * 3)
+    rows = (await session.execute(
+        select(Device, Group.name).join(DeviceShare, DeviceShare.device_id == Device.id)
+        .join(Group, Group.id == DeviceShare.group_id)
+        .where(Device.state == "active", Device.last_seen_at > since, DeviceShare.enabled,
+               DeviceShare.removed.is_(False), Group.name.in_(groups)))).all()
+    return max((_share_memory(d, g) for d, g in rows), default=0)
+
+
+async def _group_free_memory(session: AsyncSession, device: Device, group: Group, free_mb: int) -> int:
+    """What a first run on this computer may have: the free memory the device reports, but never more than its
+    share for this group minus what this group's tasks already hold there (the agent checks the same)."""
+    held = (await session.execute(
+        select(func.coalesce(func.sum(text("coalesce((attempts.resources->>'memory_mb')::bigint, jobs.memory_mb)")), 0))
+        .select_from(Attempt).join(Task, Task.id == Attempt.task_id).join(Job, Job.id == Task.job_id)
+        .where(Attempt.device_id == device.id, Task.group_id == group.id,
+               Attempt.state.in_(ACTIVE_ATTEMPT_STATES)))).scalar_one()
+    return max(0, min(int(free_mb), _share_memory(device, group.name) - int(held)))
 
 
 async def _private_image(session: AsyncSession, settings: Settings, task: Task, image: str) -> bool:
@@ -260,10 +328,17 @@ async def _private_image(session: AsyncSession, settings: Settings, task: Task, 
 
 
 async def _assign(session: AsyncSession, settings: Settings, signer: EnvelopeSigner, device: Device, task: Task,
-                  submitter_handle: str, group: Group, on_probation: bool, now: datetime) -> pm.Offer:
+                  submitter_handle: str, group: Group, on_probation: bool, now: datetime,
+                  free_memory_mb: int | None = None) -> pm.Offer:
     epoch = task.epoch + 1
+    job = await session.get(Job, task.job_id)
+    # The sizes this attempt gets: the job's sizes now (pool may have changed them since the task was made).
+    given = sizing.attempt_resources(job, int(task.spec.get("max_runtime_s") or 3600), free_memory_mb)
+    spec = {**task.spec, "max_runtime_s": given["max_runtime_s"],
+            "resources": {**task.spec.get("resources", {}), "cpu": given["cpu"], "memory_mb": given["memory_mb"],
+                          "disk_mb": given["disk_mb"]}}
     attempt = Attempt(id=uuid.uuid4(), task_id=task.id, device_id=device.id, epoch=epoch, state="assigned",
-                      lease_expires_at=now + timedelta(seconds=settings.lease_ttl_s))
+                      lease_expires_at=now + timedelta(seconds=settings.lease_ttl_s), resources=given)
     session.add(attempt)
     task.epoch = epoch
     task.state = "assigned"
@@ -273,7 +348,7 @@ async def _assign(session: AsyncSession, settings: Settings, signer: EnvelopeSig
     envelope = pm.TaskEnvelope(
         attempt_id=str(attempt.id), task_id=str(task.id), job_id=str(task.job_id), epoch=epoch, group=group.name,
         group_id=str(group.id), submitter=submitter_handle, submitter_probation=on_probation,
-        device_id=str(device.id), issued_at=now, expires_at=expires, spec=pm.TaskSpec.model_validate(task.spec),
+        device_id=str(device.id), issued_at=now, expires_at=expires, spec=pm.TaskSpec.model_validate(spec),
         registry_auth=await _private_image(session, settings, task, task.spec["image"]),
     )
     payload = envelope.model_dump_json().encode()
@@ -318,13 +393,16 @@ def _end_attempt(attempt: Attempt, state: str, reason: str, now: datetime) -> No
     attempt.ended_at = now
 
 
-async def _record_usage(session: AsyncSession, attempt: Attempt, task: Task, now: datetime) -> None:
+async def _record_usage(session: AsyncSession, attempt: Attempt, task: Task, now: datetime,
+                        pool_paid: bool = False) -> None:
     if not attempt.started_at:
         return
     job = await session.get(Job, task.job_id)
     seconds = max((now - attempt.started_at).total_seconds(), 0.0)
+    cpu = float((attempt.resources or {}).get("cpu") or job.cpu)
     session.add(UsageLedger(group_id=task.group_id, user_id=job.submitter_id, device_id=attempt.device_id,
-                            attempt_id=attempt.id, cpu_seconds=seconds * job.cpu, gpu_seconds=seconds * job.gpus))
+                            attempt_id=attempt.id, cpu_seconds=seconds * cpu, gpu_seconds=seconds * job.gpus,
+                            pool_paid=pool_paid))
 
 
 async def _update_reliability(session: AsyncSession, device_id: uuid.UUID, ok: bool) -> None:
@@ -430,11 +508,26 @@ async def handle_commit(session: AsyncSession, settings: Settings, device_id: uu
     a.exit_code = msg.exit_code
     a.outputs = [o.model_dump() for o in msg.outputs]
     a.commit_key = msg.idempotency_key
+    job = await session.get(Job, t.job_id)
+    given = a.resources or {"cpu": job.cpu, "memory_mb": job.memory_mb, "disk_mb": job.disk_mb}
     if msg.usage is not None:
-        job = await session.get(Job, t.job_id)
-        a.usage = bounded_usage(msg.usage, cpu=job.cpu, memory_mb=job.memory_mb, disk_mb=job.disk_mb,
+        a.usage = bounded_usage(msg.usage, cpu=given["cpu"], memory_mb=given["memory_mb"], disk_mb=given["disk_mb"],
                                 exit_code=msg.exit_code,
                                 observed_s=(now - (a.started_at or a.created_at or now)).total_seconds())
+    oom = bool(a.usage and a.usage.get("oom_killed"))
+    timed_out = msg.exit_code != 0 and (msg.error or "").startswith("max_runtime_exceeded")
+    resized = False
+    try:
+        # A size pool chose was too small: pool tries again with more (sizing.grow), and this try is not the
+        # person's failure. It still counts for fair share until a try with the bigger size succeeds.
+        resized = (oom and sizing.grow(job, "memory", given)) or (timed_out and sizing.grow(job, "time", given))
+        if given.get("first_run") and not resized:
+            parts = (await session.execute(select(func.count()).where(Task.job_id == job.id))).scalar_one()
+            observed = (now - (a.started_at or now)).total_seconds()
+            sizing.learn_first_run(job, a.usage, given, t.index, parts, observed_s=observed,
+                                   ceiling=await sizing.group_ceiling(session, await session.get(Group, job.group_id)))
+    except Exception:  # sizing must never cost a result: log it, and keep the sizes as they are
+        log.exception("sizing failed for attempt %s; sizes unchanged", a.id)
     await _record_usage(session, a, t, now)
     if msg.exit_code == 0:
         _end_attempt(a, "succeeded", "exit_0", now)
@@ -442,19 +535,27 @@ async def handle_commit(session: AsyncSession, settings: Settings, device_id: uu
         t.finished_at = now
         t.current_attempt_id = a.id  # the winning attempt stays current
         t.result = {"attempt_id": str(a.id), "epoch": a.epoch, "exit_code": 0, "outputs": a.outputs,
-                    "usage": a.usage}
+                    "usage": a.usage, "given": a.resources}
         await _update_reliability(session, device_id, True)
+        # The bigger size worked: the tries that were too small were pool's mistake, so they leave fair share.
+        await session.execute(
+            update(UsageLedger).where(UsageLedger.attempt_id.in_(
+                select(Attempt.id).where(Attempt.task_id == t.id,
+                                         Attempt.end_reason.in_(("oom_resized", "timeout_resized")))))
+            .values(pool_paid=True))
+    elif resized:
+        # Not the person's failure: no failure counted, no backoff, and not a failing device either.
+        _end_attempt(a, "preempted", "oom_resized" if oom else "timeout_resized", now)
+        await _requeue_or_fail(session, settings, t, count_failure=False, crashed=False, now=now)
     else:
-        oom = bool(a.usage and a.usage.get("oom_killed"))
         _end_attempt(a, "failed", "oom" if oom else f"exit_{msg.exit_code}", now)
         await _requeue_or_fail(session, settings, t, count_failure=True, crashed=True, now=now)
         if t.state == "failed":
             error = msg.error
             if oom and not error:
-                job = await session.get(Job, t.job_id)
-                error = f"out of memory: the program needed more than its {job.memory_mb} MiB"
+                error = f"out of memory: the program needed more than its {given['memory_mb']} MiB"
             t.result = {**(t.result or {}), "attempt_id": str(a.id), "exit_code": msg.exit_code,
-                        "error": error, "usage": a.usage, "oom_killed": oom}
+                        "error": error, "usage": a.usage, "oom_killed": oom, "given": a.resources}
     await audit.record(session, actor_type="device", actor_id=device_id, action="attempt.end",
                        group_id=t.group_id, device_id=device_id, target_type="attempt", target_id=a.id,
                        details={"task_id": str(t.id), "epoch": a.epoch, "exit_code": msg.exit_code,
@@ -576,6 +677,7 @@ async def cancel_tasks(session: AsyncSession, task_filter, reason: str) -> list[
         if t.current_attempt_id:
             a = await session.get(Attempt, t.current_attempt_id)
             if a and a.state in ACTIVE_ATTEMPT_STATES:
+                await _record_usage(session, a, t, now)  # the computer worked until now: it counts for fair share
                 _end_attempt(a, "cancelled", reason, now)
                 to_stop.append((str(a.id), a.device_id))
         t.state = "cancelled"

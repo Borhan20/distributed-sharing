@@ -82,6 +82,8 @@ class GroupUpdate(BaseModel):
     registry_allowlist: list[str] | None = Field(default=None, max_length=50)
     # Days the built-in registry keeps an image nobody uses; null: the server's default.
     registry_retention_days: int | None = Field(default=None, ge=1, le=3650)
+    # The time limit of a task on its first run, when nobody set one (docs/design/pool-decides.md §10).
+    default_time_limit_s: int | None = Field(default=None, ge=60, le=7 * 24 * 3600)
 
 
 class GroupOut(BaseModel):
@@ -96,6 +98,7 @@ class GroupOut(BaseModel):
     expires_at: datetime | None
     registry_allowlist: list[str]
     registry_retention_days: int | None = None
+    default_time_limit_s: int = 14400
     state: str
     created_at: datetime
     my_role: str | None = None
@@ -106,7 +109,8 @@ def _group_out(g: Group, role: str | None) -> GroupOut:
                     approval_rule=g.approval_rule, approval_k=g.approval_k, probation_days=g.probation_days,
                     retention_days=g.retention_days, expires_at=g.expires_at,
                     registry_allowlist=list(g.registry_allowlist or []),
-                    registry_retention_days=g.registry_retention_days, state=g.state, created_at=g.created_at,
+                    registry_retention_days=g.registry_retention_days,
+                    default_time_limit_s=g.default_time_limit_s or 14400, state=g.state, created_at=g.created_at,
                     my_role=role)
 
 
@@ -173,6 +177,8 @@ async def update_group(name: str, body: GroupUpdate, request: Request, p: Princi
     g = await load_group(s, name)
     m = await require_role(s, g, p, COORDINATOR, mfa_required=request.app.state.settings.require_mfa_for_admins)
     changes = body.model_dump(exclude_unset=True)
+    if "default_time_limit_s" in changes and changes["default_time_limit_s"] is None:
+        raise HTTPException(422, "default_time_limit_s needs a number of seconds (60 to 604800)")
     for k, v in changes.items():
         setattr(g, k, v)
     await audit.record(s, actor_type="user", actor_id=p.user.id, action="group.update", group_id=g.id,
