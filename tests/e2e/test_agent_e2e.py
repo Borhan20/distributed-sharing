@@ -289,7 +289,7 @@ async def test_each_run_is_measured_and_out_of_memory_is_named(platform):
     assert task["usage"]["samples"] >= 2 and task["usage"]["capped"] in ([], ["peak_cpu"]), task["usage"]
     j = await wait_job(http, oom)
     task = (await http.get(f"/api/v1/jobs/{oom}/tasks")).json()[0]
-    assert j["state"] == "failed" and task["result"]["oom_killed"] is True, task
+    assert j["state"] == "failed" and task["result"]["oom_killed"] is True, (task["result"], task.get("usage"))
     assert "out of memory" in task["result"]["error"]
 
 

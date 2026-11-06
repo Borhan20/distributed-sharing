@@ -317,7 +317,7 @@ func (d *Docker) Run(ctx context.Context, s Spec, onStart func(), logs LogSink) 
 		return res, wr.err
 	}
 	res.ExitCode = wr.code
-	res.Usage = d.finishUsage(meter, statsDone, stopStats, name, s.Image, time.Since(started))
+	res.Usage = d.finishUsage(meter, statsDone, stopStats, name, s.Image, time.Since(started), wr.code)
 
 	// Collect outputs through the daemon, which can read files whatever
 	// their owner or mode inside the container.
@@ -359,7 +359,7 @@ func (d *Docker) Run(ctx context.Context, s Spec, onStart func(), logs LogSink) 
 // finishUsage stops the measurement and adds what Docker knows after the end: whether the kernel killed the
 // container for using more than its memory limit, and the image's size.
 func (d *Docker) finishUsage(m *usageMeter, statsDone <-chan struct{}, stop context.CancelFunc, name, image string,
-	wall time.Duration) *protocol.RunUsage {
+	wall time.Duration, exitCode int) *protocol.RunUsage {
 	stop()
 	select {
 	case <-statsDone:
@@ -368,8 +368,16 @@ func (d *Docker) finishUsage(m *usageMeter, statsDone <-chan struct{}, stop cont
 	u := m.usage(wall)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if out, err := d.output(ctx, "inspect", "--format", "{{.State.OOMKilled}}", name); err == nil {
-		u.OOMKilled = strings.TrimSpace(out) == "true"
+	// Killed (137) but not marked: Docker may record the kernel's out-of-memory event a moment after the exit
+	// (seen once in CI), so ask again for up to about 2 s.
+	for try := 0; try < 8; try++ {
+		if out, err := d.output(ctx, "inspect", "--format", "{{.State.OOMKilled}}", name); err == nil {
+			u.OOMKilled = strings.TrimSpace(out) == "true"
+		}
+		if u.OOMKilled || exitCode != 137 {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
 	}
 	if out, err := d.output(ctx, "image", "inspect", "--format", "{{.Size}}", image); err == nil {
 		if size, err := strconv.ParseInt(strings.TrimSpace(out), 10, 64); err == nil && size > 0 {
