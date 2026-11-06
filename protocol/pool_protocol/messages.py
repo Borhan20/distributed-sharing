@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
 
 PROTOCOL_VERSION = "v1alpha1"
 HELLO_SIGNATURE_CONTEXT = b"pool-agent-hello-v1:"
@@ -357,6 +357,21 @@ class UploadURLs(_Msg):
     reason: str | None = None
 
 
+class RunUsage(_Model):
+    """What one attempt used, as `docker stats` measured it on the device (docs/design/pool-decides.md §4.2).
+
+    It is the device's claim: the server caps each number at what the task was given before it uses it."""
+
+    peak_memory_mb: int = Field(ge=0, le=2**31)
+    cpu_seconds: float = Field(ge=0, le=1e9)
+    peak_cpu: float = Field(ge=0, le=4096)
+    wall_seconds: float = Field(ge=0, le=1e8)
+    output_bytes: int = Field(ge=0, le=2**50, default=0)
+    image_mb: int = Field(ge=0, le=2**31, default=0)
+    oom_killed: bool = False
+    samples: int = Field(ge=0, le=2**31, default=0)
+
+
 class Commit(_Msg):
     type: Literal["commit"] = "commit"
     idempotency_key: str
@@ -366,6 +381,16 @@ class Commit(_Msg):
     exit_code: int
     outputs: list[ArtifactRef] = Field(default_factory=list, max_length=1000)
     error: str | None = Field(default=None, max_length=4096)
+    usage: RunUsage | None = None  # absent from agents that cannot measure (or are older)
+
+    @field_validator("usage", mode="wrap")
+    @classmethod
+    def _usage_is_optional(cls, v: Any, handler: Any) -> RunUsage | None:
+        """A measurement out of range is dropped, not the result: the exit code and outputs still count."""
+        try:
+            return handler(v)
+        except ValidationError:
+            return None
 
 
 class CommitAck(_Msg):

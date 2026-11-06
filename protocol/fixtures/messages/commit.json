@@ -13,5 +13,15 @@
     }
   ],
   "task_id": "c3a7e5d2-8b14-4f69-9e0a-1d2c3b4a5f60",
-  "type": "commit"
+  "type": "commit",
+  "usage": {
+    "cpu_seconds": 2280.5,
+    "image_mb": 180,
+    "oom_killed": false,
+    "output_bytes": 4096,
+    "peak_cpu": 3.9,
+    "peak_memory_mb": 1400,
+    "samples": 712,
+    "wall_seconds": 720.0
+  }
 }

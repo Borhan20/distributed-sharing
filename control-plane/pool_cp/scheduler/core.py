@@ -41,6 +41,7 @@ from ..models import (
 )
 from ..registry import RegistryError, parse_image
 from ..timeutil import utcnow
+from .usage import bounded_usage
 
 log = logging.getLogger(__name__)
 
@@ -429,20 +430,31 @@ async def handle_commit(session: AsyncSession, settings: Settings, device_id: uu
     a.exit_code = msg.exit_code
     a.outputs = [o.model_dump() for o in msg.outputs]
     a.commit_key = msg.idempotency_key
+    if msg.usage is not None:
+        job = await session.get(Job, t.job_id)
+        a.usage = bounded_usage(msg.usage, cpu=job.cpu, memory_mb=job.memory_mb, disk_mb=job.disk_mb,
+                                exit_code=msg.exit_code,
+                                observed_s=(now - (a.started_at or a.created_at or now)).total_seconds())
     await _record_usage(session, a, t, now)
     if msg.exit_code == 0:
         _end_attempt(a, "succeeded", "exit_0", now)
         t.state = "succeeded"
         t.finished_at = now
         t.current_attempt_id = a.id  # the winning attempt stays current
-        t.result = {"attempt_id": str(a.id), "epoch": a.epoch, "exit_code": 0, "outputs": a.outputs}
+        t.result = {"attempt_id": str(a.id), "epoch": a.epoch, "exit_code": 0, "outputs": a.outputs,
+                    "usage": a.usage}
         await _update_reliability(session, device_id, True)
     else:
-        _end_attempt(a, "failed", f"exit_{msg.exit_code}", now)
+        oom = bool(a.usage and a.usage.get("oom_killed"))
+        _end_attempt(a, "failed", "oom" if oom else f"exit_{msg.exit_code}", now)
         await _requeue_or_fail(session, settings, t, count_failure=True, crashed=True, now=now)
         if t.state == "failed":
+            error = msg.error
+            if oom and not error:
+                job = await session.get(Job, t.job_id)
+                error = f"out of memory: the program needed more than its {job.memory_mb} MiB"
             t.result = {**(t.result or {}), "attempt_id": str(a.id), "exit_code": msg.exit_code,
-                        "error": msg.error}
+                        "error": error, "usage": a.usage, "oom_killed": oom}
     await audit.record(session, actor_type="device", actor_id=device_id, action="attempt.end",
                        group_id=t.group_id, device_id=device_id, target_type="attempt", target_id=a.id,
                        details={"task_id": str(t.id), "epoch": a.epoch, "exit_code": msg.exit_code,

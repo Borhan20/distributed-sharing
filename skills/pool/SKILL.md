@@ -93,8 +93,8 @@ To stop a job on purpose, use `pool cancel JOB-ID`.
 
 pool does not choose sizes by itself yet. When the user does not know them:
 
-1. Start with the defaults, or measure with `pool run --local`.
-2. Exit code 137, or the hint about signal 9, means the program ran out of memory. Run it again with twice the memory.
+1. Measure with `pool run --local`. At the end it prints `pool: It used: memory ..., CPU ..., run time ...`. Ask for about 1.25 × that memory.
+2. `Out of memory` in the result or the hints (or exit code 137) means the program hit its memory limit. Run it again with twice the memory.
 3. Stopped at the time limit: run it again with a longer `--time-limit`.
 4. Ask only for what the program needs. Smaller tasks fit on more computers and start sooner.
 

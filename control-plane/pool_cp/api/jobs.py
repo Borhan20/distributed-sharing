@@ -12,10 +12,10 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import func, insert, select
+from sqlalchemy import func, insert, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pool_protocol.jobspec import JobSpecError, is_pinned, load_job_spec
+from pool_protocol.jobspec import JobSpecError, is_pinned, load_job_spec, parse_duration_s
 from pool_protocol.messages import TIER_RANK
 
 from .. import audit, builtin_registry, storage
@@ -28,6 +28,7 @@ from ..registry import RegistryError, parse_image, resolve_digest
 from ..registry_cleanup import mark_used
 from ..scheduler.core import cancel_tasks
 from ..scheduler.explain import auto_parts, explain_waiting
+from ..scheduler.usage import SUMMARY_SQL, summary_from_row
 from ..secretbox import SecretBoxError
 from ..timeutil import utcnow
 from .notify import notify_stops
@@ -48,6 +49,18 @@ class JobOut(BaseModel):
     finished_at: datetime | None
     tasks: dict[str, int]
     spec: dict[str, Any] | None = None
+    # The size each task was given, and what the measured runs used (docs/design/pool-decides.md §4.2).
+    requested: dict[str, Any] | None = None
+    used: dict[str, Any] | None = None
+
+
+def _requested(job: Job) -> dict[str, Any]:
+    try:
+        limit = parse_duration_s((job.spec.get("spec") or {}).get("max_runtime", "1h"))
+    except (ValueError, TypeError, AttributeError):
+        limit = None
+    return {"cpu": job.cpu, "memory_mb": job.memory_mb, "disk_mb": job.disk_mb, "gpus": job.gpus,
+            "time_limit_s": limit}
 
 
 async def _job_out(s: AsyncSession, job: Job, with_spec: bool = False) -> JobOut:
@@ -69,6 +82,8 @@ async def _job_out(s: AsyncSession, job: Job, with_spec: bool = False) -> JobOut
         finished_at=job.finished_at,
         tasks=counts,
         spec=job.spec if with_spec else None,
+        requested=_requested(job),
+        used=summary_from_row((await s.execute(text(SUMMARY_SQL), {"job": job.id})).first()) if with_spec else None,
     )
 
 
@@ -358,6 +373,7 @@ class TaskOut(BaseModel):
     current_attempt_id: uuid.UUID | None
     device: str | None
     updated_at: datetime
+    usage: dict[str, Any] | None = None  # what the task's finished run used (the result's attempt)
 
 
 @router.get("/jobs/{job_id}/tasks", response_model=list[TaskOut])
@@ -389,6 +405,7 @@ async def list_tasks(
             current_attempt_id=t.current_attempt_id,
             device=dname,
             updated_at=t.updated_at,
+            usage=(t.result or {}).get("usage"),
         )
         for t, dname in rows
     ]

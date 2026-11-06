@@ -8,6 +8,7 @@ import { ConfirmDialog, CopyButton, ErrorBox, Loading, RichText, StateBadge } fr
 import { TERMINAL, fmtTime } from "../lib/format";
 import { downloadFile } from "../lib/download";
 import { commandText, splitImage } from "../lib/jobspec";
+import { oversizeHint, taskUsageText, usedText, type JobUsed, type Requested, type TaskUsage } from "../lib/usage";
 import { TaskCounts } from "./group/JobsTab";
 import type { RerunState } from "./group/SubmitJob";
 
@@ -147,6 +148,17 @@ export function JobPage() {
           )}
           <dt>Each task</dt>
           <dd>{resourcesText(spec.resources)}</dd>
+          {usedText(j.requested as Requested | null, j.used as JobUsed | null) && (
+            <>
+              <dt>Used</dt>
+              <dd>
+                {usedText(j.requested as Requested | null, j.used as JobUsed | null)}
+                {oversizeHint(j.requested as Requested | null, j.used as JobUsed | null) && (
+                  <div className="muted small-text">{oversizeHint(j.requested as Requested | null, j.used as JobUsed | null)}</div>
+                )}
+              </dd>
+            </>
+          )}
           <dt>Isolation</dt>
           <dd>{(spec.isolation as { min_tier?: string } | undefined)?.min_tier ?? "T1"} or stronger</dd>
           <dt>Data class</dt>
@@ -169,6 +181,7 @@ export function JobPage() {
                   <th>Attempts</th>
                   <th>Failures</th>
                   <th>Device</th>
+                  <th>Used</th>
                   <th>Result</th>
                   <th />
                 </tr>
@@ -187,6 +200,7 @@ export function JobPage() {
                     <td>{t.attempts}</td>
                     <td>{t.failures}</td>
                     <td>{t.device ?? "–"}</td>
+                    <td className="small-text">{taskUsageText(t.usage as TaskUsage | null)}</td>
                     <td className="small-text">{resultText(t)}</td>
                     <td>
                       <button type="button" className="secondary small" onClick={() => setSelected(t.index)}>

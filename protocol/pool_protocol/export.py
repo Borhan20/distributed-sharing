@@ -171,6 +171,8 @@ EXAMPLES: dict[str, dict] = {
         "exit_code": 0,
         "outputs": [{"path": "result.json", "sha256": SHA, "size": 123}],
         "error": None,
+        "usage": {"peak_memory_mb": 1400, "cpu_seconds": 2280.5, "peak_cpu": 3.9, "wall_seconds": 720.0,
+                  "output_bytes": 4096, "image_mb": 180, "oom_killed": False, "samples": 712},
     },
     "commit_ack": {
         "type": "commit_ack",

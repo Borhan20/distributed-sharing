@@ -244,6 +244,17 @@
           "default": "commit",
           "title": "Type",
           "type": "string"
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunUsage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -636,6 +647,69 @@
         "memory_mb"
       ],
       "title": "Resources",
+      "type": "object"
+    },
+    "RunUsage": {
+      "description": "What one attempt used, as `docker stats` measured it on the device (docs/design/pool-decides.md \u00a74.2).\n\nIt is the device's claim: the server caps each number at what the task was given before it uses it.",
+      "properties": {
+        "cpu_seconds": {
+          "maximum": 1000000000.0,
+          "minimum": 0,
+          "title": "Cpu Seconds",
+          "type": "number"
+        },
+        "image_mb": {
+          "default": 0,
+          "maximum": 2147483648,
+          "minimum": 0,
+          "title": "Image Mb",
+          "type": "integer"
+        },
+        "oom_killed": {
+          "default": false,
+          "title": "Oom Killed",
+          "type": "boolean"
+        },
+        "output_bytes": {
+          "default": 0,
+          "maximum": 1125899906842624,
+          "minimum": 0,
+          "title": "Output Bytes",
+          "type": "integer"
+        },
+        "peak_cpu": {
+          "maximum": 4096,
+          "minimum": 0,
+          "title": "Peak Cpu",
+          "type": "number"
+        },
+        "peak_memory_mb": {
+          "maximum": 2147483648,
+          "minimum": 0,
+          "title": "Peak Memory Mb",
+          "type": "integer"
+        },
+        "samples": {
+          "default": 0,
+          "maximum": 2147483648,
+          "minimum": 0,
+          "title": "Samples",
+          "type": "integer"
+        },
+        "wall_seconds": {
+          "maximum": 100000000.0,
+          "minimum": 0,
+          "title": "Wall Seconds",
+          "type": "number"
+        }
+      },
+      "required": [
+        "peak_memory_mb",
+        "cpu_seconds",
+        "peak_cpu",
+        "wall_seconds"
+      ],
+      "title": "RunUsage",
       "type": "object"
     },
     "RunningAttempt": {

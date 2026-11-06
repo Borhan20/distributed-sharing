@@ -73,7 +73,8 @@ type Result struct {
 	ExitCode int
 	TimedOut bool
 	Outputs  []Output
-	Notes    []string // non-fatal problems (skipped files, cleanup failures)
+	Notes    []string           // non-fatal problems (skipped files, cleanup failures)
+	Usage    *protocol.RunUsage // what the run used; nil when the runtime cannot measure
 }
 
 // LogSink receives container output. stream is "stdout" or "stderr".

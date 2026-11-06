@@ -199,6 +199,23 @@ func (d *Docker) Run(ctx context.Context, s Spec, onStart func(), logs LogSink) 
 	if onStart != nil {
 		onStart()
 	}
+	started := time.Now()
+
+	// Measure while it runs: `docker stats` streams one reading a second until it is stopped.
+	meter := &usageMeter{}
+	statsDone := make(chan struct{})
+	statsCtx, stopStats := context.WithCancel(context.Background())
+	defer stopStats()
+	statsCmd := d.command(statsCtx, "stats", "--format", "{{json .}}", name)
+	if statsOut, err := statsCmd.StdoutPipe(); err != nil || statsCmd.Start() != nil {
+		close(statsDone)
+	} else {
+		go func() {
+			meter.read(statsOut, time.Now)
+			_ = statsCmd.Wait()
+			close(statsDone)
+		}()
+	}
 
 	// Stream logs until the container stops.
 	logsDone := make(chan struct{})
@@ -291,6 +308,7 @@ func (d *Docker) Run(ctx context.Context, s Spec, onStart func(), logs LogSink) 
 		return res, wr.err
 	}
 	res.ExitCode = wr.code
+	res.Usage = d.finishUsage(meter, statsDone, stopStats, name, s.Image, time.Since(started))
 
 	// Collect outputs through the daemon, which can read files whatever
 	// their owner or mode inside the container.
@@ -318,12 +336,38 @@ func (d *Docker) Run(ctx context.Context, s Spec, onStart func(), logs LogSink) 
 	_, _ = io.Copy(io.Discard, pipe)
 	werr := cp.Wait()
 	res.Outputs, res.Notes = outs, append(res.Notes, notes...)
+	for _, o := range outs {
+		res.Usage.OutputBytes += o.Size
+	}
 	if cerr != nil {
 		res.Notes = append(res.Notes, "collecting outputs: "+cerr.Error())
 	} else if werr != nil {
 		res.Notes = append(res.Notes, "docker cp: "+strings.TrimSpace(cpErr.String()))
 	}
 	return res, nil
+}
+
+// finishUsage stops the measurement and adds what Docker knows after the end: whether the kernel killed the
+// container for using more than its memory limit, and the image's size.
+func (d *Docker) finishUsage(m *usageMeter, statsDone <-chan struct{}, stop context.CancelFunc, name, image string,
+	wall time.Duration) *protocol.RunUsage {
+	stop()
+	select {
+	case <-statsDone:
+	case <-time.After(5 * time.Second):
+	}
+	u := m.usage(wall)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if out, err := d.output(ctx, "inspect", "--format", "{{.State.OOMKilled}}", name); err == nil {
+		u.OOMKilled = strings.TrimSpace(out) == "true"
+	}
+	if out, err := d.output(ctx, "image", "inspect", "--format", "{{.Size}}", image); err == nil {
+		if size, err := strconv.ParseInt(strings.TrimSpace(out), 10, 64); err == nil && size > 0 {
+			u.ImageMB = (size + (1<<20 - 1)) >> 20
+		}
+	}
+	return u
 }
 
 func (d *Docker) isGone(name string) bool {

@@ -49,7 +49,7 @@ Read the log: `pool logs JOB-ID --task N`.
 | `Read-only file system`, `EROFS` | It writes outside `/out` and `/tmp` | Write results to `/out`, scratch files to `/tmp`. Point caches at `/tmp`. |
 | `Network is unreachable`, `could not resolve host`, `getaddrinfo` | It downloads something while it runs | Download it in the `Dockerfile` instead. |
 | `Permission denied`, `EACCES` | It runs as user 65534, not root | Write only to `/out` or `/tmp`. In the Dockerfile: `RUN chmod -R a+rX /app`. |
-| Exit code 137, "stopped with signal 9" | Out of memory | Run it again with twice the memory (`-m`). |
+| `out of memory: the program needed more than its ... MiB`, exit code 137, "stopped with signal 9" | Out of memory | Run it again with twice the memory (`-m`). `pool status JOB-ID` shows in its USED column how much each task reached. |
 | `max_runtime_exceeded` | It ran out of time | Raise `--time-limit`. |
 | `exec format error` | Built for another kind of computer | Build with `--platform linux/amd64` (or `linux/arm64`, to match the computers). |
 | `agent: ... pull access denied`, `manifest unknown` | The computer could not download the image | Check the name. For a private image, the user adds a read-only token. |

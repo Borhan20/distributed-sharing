@@ -469,6 +469,20 @@ type Commit struct {
 	ExitCode       int           `json:"exit_code"`
 	Outputs        []ArtifactRef `json:"outputs"`
 	Error          *string       `json:"error"`
+	Usage          *RunUsage     `json:"usage,omitempty"`
+}
+
+// RunUsage is what one attempt used, as `docker stats` measured it (docs/design/pool-decides.md §4.2).
+// The server treats it as the device's claim: it caps every number at what the task was given.
+type RunUsage struct {
+	PeakMemoryMB int64   `json:"peak_memory_mb"`
+	CPUSeconds   float64 `json:"cpu_seconds"`
+	PeakCPU      float64 `json:"peak_cpu"`
+	WallSeconds  float64 `json:"wall_seconds"`
+	OutputBytes  int64   `json:"output_bytes"`
+	ImageMB      int64   `json:"image_mb"`
+	OOMKilled    bool    `json:"oom_killed"`
+	Samples      int     `json:"samples"`
 }
 
 type CommitAck struct {
