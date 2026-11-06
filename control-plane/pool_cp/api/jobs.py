@@ -29,7 +29,7 @@ from ..registry import RegistryError, inspect_image, parse_image, resolve_digest
 from ..registry_cleanup import mark_used
 from ..scheduler import sizing
 from ..scheduler.core import cancel_tasks
-from ..scheduler.explain import auto_parts, explain_waiting
+from ..scheduler.explain import auto_parts, explain_waiting, progress
 from ..scheduler.usage import SUMMARY_SQL, summary_from_row
 from ..secretbox import SecretBoxError
 from ..timeutil import utcnow
@@ -372,6 +372,10 @@ class WaitingReason(BaseModel):
 class JobWaitingOut(BaseModel):
     pending_tasks: int
     reasons: list[WaitingReason]
+    # When the job will probably end, from its finished tasks or earlier runs (pool-decides §4.8); None: unknown.
+    eta_s: int | None = None
+    eta: str | None = None
+    notes: list[str] = []  # e.g. tasks that printed nothing for a long time
 
 
 @router.get("/jobs/{job_id}/waiting", response_model=JobWaitingOut)
@@ -380,7 +384,8 @@ async def job_waiting(job_id: uuid.UUID, request: Request, p: Principal = Depend
     """Why tasks of this job are waiting, in plain language. Empty when nothing waits."""
     job, _, _ = await _load_job(s, job_id, p)
     pending, reasons = await explain_waiting(s, request.app.state.settings, job)
-    return JobWaitingOut(pending_tasks=pending, reasons=[WaitingReason(**r.__dict__) for r in reasons])
+    more = await progress(s, request.app.state.settings, job)
+    return JobWaitingOut(pending_tasks=pending, reasons=[WaitingReason(**r.__dict__) for r in reasons], **more)
 
 
 class DownloadOut(BaseModel):

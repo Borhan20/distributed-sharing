@@ -461,3 +461,35 @@ size overflowed a calculation. All are fixed and tested.
 Not built in step D: "likely to stay online" from a computer's online history,
 and "fast for this image" from measured run times per computer.
 
+### Step E: organize (built 7 November 2026)
+
+| Topic | Choice | Why |
+|---|---|---|
+| Test report | Every `.xml` output that is a JUnit report, of every task's latest run (failed runs too), merged: counts, each failure with its task and message, the slowest tests. `GET /jobs/{id}/tests`, `pool tests`, a **Tests** section on the job page, `tests.md` in the zip, a line at the end of `pool run`/`pool attach`. | §4.8. A failing suite is the report people need most. |
+| Untrusted XML | Only UTF-8. A DOCTYPE or entity anywhere is refused. At most 10 MiB per file, 300,000 elements per file, 50,000 tests, and 500 files or 64 MiB read for one report | The files come from the tasks. Python's parser does not fetch external entities, but there is no reason to parse DTDs at all. |
+| Run summary | `summary.md` in the zip: state, sizes, the reasons (for the submitter and managers), tests, one line per task (computer, tries, seconds, memory and CPU used), failed tasks with their error | §4.8. |
+| Waiting time | `eta` on `GET /jobs/{id}/waiting`: the average run time of the job's finished tasks (or a third of a learned time limit) × the rounds needed with the places the able computers have now | §4.8. Shown on the job page and in `pool attach` progress. |
+| Quiet tasks | A note for a running task that printed nothing for 30 minutes | §4.6, first half: no CPU figure exists while a task runs, so "no output" is all pool can see. |
+
+**Changed after the security review of step E:**
+
+| Problem found | Now |
+|---|---|
+| One request could read every task's `.xml` files into memory before reading any (up to about 20 GiB), and parse them again on every page view. A member could stop the whole server this way. | One file is in memory at a time. One report reads at most 500 files and 64 MiB; each attempt counts, also one that fails. A file that many tasks wrote is read once. A report is kept until the job's tasks change, and at most 2 reports are built at once. |
+| Suites inside suites counted each test once per enclosing suite, and the work grew with the square of the file (40 s of CPU for 2 MB) | The parser streams: each test is counted once, in its nearest suite, and freed once read. A file whose first element is not a test suite is dropped at once. The same 2 MB file now takes 0.07 s, and other threads wait at most about 10 ms. |
+| A UTF-16 file, or a DOCTYPE after a long comment, got past the DOCTYPE check; a declared encoding Python does not know (`UCS-2`) broke the report and the whole zip | The file must be UTF-8 (a BOM is fine). It is decoded strictly and given to the parser as text, so the parser reads UTF-8 whatever the file declares. The whole text is checked for DOCTYPE and ENTITY. Any error drops only that file, and a failed report only adds a note to the zip's README. |
+| Test names, messages and error texts could add Markdown links, images, HTML and fake sections to `tests.md` and `summary.md` | Each is one line without control or direction characters, cut to its length first, and escaped for Markdown. |
+| The quiet-task check read every log line of every running task on each `/waiting` poll | It reads the last line of each stream through the log's unique index, and only for tasks that started more than 30 minutes ago. |
+| A time limit you set was taken as a learned one (24 h gave "about 8 h"), and a waiting time was shown when no computer can run the job | Only a limit pool learned is used, and there is no waiting time while nothing can run the job (the reasons say why). |
+
+**Not built in step E:**
+
+- **Copies of slow tasks** (§4.6). Today a task has one current attempt, and
+  the fence accepts a result only from it (`task.current_attempt_id` and the
+  epoch). A copy needs two live attempts of one task and "the first result
+  wins, the other is stopped". That changes the fencing the chaos test checks,
+  so it is its own piece of work, with its own design and review.
+- **Stopping a stuck task** 30 minutes after the note: without a CPU figure
+  while it runs, pool cannot tell "stuck" from "busy and quiet". The time
+  limit stops it.
+

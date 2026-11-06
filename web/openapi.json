@@ -3095,6 +3095,50 @@
         }
       }
     },
+    "/api/v1/jobs/{job_id}/tests": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "Test Report",
+        "description": "Every task's JUnit XML report merged into one (group members only).",
+        "operationId": "test_report_api_v1_jobs__job_id__tests_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestReport"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/jobs/{job_id}/results": {
       "get": {
         "tags": [
@@ -5158,6 +5202,36 @@
             },
             "type": "array",
             "title": "Reasons"
+          },
+          "eta_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eta S"
+          },
+          "eta": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eta"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes",
+            "default": []
           }
         },
         "type": "object",
@@ -5772,6 +5846,80 @@
           "updated_at"
         ],
         "title": "TaskOut"
+      },
+      "TestReport": {
+        "properties": {
+          "files": {
+            "type": "integer",
+            "title": "Files"
+          },
+          "tests": {
+            "type": "integer",
+            "title": "Tests"
+          },
+          "passed": {
+            "type": "integer",
+            "title": "Passed"
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed"
+          },
+          "error": {
+            "type": "integer",
+            "title": "Error"
+          },
+          "skipped": {
+            "type": "integer",
+            "title": "Skipped"
+          },
+          "seconds": {
+            "type": "number",
+            "title": "Seconds"
+          },
+          "failures": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Failures"
+          },
+          "more_failures": {
+            "type": "integer",
+            "title": "More Failures"
+          },
+          "slowest": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Slowest"
+          },
+          "unreadable": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unreadable"
+          }
+        },
+        "type": "object",
+        "required": [
+          "files",
+          "tests",
+          "passed",
+          "failed",
+          "error",
+          "skipped",
+          "seconds",
+          "failures",
+          "more_failures",
+          "slowest",
+          "unreadable"
+        ],
+        "title": "TestReport"
       },
       "ValidationError": {
         "properties": {

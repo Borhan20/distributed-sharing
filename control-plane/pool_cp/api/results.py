@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import hashlib
 import io
 import json
 import logging
@@ -21,6 +22,7 @@ import queue
 import threading
 import uuid
 import zipfile
+from collections import OrderedDict
 from collections.abc import AsyncIterator
 from datetime import datetime
 from pathlib import PurePosixPath
@@ -34,9 +36,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pool_protocol.jobspec import result_folder
 
-from .. import storage
+from .. import junit, storage
 from ..auth import Principal, current_principal, get_session
-from ..authz import not_found
+from ..authz import MANAGERS, not_found
 from ..models import Attempt, Device, Job, Task, TaskLog
 from .jobs import _load_job
 
@@ -54,12 +56,18 @@ MAX_MERGED_CSV_BYTES = 256 * 1024 * 1024
 
 class _Row:
     def __init__(self, task: Task, attempt_id: uuid.UUID | None, device: str | None, started: datetime | None,
-                 ended: datetime | None):
+                 ended: datetime | None, attempt_outputs: list | None = None, usage: dict | None = None):
         self.task, self.attempt_id, self.device, self.started, self.ended = task, attempt_id, device, started, ended
+        self.attempt_outputs, self.usage = attempt_outputs or [], usage
 
     @property
     def outputs(self) -> list[dict[str, Any]]:
         return list((self.task.result or {}).get("outputs") or []) if self.task.state == "succeeded" else []
+
+    @property
+    def report_outputs(self) -> list[dict[str, Any]]:
+        """Files of the latest run, also when it failed: a failing test suite is exactly the report you want."""
+        return self.outputs or list(self.attempt_outputs)
 
     @property
     def seconds(self) -> float | None:
@@ -70,18 +78,153 @@ async def _rows(s: AsyncSession, job: Job) -> list[_Row]:
     """Every task with the computer and times of its latest run (attempt that started)."""
     runs = (
         select(Attempt.task_id, Attempt.id, Attempt.device_id, Attempt.started_at, Attempt.ended_at,
+               Attempt.outputs, Attempt.usage,
                func.row_number().over(partition_by=Attempt.task_id, order_by=Attempt.epoch.desc()).label("n"))
         .join(Task, Task.id == Attempt.task_id)
         .where(Task.job_id == job.id, Attempt.started_at.is_not(None))
     ).subquery()
     latest = select(runs).where(runs.c.n == 1).subquery()
     rows = (await s.execute(
-        select(Task, latest.c.id, Device.name, latest.c.started_at, latest.c.ended_at)
+        select(Task, latest.c.id, Device.name, latest.c.started_at, latest.c.ended_at, latest.c.outputs,
+               latest.c.usage)
         .outerjoin(latest, latest.c.task_id == Task.id)
         .outerjoin(Device, Device.id == latest.c.device_id)
         .where(Task.job_id == job.id).order_by(Task.index)
     )).all()
-    return [_Row(t, a, d, start, end) for t, a, d, start, end in rows]
+    return [_Row(t, a, d, start, end, outs, usage) for t, a, d, start, end, outs, usage in rows]
+
+
+MAX_REPORT_FILES = 500  # files read for one report (each read counts, also one that fails)
+MAX_REPORT_READ_BYTES = 64 * 1024 * 1024  # bytes read for one report
+REPORT_BUILDS = 2  # reports built at once on this server
+REPORT_CACHE = 64  # reports kept
+_build_slots = threading.BoundedSemaphore(REPORT_BUILDS)
+_cache: OrderedDict[str, junit.Report] = OrderedDict()
+_cache_lock = threading.Lock()
+
+
+def _report_key(job: Job, rows: list[_Row]) -> str:
+    """Changes whenever a task's latest run or its files change, so a kept report is never out of date."""
+    h = hashlib.sha256(str(job.id).encode())
+    for r in rows:
+        h.update(f"{r.task.index}:{r.attempt_id}:{r.task.state}:".encode())
+        h.update(",".join(str(o.get("sha256")) for o in r.report_outputs).encode())
+    return h.hexdigest()
+
+
+def _cached(key: str) -> junit.Report | None:
+    with _cache_lock:
+        report = _cache.get(key)
+        if report is not None:
+            _cache.move_to_end(key)
+        return report
+
+
+def _tests(settings, job: Job, rows: list[_Row]) -> junit.Report:  # noqa: ANN001
+    """Every task's JUnit XML files, merged (docs/design/pool-decides.md §4.8). Runs in a thread.
+
+    The files come from the tasks, so the work is bounded: one file in memory at a time, at most
+    MAX_REPORT_FILES reads and MAX_REPORT_READ_BYTES in all, each stored file parsed once (tasks that wrote the
+    same file share it), REPORT_BUILDS reports built at once, and a built report is kept until the job's
+    tasks change."""
+    key = _report_key(job, rows)
+    if (report := _cached(key)) is not None:
+        return report
+    with _build_slots:
+        if (report := _cached(key)) is not None:  # built by another request while this one waited
+            return report
+        report = junit.Report()
+        parsed: dict[str, list[junit.Case] | None] = {}
+        reads = read_bytes = skipped = 0
+        for r in rows:
+            for o in r.report_outputs:
+                path, sha = str(o.get("path", "")), str(o.get("sha256", ""))
+                if not junit.looks_like_junit(path, int(o.get("size") or 0)):
+                    continue
+                if sha not in parsed:
+                    if reads >= MAX_REPORT_FILES or read_bytes >= MAX_REPORT_READ_BYTES:
+                        skipped += 1
+                        continue
+                    reads += 1
+                    data = _read_small(settings, job.group_id, o, junit.MAX_REPORT_BYTES)
+                    read_bytes += len(data or b"")
+                    parsed[sha] = junit.parse(data) if data is not None else None
+                report.add(r.task.index, path, parsed[sha])
+        if skipped:
+            report.unreadable.insert(0, f"{skipped} more file(s) were not read: one report reads at most "
+                                        f"{MAX_REPORT_FILES} files and {MAX_REPORT_READ_BYTES // (1024 * 1024)} MiB")
+        with _cache_lock:
+            _cache[key] = report
+            while len(_cache) > REPORT_CACHE:
+                _cache.popitem(last=False)
+        return report
+
+
+def _summary_md(job: Job, rows: list[_Row], show_reasons: bool, tests: dict[str, Any] | None) -> str:
+    """The run in a few lines (docs/design/pool-decides.md §4.8): what ran where, size given and used, why."""
+    states: dict[str, int] = {}
+    for r in rows:
+        states[r.task.state] = states.get(r.task.state, 0) + 1
+    lines = [f"# {job.name}", "", f"Image: {job.image}", f"State: {job.state} "
+             f"({', '.join(f'{v} {k}' for k, v in sorted(states.items()))})", "",
+             f"Each task got: {job.cpu:g} CPU, {job.memory_mb} MiB memory, {job.disk_mb} MiB disk, "
+             f"time limit {job.max_runtime_s or '-'} s.", ""]
+    sizing = job.sizing or {}
+    if show_reasons and sizing.get("reasons"):
+        lines += ["## How the sizes were chosen", ""] + [f"- {r}" for r in sizing["reasons"]] + [""]
+    if tests and tests.get("tests"):
+        lines += [f"Tests: {tests['passed']} passed, {tests['failed']} failed, {tests['error']} errors, "
+                  f"{tests['skipped']} skipped (tests.md).", ""]
+    lines += ["## Tasks", "", "| Task | State | Computer | Tries | Seconds | Memory used (MiB) | CPU used |",
+              "|---|---|---|---|---|---|---|"]
+    for r in rows[:MAX_TABLE_TASKS]:
+        u = r.usage or {}
+        cpu = "" if u.get("avg_cpu") is None else f"{u['avg_cpu']:g}"
+        lines.append(f"| {r.task.index} | {r.task.state} | {junit.cell(r.device) or '-'} | {r.task.attempts_count} | "
+                     f"{r.seconds if r.seconds is not None else '-'} | {u.get('peak_memory_mb', '-')} | {cpu or '-'} |")
+    failed = [r for r in rows if r.task.state == "failed"]
+    if failed:
+        lines += ["", "## Failed tasks", ""]
+        for r in failed[:200]:
+            res = r.task.result or {}
+            why = res.get("error") or res.get("reason") or f"exit {res.get('exit_code', '?')}"
+            lines.append(f"- Task {r.task.index}: {junit.cell(why)[:300]}")  # from the computer: one plain line
+    return "\n".join(lines) + "\n"
+
+
+class TestReport(BaseModel):
+    files: int
+    tests: int
+    passed: int
+    failed: int
+    error: int
+    skipped: int
+    seconds: float
+    failures: list[dict[str, Any]]
+    more_failures: int
+    slowest: list[dict[str, Any]]
+    unreadable: list[str]
+
+
+@router.get("/jobs/{job_id}/tests", response_model=TestReport)
+async def test_report(job_id: uuid.UUID, request: Request, p: Principal = Depends(current_principal),
+                      s: AsyncSession = Depends(get_session)):
+    """Every task's JUnit XML report merged into one (group members only)."""
+    job, _, _ = await _load_job(s, job_id, p)
+    _need_store(request)
+    rows = await _rows(s, job)
+    report = _cached(_report_key(job, rows))
+    if report is None:
+        async with _async_slots(request):  # waiting requests do not hold the server's worker threads
+            report = await asyncio.to_thread(_tests, request.app.state.settings, job, rows)
+    return TestReport(**report.summary())
+
+
+def _async_slots(request: Request) -> asyncio.Semaphore:
+    state = request.app.state
+    if not hasattr(state, "report_slots"):
+        state.report_slots = asyncio.Semaphore(REPORT_BUILDS)
+    return state.report_slots
 
 
 def _need_store(request: Request) -> None:
@@ -256,8 +399,10 @@ def _readme(job: Job, notes: list[str], has_table: bool) -> str:
     if has_table:
         lines.append("results.csv    every task's result.json in one table")
     lines.append("combined/      CSV files of the same name from all tasks, merged (when their columns match)")
-    if notes:
-        lines += ["", "Not included:", *[f"- {n}" for n in notes]]
+    lines.append("summary.md     the run: what ran where, the size given and used, failed tasks")
+    lines.append("tests.md       every task's JUnit XML test report merged into one (when there are any)")
+    if notes:  # file names come from the tasks: one line each
+        lines += ["", "Not included:", *[f"- {junit.one_line(n, 1000)}" for n in notes]]
     return "\n".join(lines) + "\n"
 
 
@@ -337,7 +482,8 @@ def _add_file(settings, job: Job, z: zipfile.ZipFile, name: str, o: dict[str, An
                      + (", so it was left out" if o.get("size", 0) <= MAX_CHECKED_BYTES else "; do not trust it"))
 
 
-def _write_zip(settings, job: Job, rows: list[_Row], logs: dict[int, str], logs_cut: bool, out: _Pipe) -> None:  # noqa: ANN001
+def _write_zip(settings, job: Job, rows: list[_Row], logs: dict[int, str], logs_cut: bool, out: _Pipe,  # noqa: ANN001
+               show_reasons: bool = False) -> None:
     notes: list[str] = []
     if logs_cut:
         notes.append(f"some logs: more than {MAX_ZIP_LOG_BYTES // (1024 * 1024)} MiB of logs in all; the job page "
@@ -366,6 +512,20 @@ def _write_zip(settings, job: Job, rows: list[_Row], logs: dict[int, str], logs_
         if table:
             z.writestr("results.csv", _csv(columns, table))
         _merge_csvs(settings, job, rows, z, notes)
+        try:
+            tests = _tests(settings, job, rows).summary()
+        except Exception:  # noqa: BLE001 (the task files and logs above matter more than the test report)
+            log.exception("test report for job %s failed", job.id)
+            notes.append("tests.md: the test report could not be built")
+            tests = None
+        if tests and tests["tests"]:
+            z.writestr("tests.md", junit.markdown(tests))
+            notes.extend(f"tests: {u} is not a JUnit report pool can read" for u in tests["unreadable"])
+        try:
+            z.writestr("summary.md", _summary_md(job, rows, show_reasons, tests))
+        except Exception:  # noqa: BLE001
+            log.exception("summary for job %s failed", job.id)
+            notes.append("summary.md: the summary could not be built")
         z.writestr("README.txt", _readme(job, notes, bool(table)))
     out.finish()
 
@@ -394,10 +554,11 @@ async def _stream(pipe: _Pipe, errors: list[BaseException]) -> AsyncIterator[byt
 async def results_zip(job_id: uuid.UUID, request: Request, p: Principal = Depends(current_principal),
                       s: AsyncSession = Depends(get_session)):
     """Every task's output files and log, tasks.csv, results.csv and merged CSVs, as one zip."""
-    job, _, _ = await _load_job(s, job_id, p)
+    job, _, role = await _load_job(s, job_id, p)
     _need_store(request)
     settings = request.app.state.settings
     rows = await _rows(s, job)
+    show_reasons = job.submitter_id == p.user.id or role in MANAGERS
     total = sum(o.get("size", 0) for r in rows for o in r.outputs)
     if total > settings.results_zip_max_mb * 1024 * 1024:
         raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE,
@@ -408,7 +569,7 @@ async def results_zip(job_id: uuid.UUID, request: Request, p: Principal = Depend
 
     def write() -> None:  # its own thread: a slow download must not hold one of the server's worker threads
         try:
-            _write_zip(settings, job, rows, logs, cut, pipe)
+            _write_zip(settings, job, rows, logs, cut, pipe, show_reasons)
         except BrokenPipeError:
             pass  # the client went away
         except Exception as exc:  # the response ends early; the client sees a broken download, not a wrong file

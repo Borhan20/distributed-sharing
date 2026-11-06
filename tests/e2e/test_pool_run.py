@@ -239,3 +239,19 @@ async def test_the_agent_skill_checks_waits_and_collects(run_platform):
     nobody.mkdir()
     r = await asyncio.to_thread(_script, {**env, "POOL_CONFIG_DIR": str(nobody)}, "check.sh")
     assert r.returncode == 1 and "MISSING sign-in" in r.stdout, r.stdout + r.stderr
+
+
+async def test_test_reports_from_the_tasks_are_merged(run_platform):
+    """pool-decides step E: a task's /out/junit.xml reaches the merged test report through the file store."""
+    p = run_platform
+    xml = ('<testsuite name="s"><testcase classname="c" name="ok" time="0.1"/>'
+           '<testcase classname="c" name="bad" time="0.2"><failure message="nope"/></testcase></testsuite>')
+    spec = {"image": busybox_image(), "command": ["sh", "-c", f"echo '{xml}' > /out/junit.xml"],
+            "memory": "64Mi", "retries": 0}
+    r = await p["http"].post("/api/v1/groups/e2e/jobs", json=spec)
+    assert r.status_code == 201, r.text
+    job_id = r.json()["id"]
+    assert (await wait_job(p["http"], job_id, 60))["state"] == "succeeded"
+    report = (await p["http"].get(f"/api/v1/jobs/{job_id}/tests")).json()
+    assert (report["tests"], report["passed"], report["failed"]) == (2, 1, 1), report
+    assert report["failures"][0]["message"] == "nope"

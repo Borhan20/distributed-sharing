@@ -480,6 +480,8 @@ README.txt                  what is inside, and any file left out (and why)
 tasks.csv                   one line per task: values, state, tries, computer, run time
 results.csv                 every result.json in one table
 combined/summary.csv        CSV files with the same name and columns, from all tasks, merged
+summary.md                  the run: what ran where, size given and used, why, failed tasks
+tests.md                    every task's JUnit XML test report merged into one (when there are any)
 task-000_seed=0/result.json one folder per task: its files and log.txt
 task-000_seed=0/log.txt
 task-001_seed=1/...
@@ -495,12 +497,30 @@ for example `{"seed": 3, "accuracy": 0.91}`. Nested values become columns like
 pool download JOB-ID --all -o results/   # every task's files, in the same folders as the zip
 pool results JOB-ID -o results.csv       # the results table
 pool logs JOB-ID --task 3                # one task's log
+pool tests JOB-ID                        # every task's test report merged: passed, failed, slowest
 ```
 
 `pool download` checks every file's SHA-256 against what the computer
 reported, so a damaged or swapped file is never saved. The zip does the same:
 it leaves such a file out (files over 64 MiB are checked while they stream, so
 they are marked instead) and says so in `README.txt`.
+
+**Test reports.** If your tasks write JUnit XML (most test tools can, e.g.
+`pytest --junitxml=/out/junit.xml`), pool merges every task's report into one:
+the job page shows a **Tests** section, `pool tests JOB-ID` prints it, the zip
+has `tests.md`, and `pool run` ends with `Tests: 120 passed, 2 failed`. Reports
+of failed tasks count too.
+
+| Limit for test reports | Value |
+|---|---|
+| File | UTF-8 XML, no DOCTYPE, at most 10 MiB |
+| Tests | 50,000 per job |
+| Files read for one job | 500, or 64 MiB in all (the rest are listed as not read) |
+
+**When will it be done?** While a job runs, the job page and `pool attach`
+say how long it will probably take, from its finished tasks (or your earlier
+runs): `about 25 min more: 40 task(s) of about 5 min, 8 at a time`. A task that
+prints nothing for 30 minutes gets a note; its time limit still stops it.
 
 **Combine further** in a spreadsheet, or in Python:
 
@@ -751,6 +771,7 @@ is packaged.
 | Logs | `pool logs JOB-ID --task 0 [-f]` |
 | Download results | `pool download JOB-ID --all [-o FOLDER]` (every task) or `pool download JOB-ID [--task N] [--path FILE] [-o FOLDER]` |
 | Results table (CSV) | `pool results JOB-ID [-o results.csv]` |
+| Test report (all tasks' JUnit XML merged) | `pool tests JOB-ID` |
 | My own registry tokens (private images) | `pool registry list --mine` / `pool registry set docker.io --username YOU --mine` / `pool registry remove docker.io --mine` |
 | The group's registry tokens | `pool registry list my-lab` / `pool registry set ghcr.io --username READER --group my-lab` / `pool registry remove ghcr.io --group my-lab` |
 | Cancel | `pool cancel JOB-ID` |

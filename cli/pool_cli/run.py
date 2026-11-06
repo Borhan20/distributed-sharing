@@ -681,7 +681,8 @@ def attach(job_id: str, out: Path, yes: bool = False, poll: float = 1.0) -> int:
                 now = cli._fmt(job["tasks"])
                 if now != progress:
                     progress = now
-                    _say(now)
+                    eta = _eta(job_id)
+                    _say(now + (f"  ({eta})" if eta else ""))
             if _finished(job):
                 # Read the output once more after the job ended: its last lines may land just before.
                 if not rows and drained:
@@ -701,7 +702,7 @@ def attach(job_id: str, out: Path, yes: bool = False, poll: float = 1.0) -> int:
         requested = {"cpu": given.get("cpu"), "memory_mb": given.get("memory_mb"),
                      "time_limit_s": given.get("max_runtime_s")}
     for line in (cli.sizing_lines(job, new_only=True) + usage_lines(requested, job.get("used"))
-                 + cli.credit_lines(job, after=True)):
+                 + cli.credit_lines(job, after=True) + cli.test_lines(_tests_of(job_id))):
         _say(line)
     codes = [(t.get("result") or {}).get("exit_code") for t in tasks]
     # Only a task that failed for good for lack of memory: a try that ran out and then succeeded is not news.
@@ -722,6 +723,21 @@ def attach(job_id: str, out: Path, yes: bool = False, poll: float = 1.0) -> int:
          + ("" if single else f" (pool logs {job_id} --task N shows each one)"))
     code = codes[0] if single else None
     return code if isinstance(code, int) and 0 < code < 256 else 1
+
+
+def _eta(job_id: str) -> str | None:
+    """'about 25 min more: 40 task(s) of about 5 min, 8 at a time' (pool-decides §4.8), when pool can tell."""
+    try:
+        return cli.api("GET", f"/api/v1/jobs/{job_id}/waiting").get("eta")
+    except cli.ApiError:
+        return None
+
+
+def _tests_of(job_id: str) -> dict:
+    try:
+        return cli.api("GET", f"/api/v1/jobs/{job_id}/tests")
+    except cli.ApiError:  # no file store, or not allowed: no test summary
+        return {}
 
 
 def _finished(job: dict) -> bool:

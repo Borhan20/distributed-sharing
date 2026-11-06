@@ -73,6 +73,7 @@ Dockerfile patterns for Python, Node, Java, Go, C++, R and others are in
    - `pool attach JOB-ID -o pool-out` saves the `/out` files, prints the output and the hints. Its exit code is the program's exit code.
    - `pool download JOB-ID --all -o DIR` saves every task's files, one folder per task, checked by SHA-256.
    - `pool results JOB-ID -o results.csv` saves all `result.json` rows as one table.
+   - `pool tests JOB-ID` prints every task's JUnit report merged (write it with e.g. `pytest --junitxml=/out/junit.xml`).
 6. **Report to the user:** the final state, where the files are, and any `pool:` hint.
 
 Do not run a long job attached (`pool run` without `-d`, or `pool attach` on
