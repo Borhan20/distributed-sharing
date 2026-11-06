@@ -93,7 +93,7 @@ Run a program on a computer of your group, like `docker run` on yours.
       --time-limit T     Stop after T, e.g. 30m, 2h                                image's entrypoint
       --retries N        Tries again after a failure (0)
       --build PATH       Build this folder (default: .)    -f, --file FILE     Dockerfile to build
-      --platform P       Platform to build for (default linux/amd64)
+      --platform P       Platform to build for (default: what most of the group's computers are)
       --name NAME        Job name (default: from the folder or image)
       --group GROUP      Group (default: from `pool login --group`)
   -o, --out DIR          Where the job's /out files go (default ./pool-out)
@@ -356,7 +356,23 @@ def plan(o: RunOptions, folder: Path) -> Plan:
     except JobSpecError as exc:
         raise cli.ApiError(f"job: {exc}") from None
     return Plan(job=job, build_context=context, dockerfile=df, platform=o.platform or project.get("platform")
-                or "linux/amd64", name=name)
+                or "", name=name)  # "": the group's most common kind of computer (run), or linux/amd64
+
+
+def group_platform(group: str) -> str:
+    """The kind of computer most of the group's shared computers are (linux/amd64 when none is shared)."""
+    try:
+        kinds = cli.api("GET", f"/api/v1/groups/{group}/platforms")
+    except cli.ApiError:
+        kinds = []
+    # Names come from the computers themselves: use and print only ones that look like a platform.
+    kinds = [k for k in kinds if isinstance(k.get("platform"), str)
+             and re.fullmatch(r"(linux|windows)/[a-z0-9_]{1,16}", k["platform"])]
+    platform = kinds[0]["platform"] if kinds else "linux/amd64"
+    if len(kinds) > 1:
+        _say(f"Building for {platform}, the kind most of the group's computers are; others: "
+             + ", ".join(f"{k['platform']} ({k['computers']})" for k in kinds[1:]) + ". Change it with --platform.")
+    return platform
 
 
 def _folder_name(folder: Path) -> str:
@@ -375,9 +391,11 @@ def _docker() -> str:
 
 
 def docker_build(p: Plan, tag: str) -> None:
-    cmd = [_docker(), "build", "--platform", p.platform, "-f", str(p.dockerfile), "-t", tag, str(p.build_context)]
+    # No platform (pool run --local without --platform): this computer's own, which builds fastest.
+    platform = ["--platform", p.platform] if p.platform else []
+    cmd = [_docker(), "build", *platform, "-f", str(p.dockerfile), "-t", tag, str(p.build_context)]
     _say(f"Building {p.dockerfile.relative_to(Path.cwd()) if p.dockerfile.is_relative_to(Path.cwd()) else p.dockerfile}"
-         f" for {p.platform} ...")
+         f" for {p.platform or 'this computer'} ...")
     if subprocess.run(cmd).returncode != 0:
         raise cli.ApiError("the image did not build (docker build's output is above)")
 
@@ -600,6 +618,8 @@ def run(argv: list[str]) -> int:
         _check_sign_in(token, 600)
         stamp = f"{dt.datetime.now(dt.UTC):%Y%m%d-%H%M%S}-{secrets.token_hex(2)}"
         tag = f"{info['repository_prefix']}/{default_name(p.name)}:run-{stamp}"
+        if not p.platform:
+            p.platform = group_platform(group)
         me = cli.api("GET", "/api/v1/me")
         try:
             docker_build(p, tag)

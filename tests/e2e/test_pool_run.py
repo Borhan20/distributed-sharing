@@ -172,6 +172,16 @@ async def test_ctrl_c_stops_the_job_and_its_container(run_platform):
     assert job["tasks"].get("cancelled") == 1
 
 
+async def test_pool_reads_the_image_in_the_groups_registry(run_platform):
+    """pool-decides step C: the platforms of a `pool run` image are read from the built-in registry."""
+    p = run_platform
+    r = await asyncio.to_thread(pool, p["cfg"], p["project"], "run", "--platform", PLATFORM, "-d", "--", "read")
+    job_id = re.search(r"to \S+: job (\S+)$", r.stderr, re.M).group(1)
+    j = (await p["http"].get(f"/api/v1/jobs/{job_id}")).json()
+    assert j["image_info"]["platforms"] == [PLATFORM], j["image_info"]
+    assert (await wait_job(p["http"], job_id, 60))["state"] == "succeeded"
+
+
 async def test_attach_follows_a_job_submitted_elsewhere(run_platform):
     p = run_platform
     await asyncio.to_thread(pool, p["cfg"], p["project"], "run", "--platform", PLATFORM, "-d", "--", "first")

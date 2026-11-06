@@ -275,3 +275,14 @@ export function splitImage(image: string): { name: string; digest: string | null
   const at = image.indexOf("@");
   return at < 0 ? { name: image, digest: null } : { name: image.slice(0, at), digest: image.slice(at + 1) };
 }
+
+/** What pool read from an image: "built for amd64 and arm64 · NVIDIA CUDA · opens port 8000/tcp". */
+export function imageInfoText(info: { platforms?: string[]; cuda?: boolean; ports?: string[] } | null | undefined): string | null {
+  if (!info?.platforms?.length) return null;
+  const arches = [...new Set(info.platforms.filter((p) => p.startsWith("linux/")).map((p) => p.split("/")[1]))];
+  const parts = [`built for ${(arches.length ? arches : info.platforms).join(", ")}`];
+  if (info.cuda) parts.push("NVIDIA CUDA");
+  if (info.ports?.length) parts.push(`opens port ${info.ports.slice(0, 5).join(", ")}`);
+  return parts.join(" · ");
+}
+

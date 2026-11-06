@@ -79,6 +79,8 @@ def _blocker(job: Job, d: Device, share: dict[str, Any], submitter: str, on_prob
     caps = d.capabilities or {}
     if job.os and caps.get("os", d.os) != job.os:
         return "os"
+    if job.architectures and (caps.get("arch") or d.arch) not in job.architectures:
+        return "platform"
     if _tier_rank(caps.get("tiers") or []) < job.min_tier_rank:
         return "tier"
     if job.data_class == "confidential" and not (d.org_owned_dedicated and _tier_rank(caps.get("tiers") or []) >= 2):
@@ -103,6 +105,7 @@ def _blocker(job: Job, d: Device, share: dict[str, Any], submitter: str, on_prob
 
 _BLOCKER_TEXT = {
     "os": "It needs a different operating system.",
+    "platform": "Its image is built for another kind of computer (CPU type).",
     "tier": "It needs stronger isolation than the owners allow.",
     "confidential": "It holds confidential data, which runs only on dedicated organisation computers.",
     "submitter": "The computers only accept jobs from certain members.",
@@ -301,6 +304,11 @@ async def explain_waiting(s: AsyncSession, settings: Settings, job: Job) -> tupl
                 f"e.g. `pool-agent share {group.name} --cpu-percent 75 --memory 8Gi`.")
         return pending, [Reason("too_big", message, hint)]
 
+    if set(blockers) == {"platform"}:
+        kinds = ", ".join(job.architectures or [])
+        return pending, [Reason("platform", f"Its image is built for {kinds}, and no shared computer is.",
+                                f"Build it for the group's computers: `pool run --platform linux/"
+                                f"{(available[0][0].capabilities or {}).get('arch') or available[0][0].arch}`.")]
     sentences = " ".join(_BLOCKER_TEXT[code] for code in sorted(blockers))
     return pending, [Reason("no_match", f"No available computer can run this job. {sentences}",
                             "Compare the job's requirements with the group's computers on the group page.")]

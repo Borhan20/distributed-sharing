@@ -129,6 +129,7 @@ class Decision:
     disk_mb: int
     max_runtime_s: int
     sizing: dict[str, Any] = field(default_factory=dict)
+    gpus: int | None = None  # set when pool chose it from the image (a CUDA image)
 
 
 async def _history(s: AsyncSession, user_id: uuid.UUID, image: str) -> list[Run]:
@@ -239,8 +240,21 @@ def _from_runs(runs: list[Run], ceiling: Ceiling | None = None) -> tuple[dict[st
     return sizes, why
 
 
+async def group_has_gpu(s: AsyncSession, group: Group) -> bool:
+    """Whether a computer shared with the group offers a GPU to it."""
+    rows = (await s.execute(
+        select(Device).join(DeviceShare, DeviceShare.device_id == Device.id)
+        .where(DeviceShare.group_id == group.id, DeviceShare.enabled, DeviceShare.removed.is_(False),
+               Device.state == "active"))).scalars().all()
+    for d in rows:
+        share = next((r for r in d.reported_shares or [] if r.get("group") == group.name), None) or {}
+        if (d.capabilities or {}).get("gpus") and (share.get("limits") or {}).get("gpu"):
+            return True
+    return False
+
+
 async def decide(s: AsyncSession, *, user_id: uuid.UUID, group: Group, image: str, command: Any, args: Any,
-                 given: dict[str, Any]) -> Decision:
+                 given: dict[str, Any], info: dict[str, Any] | None = None, gpu_given: bool = True) -> Decision:
     """Sizes for a new job. `given` holds the sizes the person set (cpu, memory_mb, disk_mb, max_runtime_s);
     None means pool decides."""
     auto = [k for k, f in (("cpu", "cpu"), ("memory", "memory_mb"), ("disk", "disk_mb"),
@@ -257,6 +271,10 @@ async def decide(s: AsyncSession, *, user_id: uuid.UUID, group: Group, image: st
         why = {"memory": "this is your first run of this image",
                "cpu": "the start for a first run", "disk": "room for the image and its files",
                "time_limit": "the group's default for a first run"}
+    if info and first_run and info.get("size_mb") and "disk" in auto:
+        # A big image needs room on the computer: about 3 × its download, unpacked.
+        sizes["disk_mb"] = min(max(FIRST_RUN_DISK_MB, _round_up(info["size_mb"] * 3, 256)), CEILING_DISK_MB)
+        why["disk"] = f"room for the image ({size_text(info['size_mb'])} to download) and its files"
     reasons = []
     out: dict[str, Any] = {}
     for key, f, label, text in (("memory", "memory_mb", "Memory", size_text), ("cpu", "cpu", "CPU", lambda c: f"{c:g}"),
@@ -272,10 +290,23 @@ async def decide(s: AsyncSession, *, user_id: uuid.UUID, group: Group, image: st
         else:
             out[f] = given[f]
             reasons.append(f"{label} {text(given[f])}: as you asked.")
+    gpus = None
+    if info and info.get("cuda") and not gpu_given:
+        if await group_has_gpu(s, group):
+            gpus = 1
+            reasons.append("GPU 1: the image is built for NVIDIA CUDA.")
+        else:
+            reasons.append("GPU none: the image is built for NVIDIA CUDA, but no computer in the group shares a "
+                           "GPU, so it runs on the CPU.")
+    if info and info.get("ports"):
+        reasons.append(f"The image opens port {', '.join(info['ports'][:5])}. Apps that listen on a port do not work "
+                       "yet: it runs as a program, and nothing can reach the port.")
+    if gpus:
+        auto.append("gpu")
     sizing = {"auto": auto, "first_run": first_run, "runs": len(runs), "match": match, "steps": 0,
               "reasons": reasons, "decided": len(reasons)}  # reasons after `decided` came while it ran
     return Decision(cpu=float(out["cpu"]), memory_mb=int(out["memory_mb"]), disk_mb=int(out["disk_mb"]),
-                    max_runtime_s=int(out["max_runtime_s"]), sizing=sizing)
+                    max_runtime_s=int(out["max_runtime_s"]), sizing=sizing, gpus=gpus)
 
 
 # --------------------------------------------------------------------------

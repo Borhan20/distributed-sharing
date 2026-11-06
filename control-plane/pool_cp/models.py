@@ -312,6 +312,9 @@ class Job(Base):
     max_runtime_s: Mapped[int | None] = mapped_column(Integer)
     # How the sizes were chosen and why (scheduler.sizing): auto fields, first run, growth steps, reasons.
     sizing: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # What pool read from the image (registry.ImageInfo), and the CPU types it runs on (None: not known, any).
+    image_info: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    architectures: Mapped[list[str] | None] = mapped_column(ARRAY(String(32)))
     __table_args__ = (Index("ix_jobs_active", "group_id", "created_at",
                             postgresql_where="state IN ('pending','running')"),)
 
@@ -484,4 +487,14 @@ class CreditRequest(Base):
         CheckConstraint("amount > 0", name="ck_credit_requests_amount"),
         Index("uq_credit_requests_open", "group_id", "user_id", unique=True, postgresql_where="state = 'open'"),
     )
+
+
+class ImageInfoCache(Base):
+    """What pool read from an image, by registry/repository@digest: an image never changes, so it is read once
+    (Docker Hub counts every manifest read against its pull limit)."""
+
+    __tablename__ = "image_infos"
+    image: Mapped[str] = mapped_column(String(512), primary_key=True)
+    info: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now())
 

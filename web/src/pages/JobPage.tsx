@@ -7,7 +7,7 @@ import { useAuth } from "../auth/AuthContext";
 import { ConfirmDialog, CopyButton, ErrorBox, Loading, RichText, StateBadge } from "../components/ui";
 import { TERMINAL, fmtTime } from "../lib/format";
 import { downloadFile } from "../lib/download";
-import { commandText, splitImage } from "../lib/jobspec";
+import { commandText, imageInfoText, splitImage } from "../lib/jobspec";
 import { jobCostText } from "../lib/credits";
 import { oversizeHint, requestedText, taskUsageText, usedText, type JobUsed, type Requested, type TaskUsage } from "../lib/usage";
 import { TaskCounts } from "./group/JobsTab";
@@ -131,6 +131,9 @@ export function JobPage() {
                 {" "}
                 · fixed to {image.digest.slice(0, 19)}… when submitted
               </span>
+            )}
+            {imageInfoText(j.image_info as Parameters<typeof imageInfoText>[0]) && (
+              <div className="muted small-text">{imageInfoText(j.image_info as Parameters<typeof imageInfoText>[0])}</div>
             )}
           </dd>
           <dt>Command</dt>

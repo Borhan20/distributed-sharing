@@ -51,7 +51,8 @@ Read the log: `pool logs JOB-ID --task N`.
 | `Permission denied`, `EACCES` | It runs as user 65534, not root | Write only to `/out` or `/tmp`. In the Dockerfile: `RUN chmod -R a+rX /app`. |
 | `out of memory: the program needed more than its ... MiB`, exit code 137, "stopped with signal 9" | Out of memory | Run it again with twice the memory (`-m`). `pool status JOB-ID` shows in its USED column how much each task reached. |
 | `max_runtime_exceeded` | It ran out of time | Raise `--time-limit`. |
-| `exec format error` | Built for another kind of computer | Build with `--platform linux/amd64` (or `linux/arm64`, to match the computers). |
+| `exec format error` | Built for another kind of computer (pool could not read the image to match it) | Build with `--platform` for the group's computers; `pool run` picks the most common kind by itself. |
+| Waiting: "Its image is built for amd64, and no shared computer is" | The group's computers are another kind | Build with `--platform linux/arm64` (or the kind the message names). |
 | `agent: ... pull access denied`, `manifest unknown` | The computer could not download the image | Check the name. For a private image, the user adds a read-only token. |
 | `the server gave no pull token` | The token is missing, expired, or cannot read this image | The user replaces the token. |
 | `this image is private: this computer pulled it for another group` | The image belongs to another group's registry | Use an image this group can read. |

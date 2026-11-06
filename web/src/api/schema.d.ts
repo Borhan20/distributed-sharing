@@ -79,6 +79,26 @@ export interface paths {
         patch: operations["update_group_api_v1_groups__name__patch"];
         trace?: never;
     };
+    "/api/v1/groups/{name}/platforms": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Group Platforms
+         * @description The kinds of computer shared with the group, most common first: `pool run` builds for the first.
+         */
+        get: operations["group_platforms_api_v1_groups__name__platforms_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/groups/{name}/close": {
         parameters: {
             query?: never;
@@ -1717,6 +1737,10 @@ export interface components {
             credits?: {
                 [key: string]: unknown;
             } | null;
+            /** Image Info */
+            image_info?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** JobWaitingOut */
         JobWaitingOut: {
@@ -1834,6 +1858,13 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /** PlatformOut */
+        PlatformOut: {
+            /** Platform */
+            platform: string;
+            /** Computers */
+            computers: number;
         };
         /** RegistryCredentialIn */
         RegistryCredentialIn: {
@@ -2209,6 +2240,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GroupOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    group_platforms_api_v1_groups__name__platforms_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformOut"][];
                 };
             };
             /** @description Validation Error */

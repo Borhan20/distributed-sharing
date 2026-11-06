@@ -80,7 +80,7 @@ class GPUInfo(_Model):
 
 class Capabilities(_Model):
     os: Literal["linux", "windows"]
-    arch: str
+    arch: str = Field(pattern=r"^[a-z0-9_]{1,16}$")  # GOARCH: amd64, arm64, ...
     cpu_cores: int = Field(ge=1)
     memory_mb: int = Field(ge=0)
     disk_mb: int = Field(ge=0)
