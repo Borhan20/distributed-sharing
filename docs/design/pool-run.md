@@ -263,6 +263,11 @@ Usage counts toward fair share by the hour, like tasks.
 
 ### 3.3 Network on the member's computer
 
+> **As built (step 2):** apps also run with `--network none`. The check below
+> found that an `--internal` network does not stop an app reaching the owner's
+> computer, so the agent reaches the app from inside its container instead
+> (§9, step 2).
+
 Batch tasks keep `--network none`. An app gets its own Docker network, created
 with `--internal`, so there is no route out of it:
 
@@ -343,7 +348,7 @@ copy has its own memory and files.
 
 | Risk | Answer |
 |---|---|
-| The app reaches the owner's computer or network | Internal network per app; a test before step 2 ships (§3.3) |
+| The app reaches the owner's computer or network | No network at all (`--network none`); the agent reaches the port from inside the container (§9, step 2). Tested |
 | Someone else opens my app | Tunnel only for the person who started it; the device side only for the current attempt; tested |
 | One app reaches another | One network per app or stack |
 | Compose asks for host access | The agent creates containers itself; refused options (§3.5) |
@@ -422,3 +427,60 @@ while building it:
 | Clean-up safety | Never an image a waiting or running job needs; the database row is deleted first, and only if it is still old | A job may wait longer than the retention. A job may be submitted during a scan. |
 | Token lifetimes | Members: 5 minutes (Docker asks again). Computers: 30 minutes, pull-only, one repository | Docker does not ask for a new token in the middle of one pull; big images take time. |
 
+**Step 2 (one app with ports) was built on 6 November 2026.** These choices
+were made while building it:
+
+| Topic | Choice | Why |
+|---|---|---|
+| Network | Apps run with `--network none`, like programs. They have only the loopback interface. | A check with Docker 29 showed that a container on an `--internal` network can still reach the owner's computer at the bridge address (172.x.0.1). With no network, it reaches nothing. |
+| Reaching the port | For each connection, the agent runs `docker exec -i pool-ATTEMPT /.pool/pool-agent pipe 127.0.0.1:PORT`. The agent's own binary is mounted read-only into the app's container at `/.pool/pool-agent`; its `pipe` command connects to the app's port on the container's loopback and copies bytes through standard input and output. | Nothing listens anywhere new. The pipe only connects to `127.0.0.1` inside the container. |
+| Static agent | The agent must be a static Linux binary to run inside any image: build it with `CGO_ENABLED=0`. An agent that is not static says so when it starts and reports that it cannot run apps, so the scheduler sends it none. | A dynamic binary needs the C library of the image, which may not exist (e.g. busybox, Alpine). |
+| Tunnel | You → server: `wss://SERVER/api/v1/jobs/JOB/tunnel?port=P`, signed in as you. The server checks: you are a member, you started the job, the port is one of the job's ports, and the task is running now. It then sends the computer a one-time tunnel id and secret over the computer's own signed-in connection (`tunnel_open`). The computer → server: `/api/v1/agent/tunnels/ID`, with the secret in the `X-Pool-Tunnel-Secret` header (used once, compared in constant time, gone after 15 s). The server copies bytes between the two, and checks every 15 s that the app still runs on that computer and that you are still a member. | The computer proves it is the one running the app through its existing connection; no new keys. |
+| Limits | Open at once: 32 connections per person and 32 per computer (the agent refuses more too). New connections: 120 a minute per person. 1 MiB per message, 4 GiB per connection. The audit log gets one row (`app.tunnel`) per person, app and port every 10 minutes, with the number of connections. | Each connection is a `docker exec` on the owner's computer, outside the share's limits. Using and testing an app, not serving the public. |
+| Ports | `-p HERE:APP` / `-p PORT` on `pool run` and `pool attach`, `port:` / `ports:` in a job file or `pool.yaml`. Without them, the TCP ports the image `EXPOSE`s are used. `ports: []` keeps the job a program. At most 10, TCP only, not with parts or a sweep. | You give an image; pool decides. |
+| Port here | `pool` listens on `127.0.0.1` only. By default, the same number as the app's port; below 1024 (which needs root here) 8000 + the number (`80` → `8080`). If that port is taken, the next free one (up to 19 more). | Only you, on your computer, can connect. |
+| Time limit | 8 hours unless you give one. A computer runs an app only if its owner allows apps and allows at least that long (`--app-hours`, default 8, at most 168). | Apps hold a computer for hours. |
+| Owner opt-in | `pool-agent share GROUP --allow-apps [--app-hours N]`. Off by default. The waiting reasons say when no computer allows apps, with the command. | §3.7. |
+| `--local` | Runs the app with no network, like a member's computer, and does not open its ports; it says to use `docker run -p` to try it in a browser. | The rules stay the same everywhere. |
+
+**Changed after the security review of step 2:**
+
+The review found no way for anyone but the person who started an app to reach
+it, and no network path out of the app's container. It found these problems,
+all fixed and tested:
+
+| Problem found | Now |
+|---|---|
+| Tunnels opened at the same moment all passed the limit of 32 per person (60 of 80 got through), and each one is a `docker exec` on the owner's computer | The limit is checked and counted with no wait in between. Also at most 32 per computer (server and agent), and 120 new connections a minute per person. |
+| Each connection wrote an audit row, and the audit log is append-only | One row per person, app and port every 10 minutes, with the number of connections. |
+| An open tunnel stayed open after the app stopped, the person left the group or the computer disconnected, as long as both sides stayed connected | The server checks every 15 s and closes it. |
+| A wrong secret with the right tunnel id used the tunnel up, so the real computer was refused | The secret is checked first. |
+| The one-time secret was in the URL, which the server logs | It is sent in a header. |
+| "Only you can reach it" was not exact: other users of your own computer can connect to the local port | The messages and the guide say "on this computer only" and explain shared computers. On Windows, the local port is taken exclusively. |
+| Turning apps off (or lowering `--app-hours`) left running apps running | The agent stops them (they move to another computer, as for any change of the owner's policy), and opens no new connections to them. |
+| An app that never closes a connection kept one `pool-agent pipe` process per past connection in its container | `pipe` stops 5 s after its connection has gone. |
+| `max_hours: .nan` in a hand-edited policy passed the checks and then broke the agent | NaN and infinity are refused. |
+
+Still open, from the review:
+
+- **One `docker exec` per connection.** About 10 MB of memory and 30 ms of CPU
+  on the owner's computer per connection, within the limits above. One helper
+  per app port that carries many connections would cost less.
+- **No bandwidth budget.** The 4 GiB limit is per connection; a person can
+  open another one. The relay goes through the server and the owner's upload.
+- **The owner's path is visible:** inside the app, `/proc/self/mountinfo`
+  shows where the agent binary is on the owner's computer (for example under
+  their home folder). The `/out` folder already showed a path of this kind.
+
+**Not built in step 2:**
+
+- **The heartbeat from your `pool` command** (§3.2): the app runs until its
+  time limit or until you stop it (Ctrl-C in `pool run`/`pool attach`, or
+  Stop on the job page). Closing the terminal without stopping it leaves it
+  running until the time limit.
+- **Moving an app when the owner needs the computer back** (§2.5): it stops
+  like a task and is placed again like one, and open connections end. This is
+  not yet tested for apps.
+- **Several API processes:** tunnels are joined inside one API process.
+- **Health checks** and examples in several languages (§5): the end-to-end
+  test uses a busybox web server.

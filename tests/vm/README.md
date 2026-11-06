@@ -23,7 +23,7 @@ lxc exec pool-install-test -- bash /root/pool-src/deploy/install.sh --source /ro
 
 # 3. Check it from this machine, like members would
 lxc file pull pool-install-test/opt/pool/deploy/pool-ca.crt /tmp/pool-ca.crt
-(cd agent && go build -o /tmp/pool-agent ./cmd/pool-agent)
+(cd agent && CGO_ENABLED=0 go build -o /tmp/pool-agent ./cmd/pool-agent)
 uv run python tests/vm/server_acceptance.py --address "$VM" --ca /tmp/pool-ca.crt \
     --admin admin --admin-password ONE-TIME-PASSWORD --agent /tmp/pool-agent
 ```

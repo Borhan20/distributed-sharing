@@ -2,7 +2,7 @@
 process, Docker building on "your" computer, a CNCF Distribution registry in token mode signing in through the
 API, the real agent pulling with a server-signed token, and SeaweedFS for the files.
 
-    cd agent && go build -o bin/pool-agent ./cmd/pool-agent
+    cd agent && CGO_ENABLED=0 go build -o bin/pool-agent ./cmd/pool-agent
     uv run pytest -m e2e -s tests/e2e/test_pool_run.py
 """
 

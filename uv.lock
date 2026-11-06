@@ -739,6 +739,7 @@ dependencies = [
     { name = "pool-protocol" },
     { name = "pyyaml" },
     { name = "typer" },
+    { name = "websockets" },
 ]
 
 [package.metadata]
@@ -747,6 +748,7 @@ requires-dist = [
     { name = "pool-protocol", editable = "protocol" },
     { name = "pyyaml", specifier = ">=6" },
     { name = "typer", specifier = ">=0.12" },
+    { name = "websockets", specifier = ">=13" },
 ]
 
 [[package]]

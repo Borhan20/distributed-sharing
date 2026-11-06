@@ -7,7 +7,7 @@
    other agent with a higher epoch, the job still finishes, invariants hold.
 4. Kill switch: running work stops at once and the task is requeued.
 
-    cd agent && go build -o bin/pool-agent ./cmd/pool-agent
+    cd agent && CGO_ENABLED=0 go build -o bin/pool-agent ./cmd/pool-agent
     uv run pytest -m e2e -s tests/e2e/test_agent_e2e.py
 """
 
@@ -45,7 +45,8 @@ def _requirements():
     if not AGENT_BIN.exists():
         if not shutil.which("go"):
             pytest.skip("go toolchain not available to build the agent")
-        subprocess.run(["go", "build", "-o", str(AGENT_BIN), "./cmd/pool-agent"], cwd=ROOT / "agent", check=True)
+        subprocess.run(["go", "build", "-o", str(AGENT_BIN), "./cmd/pool-agent"], cwd=ROOT / "agent", check=True,
+                       env={**os.environ, "CGO_ENABLED": "0"})  # static, as apps need (test_apps_e2e)
     subprocess.run(["docker", "pull", "-q", busybox_image()], check=True, capture_output=True)
 
 
@@ -288,7 +289,7 @@ async def test_each_run_is_measured_and_out_of_memory_is_named(platform):
     assert task["usage"]["samples"] >= 2 and task["usage"]["capped"] in ([], ["peak_cpu"]), task["usage"]
     j = await wait_job(http, oom)
     task = (await http.get(f"/api/v1/jobs/{oom}/tasks")).json()[0]
-    assert j["state"] == "failed" and task["result"]["oom_killed"] is True, task
+    assert j["state"] == "failed" and task["result"]["oom_killed"] is True, (task["result"], task.get("usage"))
     assert "out of memory" in task["result"]["error"]
 
 

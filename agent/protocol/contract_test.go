@@ -78,7 +78,7 @@ func TestEveryFixtureRoundTrips(t *testing.T) {
 		TypeChallenge, TypeHello, TypeWelcome, TypeHeartbeat, TypeHeartbeatAck, TypeReady, TypeOffer,
 		TypeNoWork, TypeAccept, TypeDecline, TypeStarted, TypeProgress, TypeUploadRequest, TypeUploadURLs,
 		TypeCommit, TypeCommitAck, TypeAbort, TypeRenewCert, TypeCertRenewed, TypeCancel, TypePreempt,
-		TypeRevoke, TypeError,
+		TypeRevoke, TypeTunnelOpen, TypeError,
 	} {
 		if !seen[typ] {
 			t.Errorf("no fixture for message type %s", typ)
@@ -164,6 +164,7 @@ var goTypes = map[string]reflect.Type{
 	"UploadURL":       reflect.TypeOf(UploadURL{}), "CommitAck": reflect.TypeOf(CommitAck{}),
 	"CertRenewed": reflect.TypeOf(CertRenewed{}), "Cancel": reflect.TypeOf(Cancel{}),
 	"Preempt": reflect.TypeOf(Preempt{}), "Revoke": reflect.TypeOf(Revoke{}), "Error": reflect.TypeOf(Error{}),
+	"TunnelOpen":     reflect.TypeOf(TunnelOpen{}),
 	"SignedEnvelope": reflect.TypeOf(SignedEnvelope{}), "TaskEnvelope": reflect.TypeOf(TaskEnvelope{}),
 	"TaskSpec": reflect.TypeOf(TaskSpec{}), "TaskResources": reflect.TypeOf(TaskResources{}),
 	"TaskNetwork": reflect.TypeOf(TaskNetwork{}), "TaskCheckpoint": reflect.TypeOf(TaskCheckpoint{}),

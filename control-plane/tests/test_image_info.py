@@ -108,7 +108,8 @@ async def test_a_cuda_image_asks_for_a_gpu_only_where_the_group_has_one(group_wi
     job = (await coord.post(f"/api/v1/groups/{g}/jobs", {"image": img()}, expect=201)).json()
     j = await coord.get(f"/api/v1/jobs/{job['id']}")
     assert any("no computer in the group shares a GPU" in r for r in j["sizing"]["reasons"])
-    assert any("opens port 8000/tcp" in r for r in j["sizing"]["reasons"])
+    assert j["ports"] == [8000] and any(r.startswith("An app:") for r in j["sizing"]["reasons"]), \
+        "an image that EXPOSEs a port runs as an app"
     assert j["requested"]["gpus"] == 0
     # A computer that shares a GPU with the group.
     gpu_share = {**share(g), "limits": {**share(g)["limits"], "gpu": True}}

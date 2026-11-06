@@ -52,11 +52,11 @@ Every task runs with these rules. A program that breaks one of them fails.
 | Unprivileged user (uid 65534) | Do not depend on root or on a home folder. Set cache folders to `/tmp` (for example `HOME=/tmp`). |
 | One result row per task | Write one JSON object to `/out/result.json`. All tasks' rows become one table. |
 | Each task knows its number | `POOL_TASK_INDEX` (0, 1, ...) and `POOL_TASK_COUNT`. Each part takes its share, e.g. every n-th item. |
-| No ports and no interactive terminal yet | Servers and web apps do not work yet. Run programs that compute and end. |
+| A server is an app | A program that listens on a port runs as an app: see "Run an app" below. There is no interactive terminal. |
 | Linux containers | `pool run` builds for the kind most of the group's computers are, and pool sends tasks only to computers the image has a version for. Use `--platform` only to choose another kind. |
 
 `pool run` refuses `-v`, `--mount`, `--network`, `--privileged`, `--cap-add`,
-`--device`, `-u` and `-p`. The message says why. Copy files into the image
+`--device` and `-u`. The message says why. Copy files into the image
 instead of mounting them. `-it` is accepted, but there is no terminal: the
 program's input is empty.
 
@@ -80,6 +80,20 @@ Do not run a long job attached (`pool run` without `-d`, or `pool attach` on
 a running job) inside a tool call that can time out. If the tool interrupts it
 with Ctrl-C (SIGINT) and there is no terminal, pool cancels the job at once.
 To stop a job on purpose, use `pool cancel JOB-ID`.
+
+### Run an app (a web app, an API, a server)
+
+An app listens on a port. pool runs it on a member's computer with **no
+network**, and opens its port on this computer, at `127.0.0.1` only.
+
+1. **Start it in the background:** `pool run -d -p 8000 IMAGE` (or `-p 8080:80` for the app's port 80 at local port 8080). Without `-p`, the ports the image `EXPOSE`s are used.
+2. **Open its port here:** run `pool attach JOB-ID -p 8000` as a **background** process (it forwards while it runs). The line `pool: Open http://localhost:PORT ...` gives the local port (another one if 8000 is taken here).
+3. **Test it:** for example `curl -sf http://localhost:8000/health`, or the project's own tests against that address.
+4. **Stop it** when done: `pool cancel JOB-ID`. Otherwise it runs until its time limit (8 hours unless `--time-limit` is given).
+
+- It waits until an owner allows apps (`pool-agent share GROUP --allow-apps`). `pool status JOB-ID` and the job page say so. Tell the user; do not change anyone's sharing settings.
+- An app cannot reach the internet or other apps. A frontend in the user's browser can call a backend app at `localhost`; a server cannot call another app.
+- Only the person who started the app can open it.
 
 ## 5. Choose the size
 

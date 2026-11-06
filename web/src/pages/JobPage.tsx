@@ -120,6 +120,15 @@ export function JobPage() {
         From your terminal: <code>pool attach {j.id}</code> follows this job and saves its files in{" "}
         <code>./pool-out</code>. <CopyButton text={`pool attach ${j.id}`} label="Copy" />
       </p>
+      {!!j.ports?.length && (
+        <p className="small-text" data-testid="app-note">
+          This is an app: it listens on port{j.ports.length > 1 ? "s" : ""} {j.ports.join(", ")} and runs until it is
+          stopped (or its time limit). While it runs, <code>pool attach {j.id}</code> opens{" "}
+          {j.ports.length > 1 ? "them" : "it"} on your computer, e.g.{" "}
+          <code>http://localhost:{j.ports[0] < 1024 ? 8000 + j.ports[0] : j.ports[0]}</code>. Only the person who
+          started the app can open it, and the app itself has no network.
+        </p>
+      )}
       <section className="card">
         <h2>Spec</h2>
         <dl className="kv">

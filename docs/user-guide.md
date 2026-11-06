@@ -143,7 +143,7 @@ size you give is kept as it is.
 |---|---|
 | Has versions for some kinds of computer (amd64, arm64) | Sends its tasks only to computers of those kinds. The job page shows them under **Image**. |
 | Is built on NVIDIA CUDA | Asks for 1 GPU, if a computer in the group shares one. Otherwise it runs on the CPU, and the job page says so. |
-| Opens ports (`EXPOSE`) | Says so. Apps that listen on a port do not work yet ([§13](#13-what-is-not-possible-yet)). |
+| Opens ports (`EXPOSE`) | Runs it as an app: while you follow it, its ports open on your computer ([§8](#run-an-app-web-apps-and-apis)). `ports: []` runs it as a program. |
 | Is big | A first run asks for more disk: about 3 × the download. |
 
 **Which computer.** You never choose one. When a computer asks for work, pool
@@ -610,6 +610,7 @@ The flags are the same as for `docker run`:
 | `--entrypoint sh` | Run another command than the image's | the image's |
 | `--time-limit 2h` | Stop the job after this time | pool decides |
 | `--retries 1` | Try again after a failure | 0 |
+| `-p 8000`, `-p 8080:80` | Open the app's port on your computer (`HERE:APP`), on this computer only ([below](#run-an-app-web-apps-and-apis)). | the ports the image `EXPOSE`s |
 | `-d` | Start the job and return at once | – |
 | `-o DIR` | Where the files go | `./pool-out` |
 | `--name NAME` | Job name | the folder name |
@@ -625,7 +626,6 @@ Some `docker run` flags are refused. The message says why:
 | `-v`, `--mount` | Your folders are not on that computer. | Copy the files into the image (`COPY` in the Dockerfile). |
 | `--network` | Jobs have no network. | Put everything the program needs into the image. |
 | `--privileged`, `--cap-add`, `--device`, `-u` | They would give the job power over the owner's computer. | – |
-| `-p` | Apps that listen on a port do not work yet. Nobody could reach the port: jobs have no network. | Run programs that compute and write files to `/out`. Apps (web apps, APIs, databases) are planned ([design](design/pool-run.md#5-delivery-order-and-acceptance-checks)). |
 
 `-it` is accepted, but there is no interactive terminal yet: the program's
 output streams to you, and its input is empty.
@@ -728,6 +728,42 @@ a program with good defaults does not need them.
 | Start it and do something else | `pool run -d ...` |
 | Follow a job again | `pool attach JOB`. It shows the output, then saves the files. It works for every job, also one from the browser. The job page shows the command. |
 
+### Run an app: web apps and APIs
+
+An **app** is a program that listens on a port: a web app, an API, a
+notebook. pool runs it on a computer of your group and opens its port **on
+your computer**:
+
+```console
+$ pool run -p 8000 ghcr.io/you/api:1
+pool: Submitted api (1 task(s)) to my-lab: job 6f1c…
+pool: Running on lab-pc-3
+pool: Open http://localhost:8000 for the app's port 8000. It opens on this computer only; nobody else in the group can open your app.
+pool: Ctrl-C stops the app.
+```
+
+| Topic | How it works |
+|---|---|
+| Which ports | The ports the image `EXPOSE`s, or the ones you give: `-p 8000`, or `-p 8080:80` for the app's port 80 at `localhost:8080`. In a job file or `pool.yaml`: `port: 8000` or `ports: [8000, "8080:80"]`. At most 10, TCP only. |
+| The port on your computer | Only on `127.0.0.1`. The same number as the app's port; below 1024 it is 8000 + the number (`80` → `8080`). If it is taken, pool uses the next free one and says which. |
+| Who can open it | Only you, the person who started it: not the group, not the computer's owner. While `pool run` or `pool attach` runs, the port is open on **your computer** (`127.0.0.1`). Other people signed in to the same computer (a shared lab server, for example) could connect to it too, and their requests would reach your app as yours. On a shared computer, stop `pool attach` when you are done. |
+| Its network | The app has **no network**: it cannot reach the internet, the owner's computer or other apps. Put everything it needs into the image. |
+| How long | Until you stop it (**Ctrl-C**, or **Stop** on the job page), at most its time limit: 8 hours unless you give `--time-limit`. |
+| Where | Only on computers whose owner allows apps ([§10](#10-share-your-computer)). The job page says when none does. |
+| In the background | `pool run -d -p 8000 IMAGE` starts it and returns. `pool attach JOB` opens its ports again; `pool attach JOB -p 9000:8000` opens it at another port. |
+| Not an app | An image that `EXPOSE`s a port but should run as a program: `ports: []` in the job file. Apps cannot be split into `parts` or a `sweep`. |
+
+**A frontend and a backend.** Run each as its own app, with two `pool run -p`
+commands (for example in two terminals). Your browser runs on your computer, so
+a frontend page that calls the backend at `http://localhost:8001` works. A
+frontend server that calls the backend itself cannot: apps cannot reach each
+other. Stacks of several containers (Compose) are planned
+([design](design/pool-run.md#5-delivery-order-and-acceptance-checks)).
+
+`pool run --local` runs an app with the same rules (no network) and does not
+open its ports. To try an app in your browser on your own computer, use
+`docker run -p`.
+
 ### Your images in the group's registry
 
 - Your images are named `SERVER/GROUP/YOU/NAME:run-DATE`.
@@ -765,6 +801,7 @@ is packaged.
 | Submit a job (short or full job file) | `pool submit job.yaml [--group G] [--wait]` |
 | Run a program like `docker run` ([§8](#8-run-your-program-from-your-terminal-pool-run)) | `pool run [FLAGS] [IMAGE] [ARG...]`, `pool run [FLAGS] -- [ARG...]` (builds ./Dockerfile), `pool run --local ...` |
 | Follow a job and save its files | `pool attach JOB-ID [-o FOLDER]` |
+| Open an app's port on your computer ([§8](#run-an-app-web-apps-and-apis)) | `pool run -p 8000 IMAGE`, or for a running app `pool attach JOB-ID [-p 9000:8000]` |
 | Sweep from the command line | `pool sweep job.yaml --set seed=0..9 --set dataset=small,large` |
 | List jobs | `pool jobs list my-lab [--state running]` |
 | Job status | `pool status JOB-ID` |
@@ -805,7 +842,7 @@ tested; Macs are not supported for sharing yet).
 
 **Set it up**, following **My computers** in the browser:
 
-1. **Get the agent.** Installers are planned. For now it is built from source: `cd agent && go build -o bin/pool-agent ./cmd/pool-agent`.
+1. **Get the agent.** Installers are planned. For now it is built from source: `cd agent && CGO_ENABLED=0 go build -o bin/pool-agent ./cmd/pool-agent`.
 2. **Connect it to your account.** On **My computers**, press **Create code** and run the command shown, for example:
    ```bash
    pool-agent enroll --server https://pool.example.org --code ABCDE-FGHJK --name lab-pc
@@ -819,6 +856,12 @@ tested; Macs are not supported for sharing yet).
    pool-agent share my-lab --cpu-percent 75 --memory 8Gi --disk 50Gi --gpu --only-when-idle 10m
    ```
    `--only-when-idle 10m` runs work only after 10 minutes without keyboard or mouse use.
+
+   To also run **apps** (programs that listen on a port, [§8](#run-an-app-web-apps-and-apis)), allow them:
+   ```bash
+   pool-agent share my-lab --allow-apps --app-hours 8
+   ```
+   An app holds part of your computer for hours, so this is off by default. Turning apps off (`--allow-apps=false`) stops the apps running on your computer; they start again elsewhere. `--app-hours` is the longest one app may run here (default 8, at most 168). Apps get no network on your computer: they cannot reach the internet or anything on your computer or your network. Only the person who started an app can open it. The agent must be built with `CGO_ENABLED=0` for apps; it says so when it starts if it is not.
 4. **Start it** and leave it running: `pool-agent run`.
 
 **Control it:**
@@ -830,6 +873,7 @@ tested; Macs are not supported for sharing yet).
 | See what is running and who sent it | `pool-agent status` |
 | See everything that ran here | the computer's page in the browser, section **What ran here** |
 | Change limits | `pool-agent share my-lab --memory 4Gi` |
+| Allow or stop apps | `pool-agent share my-lab --allow-apps` / `--allow-apps=false` |
 
 The settings live in a file on your computer (`pool-agent share` prints its
 path). The server can never widen them. **Turn off** in the browser can only
@@ -952,6 +996,7 @@ The job page explains every waiting job. The same reasons, in short:
 | Part 0 runs first, to learn how much … each part needs | A first run: the other parts start when part 0 ends ([§4](#how-pool-chooses-sizes)). |
 | You have another first run going | Wait, or set the memory yourself (`memory:` or `-m`). |
 | The last try ran out of memory with all the free memory of a computer | The program needs more memory than that computer had. It waits for a computer that offers more. Ask an owner to raise their limit, or make the program use less. |
+| It is an app, and no shared computer allows apps | An owner runs `pool-agent share GROUP --allow-apps` (and `--app-hours` for longer apps). Or run the image as a program: `ports: []`. |
 | Waiting to retry after a failure | The last try failed; see the next table. |
 
 ### The job is refused when you submit it
@@ -974,6 +1019,9 @@ The job page explains every waiting job. The same reasons, in short:
 | `pushing the image ... failed: ... x509: certificate signed by unknown authority` | The server uses its own certificate authority: your Docker must trust it (ask the server admin, [admin guide](admin-guide.md)) |
 | `exec format error` in the job's log | The image was built for another kind of computer. pool now sends a job only to computers its image has a version for, so this happens only when pool could not read the image. Build with `--platform` for the group's computers. |
 | `pool run does not take -v ...` (or another flag) | The message says why; most often, copy the files into the image in the Dockerfile |
+| `the tunnel to port N was refused` | The app is not running right now (it may be waiting or moving to another computer), or your sign-in expired: `pool login` |
+| `port N and the next 19 are taken here` | Give another port here: `pool attach JOB -p 9000:N` |
+| The page at `localhost` does not load | The app may still be starting: see its log (`pool logs JOB`). Check that `-p` names the port the app listens on. Listening on `0.0.0.0` or `127.0.0.1` inside the container both work. |
 
 ### A task failed
 
@@ -1005,9 +1053,8 @@ ran it.
 - Private images work with registries that use token authentication (ghcr.io, Docker Hub and similar), not with registries that only accept a password on every request.
 - Checkpoints (resuming a long task where it stopped) are planned.
 - Combining results runs on your side (the results table, the merged CSV files, or your own script). A final step that runs on the group's computers after all tasks is not built.
-- Apps that listen on a port (web apps, APIs, databases, notebooks) do not work yet, and there is no interactive terminal. Programs that compute and write files work now. Apps are planned ([design](design/pool-run.md)).
-- pool chooses sizes from your earlier runs, reads the image (its platforms, CUDA, ports) and places tasks where they fit best, but it does not yet merge test reports or copy slow tasks. See [`design/pool-decides.md`](design/pool-decides.md).
-- There are no credits yet: sharing a computer does not give you more use. A design is proposed: [`design/credits.md`](design/credits.md).
+- Apps work one container at a time, only for the person who started them, and with no network. Stacks of several containers (Compose), sharing an app with the group, and an interactive terminal (`-it`) are planned ([design](design/pool-run.md)).
+- pool does not copy slow tasks to another computer yet, and does not stop a quiet task before its time limit. See [`design/pool-decides.md`](design/pool-decides.md).
 - `parts` splits work only for programs that can do part of it (by `POOL_TASK_INDEX`); one program cannot be spread over several computers, since tasks cannot talk to each other.
 - GPUs and stronger isolation (gVisor) are built but not tested on real hardware.
 - Windows computers are untested; Macs cannot share.

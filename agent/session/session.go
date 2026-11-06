@@ -13,9 +13,11 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -93,6 +95,7 @@ type Agent struct {
 	leaseTTL     time.Duration
 	uploadWait   map[string]chan protocol.UploadURLs
 	pullWait     map[string]chan protocol.PullAuth
+	tunnels      int // app connections open now (at most maxTunnels)
 	// Images this computer pulled with a group's token ("token") or found to
 	// be public ("public"); private-images.json in the profile directory, so it
 	// survives restarts.
@@ -250,6 +253,10 @@ func (a *Agent) detect(ctx context.Context) error {
 	if !info.Rootless {
 		a.log.Warn("container engine is not rootless; plan §8.3 requires a rootless engine for T1")
 	}
+	if !info.Apps {
+		a.log.Info("apps (jobs with ports) cannot run here: this pool-agent is not a static Linux binary, so it " +
+			"cannot reach into an app's container; build it with CGO_ENABLED=0 to allow them")
+	}
 	si := a.cfg.DeviceInfo()
 	gpuTiers := info.GPUTiers
 	if len(gpuTiers) == 0 && len(si.GPUs) > 0 {
@@ -261,7 +268,7 @@ func (a *Agent) detect(ctx context.Context) error {
 	a.os, a.arch = si.OS, si.Arch
 	a.dev = policy.Device{
 		CPUCores: si.CPUCores, MemoryMB: si.MemoryMB, FreeDiskMB: si.FreeDiskMB, GPUs: si.GPUs,
-		Tiers: info.Tiers, GPUTiers: gpuTiers,
+		Tiers: info.Tiers, GPUTiers: gpuTiers, Apps: info.Apps,
 	}
 	a.mu.Unlock()
 	return nil
@@ -751,6 +758,8 @@ func (a *Agent) handle(ctx context.Context, msg any) error {
 		for _, id := range ids {
 			a.dropAttempt(id, "group revoked: "+m.Reason)
 		}
+	case *protocol.TunnelOpen:
+		go a.openTunnel(ctx, m)
 	case *protocol.Error:
 		a.log.Warn("server error", "code", m.Code, "message", m.Message)
 	case *protocol.Challenge, *protocol.Welcome:
@@ -963,6 +972,13 @@ func (a *Agent) checkOwner(ctx context.Context) {
 			actions = append(actions, action{at, "kill"})
 			continue
 		}
+		if at.env != nil && len(at.env.Spec.Ports) > 0 && (!share.Apps.Allow || !a.dev.Apps ||
+			float64(at.env.Spec.MaxRuntimeS) > share.Apps.MaxHours*3600) {
+			// The owner turned apps off, or now allows them for less time than this one may run.
+			at.stopReason = protocol.AbortPolicy
+			actions = append(actions, action{at, "kill"})
+			continue
+		}
 		active, _ := share.Active(now, st)
 		switch {
 		case !active && at.ownerAction == "":
@@ -1095,4 +1111,114 @@ func (a *Agent) isPrivate(image string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.privateImages[image] == "token"
+}
+
+// openTunnel connects one connection to an app's port (pool-run step 2): the server's tunnel endpoint on one
+// side, `docker exec ... pool-agent pipe 127.0.0.1:PORT` in the app's container on the other. Only ports the
+// signed task lists, and only for an attempt that is running here.
+func (a *Agent) openTunnel(ctx context.Context, m *protocol.TunnelOpen) {
+	a.mu.Lock()
+	at := a.attempts[m.AttemptID]
+	ok := at != nil && at.state == "running" && at.stopReason == "" && at.env != nil &&
+		slices.Contains(at.env.Spec.Ports, m.Port)
+	if ok { // the owner may have turned apps off since it started (checkOwner stops it soon)
+		share := a.pol.Find(at.group)
+		ok = share != nil && share.Apps.Allow && a.dev.Apps
+	}
+	full := a.tunnels >= maxTunnels
+	if ok && !full {
+		a.tunnels++
+	}
+	a.mu.Unlock()
+	if !ok {
+		a.log.Warn("tunnel refused: no such running app port here", "attempt", m.AttemptID, "port", m.Port)
+		return
+	}
+	if full {
+		a.log.Warn("tunnel refused: too many app connections open on this computer", "max", maxTunnels)
+		return
+	}
+	defer func() {
+		a.mu.Lock()
+		a.tunnels--
+		a.mu.Unlock()
+	}()
+	u, err := a.tunnelURL(m.TunnelID)
+	if err != nil {
+		a.log.Warn("tunnel", "err", err)
+		return
+	}
+	dialer := a.cfg.Dialer
+	if dialer == nil {
+		tlsCfg, err := a.cfg.Profile.TLSConfig()
+		if err != nil {
+			a.log.Warn("tunnel", "err", err)
+			return
+		}
+		dialer = &websocket.Dialer{HandshakeTimeout: 20 * time.Second, TLSClientConfig: tlsCfg, Proxy: http.ProxyFromEnvironment}
+	}
+	// The one-time secret goes in a header, not the URL: servers and proxies log URLs.
+	ws, _, err := dialer.DialContext(ctx, u, http.Header{tunnelSecretHeader: {m.Secret}})
+	if err != nil {
+		a.log.Warn("tunnel: cannot reach the server", "err", err)
+		return
+	}
+	defer ws.Close()
+	ws.SetReadLimit(maxFrameBytes)
+	pipe, err := a.cfg.Runtime.Tunnel(ctx, m.AttemptID, m.Port)
+	if err != nil {
+		a.log.Warn("tunnel: cannot reach the app", "err", err)
+		_ = ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(1011, "the app cannot be reached"))
+		return
+	}
+	defer pipe.Close()
+	go func() { // app -> server: the only writer on ws
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := pipe.Read(buf)
+			if n > 0 {
+				if werr := ws.WriteMessage(websocket.BinaryMessage, buf[:n]); werr != nil {
+					return
+				}
+			}
+			if err != nil {
+				_ = ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+				return
+			}
+		}
+	}()
+	for { // server -> app: the only reader on ws
+		typ, data, err := ws.ReadMessage()
+		if err != nil {
+			return
+		}
+		if typ == websocket.BinaryMessage {
+			if _, err := pipe.Write(data); err != nil {
+				return
+			}
+		}
+	}
+}
+
+const (
+	// tunnelSecretHeader carries a tunnel's one-time secret to the server.
+	tunnelSecretHeader = "X-Pool-Tunnel-Secret"
+	// maxTunnels is the most app connections open at once on this computer. Each one is a `docker exec`
+	// process here, outside the share's limits (security review of pool-run step 2).
+	maxTunnels = 32
+)
+
+// tunnelURL is the server's agent tunnel endpoint for one tunnel.
+func (a *Agent) tunnelURL(id string) (string, error) {
+	base, err := a.cfg.Profile.WSURL()
+	if err != nil {
+		return "", err
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		return "", err
+	}
+	u.Path = "/api/v1/agent/tunnels/" + url.PathEscape(id)
+	u.RawQuery = ""
+	return u.String(), nil
 }

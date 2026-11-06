@@ -301,6 +301,7 @@
             "resources_exceed_limits",
             "egress_not_allowed",
             "image_not_allowed",
+            "apps_not_allowed",
             "kill_switch",
             "busy",
             "other"
@@ -777,6 +778,18 @@
           "description": "Time window active and idle requirement met right now",
           "title": "Active Now",
           "type": "boolean"
+        },
+        "allow_apps": {
+          "default": false,
+          "title": "Allow Apps",
+          "type": "boolean"
+        },
+        "app_hours": {
+          "default": 0,
+          "maximum": 168,
+          "minimum": 0,
+          "title": "App Hours",
+          "type": "number"
         },
         "group": {
           "title": "Group",

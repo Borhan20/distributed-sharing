@@ -66,7 +66,7 @@ func TestShareAndUnshareCommands(t *testing.T) {
 	if err := cmdShare([]string{"ml-test-lab", "--memory", "6Gi"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(out.String(), `Shared this computer with "ml-test-lab": up to 50% CPU, 6Gi memory, 20Gi disk, no GPU, at any time.`) {
+	if !strings.HasPrefix(out.String(), `Shared this computer with "ml-test-lab": up to 50% CPU, 6Gi memory, 20Gi disk, no GPU, no apps, at any time.`) {
 		t.Errorf("unexpected output:\n%s", out.String())
 	}
 	st, err := os.Stat(path)

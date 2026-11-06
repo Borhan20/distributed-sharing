@@ -5,7 +5,7 @@ service (this file) that signs short-lived tokens with a test CA. The image is p
 is refused. A group with a read-only credential runs a job from it; the agent only ever sees a token for
 that one image. A group without credentials cannot use it.
 
-    cd agent && go build -o bin/pool-agent ./cmd/pool-agent
+    cd agent && CGO_ENABLED=0 go build -o bin/pool-agent ./cmd/pool-agent
     uv run pytest -m e2e -s tests/e2e/test_private_images.py
 """
 

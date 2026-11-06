@@ -596,12 +596,19 @@ def run(ctx: typer.Context) -> None:
 @app.command()
 def attach(job_id: str,
            out: Path = typer.Option(Path("pool-out"), "--out", "-o", help="Where the job's /out files go"),
-           yes: bool = typer.Option(False, "--yes", "-y", help="Ctrl-C stops the job without asking")) -> None:
+           yes: bool = typer.Option(False, "--yes", "-y", help="Ctrl-C stops the job without asking"),
+           publish: list[str] = typer.Option([], "--publish", "-p", help="Open the app's port here as HERE:APP, "
+                                             "e.g. -p 8080:80 (default: the same number; 8000+N below 1024)")) -> None:
     """Follow a job: its output (or progress), then save its /out files. Works for any job, also one
-    submitted in the browser."""
+    submitted in the browser. An app's ports open on this computer while you follow it."""
     from . import run as run_cmd
+    from . import tunnel
 
-    raise typer.Exit(run_cmd.attach(job_id, out, yes=yes))
+    try:
+        ports = tunnel.parse_ports(publish)
+    except ValueError as exc:
+        raise ApiError(str(exc)) from None
+    raise typer.Exit(run_cmd.attach(job_id, out, yes=yes, ports=ports))
 
 
 def main() -> None:

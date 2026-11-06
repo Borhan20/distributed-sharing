@@ -15,7 +15,7 @@ from __future__ import annotations
 import itertools
 import re
 import shlex
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -211,6 +211,9 @@ class Spec(_Strict):
     checkpoint: CheckpointReq | None = None
     retries: int = Field(ge=0, le=20, default=3)
     max_runtime: str | int | None = None  # None: not given, so pool decides
+    # An app (pool-run step 2): the ports it listens on. None: not given (pool uses the image's EXPOSE lines);
+    # []: no ports, a program even if the image exposes some.
+    ports: list[Annotated[int, Field(ge=1, le=65535)]] | None = Field(default=None, max_length=10)
     data_class: Literal["public", "internal", "confidential"] = "internal"
     secrets: list[str] = Field(default_factory=list)
     os: Literal["linux", "windows"] | None = None
@@ -274,6 +277,10 @@ class Spec(_Strict):
             raise ValueError("shape 'array' needs a non-empty matrix, or parts")
         if self.shape == "single" and (self.matrix or self.parts):
             raise ValueError("shape 'single' runs one task: remove the matrix or parts, or use shape: array")
+        if self.ports and (self.matrix or self.parts):
+            raise ValueError("an app (ports) runs once: remove parts or the sweep, or the ports")
+        if self.ports and len(set(self.ports)) != len(self.ports):
+            raise ValueError("ports: each port once")
         if self.secrets:
             raise ValueError("secrets are not available yet (plan phase 3)")
         if self.data.inputs:
@@ -314,6 +321,9 @@ class JobSpec(_Strict):
     spec: Spec
 
     # ---- derived values ---------------------------------------------------
+
+    def is_app(self) -> bool:
+        return bool(self.spec.ports)
 
     def task_params(self) -> list[dict[str, Any]]:
         """One dict of values per task, in a stable order: the matrix's Cartesian product, `parts` empty
@@ -365,6 +375,7 @@ class JobSpec(_Strict):
             network=TaskNetwork(egress=s.network.egress, allow=s.network.allow),
             data_class=s.data_class,
             max_runtime_s=parse_duration_s(s.max_runtime if s.max_runtime is not None else DEFAULT_MAX_RUNTIME),
+            ports=list(s.ports or []),
             outputs_path=s.data.outputs.path,
             checkpoint=(
                 TaskCheckpoint(path=s.checkpoint.path, every_s=parse_duration_s(s.checkpoint.every))
@@ -389,6 +400,8 @@ def result_folder(index: int, count: int, params: dict[str, Any]) -> str:
 
 SHORT_KEYS = {
     "name": "a short name (default: from the image)",
+    "port": "an app's port, e.g. 8000 (or ports: [3000, 8000]); default: the image's EXPOSE lines",
+    "ports": "an app's ports, e.g. [3000, 8000]; [] for a program even if the image exposes ports",
     "group": "the group to submit to",
     "image": "container image, e.g. ghcr.io/lab/app:1",
     "command": "what to run (default: the image's own command)",
@@ -431,11 +444,13 @@ def expand_short_form(data: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(image, str):
         raise JobSpecError("image is required, e.g. image: ghcr.io/lab/app:1")
     spec: dict[str, Any] = {"image": image}
-    for key in ("command", "args", "workdir", "env", "parts", "retries", "data_class", "os"):
+    for key in ("command", "args", "workdir", "env", "parts", "retries", "data_class", "os", "ports"):
         if key in data:
             spec[key] = data[key]
     if "sweep" in data:
         spec["matrix"] = data["sweep"]
+    if "port" in data:  # short form: `port: 8000`
+        spec["ports"] = [data["port"]] if isinstance(data["port"], int) else data["port"]
     if "time_limit" in data:
         spec["max_runtime"] = data["time_limit"]
     if "isolation" in data:

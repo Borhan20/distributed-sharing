@@ -1,0 +1,8 @@
+{
+  "attempt_id": "6f9e2c71-0d3b-4c8e-a1f5-3b2e9d7c6a10",
+  "msg_id": "m-30",
+  "port": 8000,
+  "secret": "sssssssssssssssssssssssssssssssssssssssssss",
+  "tunnel_id": "t-6f1c2d",
+  "type": "tunnel_open"
+}

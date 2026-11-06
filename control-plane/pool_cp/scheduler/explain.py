@@ -88,6 +88,9 @@ def _blocker(job: Job, d: Device, share: dict[str, Any], submitter: str, on_prob
     accept = share.get("accept_from", "all-members")
     if accept != "all-members" and submitter not in (accept or []):
         return "submitter"
+    if job.ports and (not share.get("allow_apps")
+                      or (job.max_runtime_s or 3600) > float(share.get("app_hours") or 0) * 3600):
+        return "apps"
     if on_probation and not share.get("accept_new_members"):
         return "probation"
     cpu, mem, disk = _offer(d, share)
@@ -111,6 +114,7 @@ _BLOCKER_TEXT = {
     "submitter": "The computers only accept jobs from certain members.",
     "probation": "The computers do not accept jobs from new members yet.",
     "gpu": "It needs a GPU that the shared computers do not offer.",
+    "apps": "It is an app (it listens on a port), and the owners do not allow apps, or not for this long.",
     "resources": "It asks for more CPU, memory or disk than they offer.",
 }
 
@@ -304,6 +308,12 @@ async def explain_waiting(s: AsyncSession, settings: Settings, job: Job) -> tupl
                 f"e.g. `pool-agent share {group.name} --cpu-percent 75 --memory 8Gi`.")
         return pending, [Reason("too_big", message, hint)]
 
+    if set(blockers) == {"apps"}:
+        hours = f" for {round(job.max_runtime_s / 3600, 1):g} h" if job.max_runtime_s else ""
+        return pending, [Reason("apps", f"It is an app (it listens on a port), and no shared computer allows apps"
+                                        f"{hours}.",
+                                f"An owner allows apps with `pool-agent share {group.name} --allow-apps` (apps get no "
+                                "network on their computer). Or run it as a program with `ports: []`.")]
     if set(blockers) == {"platform"}:
         kinds = ", ".join(job.architectures or [])
         return pending, [Reason("platform", f"Its image is built for {kinds}, and no shared computer is.",

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -43,6 +44,8 @@ type fakeRuntime struct {
 	stopped map[string]bool
 	exit    int
 	auth    *sandbox.RegistryAuth // last private-image token seen by Run
+	apps    bool                  // Detect reports that apps can run here
+	tunnel  func(attemptID string, port int) (io.ReadWriteCloser, error)
 }
 
 func newFakeRuntime(t *testing.T) *fakeRuntime {
@@ -52,7 +55,7 @@ func newFakeRuntime(t *testing.T) *fakeRuntime {
 
 func (f *fakeRuntime) Name() string { return "fake" }
 func (f *fakeRuntime) Detect(context.Context) (sandbox.Info, error) {
-	return sandbox.Info{Tiers: []protocol.Tier{protocol.T1, protocol.T2}, Rootless: true}, nil
+	return sandbox.Info{Tiers: []protocol.Tier{protocol.T1, protocol.T2}, Rootless: true, Apps: f.apps}, nil
 }
 
 func (f *fakeRuntime) ch(m map[string]chan struct{}, id string) chan struct{} {
@@ -105,7 +108,13 @@ func (f *fakeRuntime) Kill(context.Context, string) error              { return 
 func (f *fakeRuntime) Pause(context.Context, string) error             { return nil }
 func (f *fakeRuntime) Unpause(context.Context, string) error           { return nil }
 func (f *fakeRuntime) Throttle(context.Context, string, float64) error { return nil }
-func (f *fakeRuntime) KillAll(context.Context, string) (int, error)    { return 0, nil }
+func (f *fakeRuntime) Tunnel(_ context.Context, attemptID string, port int) (io.ReadWriteCloser, error) {
+	if f.tunnel == nil {
+		return nil, errors.New("no apps in the fake runtime")
+	}
+	return f.tunnel(attemptID, port)
+}
+func (f *fakeRuntime) KillAll(context.Context, string) (int, error) { return 0, nil }
 func (f *fakeRuntime) Cleanup(id string) error {
 	f.mu.Lock()
 	f.cleaned[id] = true
@@ -130,6 +139,12 @@ type fakeServer struct {
 	conns   chan *serverConn
 	uploads map[string][]byte
 	mu      sync.Mutex
+	tunnels chan tunnelHit // the agent's side of app tunnels
+}
+
+type tunnelHit struct {
+	id, secret, query string
+	c                 *websocket.Conn
 }
 
 type serverConn struct {
@@ -142,7 +157,8 @@ type serverConn struct {
 
 func newFakeServer(t *testing.T, devPub ed25519.PublicKey) *fakeServer {
 	_, signKey, _ := ed25519.GenerateKey(rand.Reader)
-	fs := &fakeServer{t: t, signKey: signKey, devPub: devPub, conns: make(chan *serverConn, 4), uploads: map[string][]byte{}}
+	fs := &fakeServer{t: t, signKey: signKey, devPub: devPub, conns: make(chan *serverConn, 4), uploads: map[string][]byte{},
+		tunnels: make(chan tunnelHit, 4)}
 	up := websocket.Upgrader{}
 	mux := http.NewServeMux()
 	mux.HandleFunc(protocol.DefaultWSPath, func(w http.ResponseWriter, r *http.Request) {
@@ -198,6 +214,14 @@ func newFakeServer(t *testing.T, devPub ed25519.PublicKey) *fakeServer {
 			}
 		}()
 		fs.conns <- sc
+	})
+	mux.HandleFunc("/api/v1/agent/tunnels/", func(w http.ResponseWriter, r *http.Request) {
+		c, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		fs.tunnels <- tunnelHit{id: strings.TrimPrefix(r.URL.Path, "/api/v1/agent/tunnels/"),
+			secret: r.Header.Get("X-Pool-Tunnel-Secret"), query: r.URL.RawQuery, c: c}
 	})
 	mux.HandleFunc("/upload/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut {
@@ -704,5 +728,86 @@ func TestOtherGroupsMustProveAccessToACachedPrivateImage(t *testing.T) {
 	c.expect("commit", 5*time.Second)
 	if readPrivateImages(h.prof.Dir)[image] != "public" {
 		t.Fatal("public image not remembered")
+	}
+}
+
+const appPolicy = `
+shares:
+  - group: research-team
+    limits: { cpu_percent: 100, memory: 8Gi, disk: 10Gi }
+    accept_from: all-members
+    apps: { allow: true, max_hours: 8 }
+idle: assume-idle
+`
+
+// An app: the agent opens a tunnel only for its running attempt and port, sends the one-time secret in a
+// header (not the URL, which servers log), and stops the app when the owner turns apps off.
+func TestAppTunnelAndOwnerTurningAppsOff(t *testing.T) {
+	rt := newFakeRuntime(t)
+	rt.block, rt.apps = true, true
+	appSide := make(chan net.Conn, 1)
+	rt.tunnel = func(_ string, port int) (io.ReadWriteCloser, error) {
+		if port != 8000 {
+			t.Errorf("tunnel to port %d", port)
+		}
+		agentEnd, app := net.Pipe()
+		appSide <- app
+		return agentEnd, nil
+	}
+	h := startWith(t, rt)
+	h.rt = rt
+	writePolicy := func(text string) {
+		_ = os.WriteFile(h.agent.cfg.PolicyPath, []byte(text), 0o600)
+		future := time.Now().Add(time.Duration(len(text)) * time.Millisecond)
+		_ = os.Chtimes(h.agent.cfg.PolicyPath, future, future)
+	}
+	writePolicy(appPolicy)
+	waitFor(t, func() bool {
+		h.agent.mu.Lock()
+		defer h.agent.mu.Unlock()
+		return h.agent.pol.Find("research-team").Apps.Allow
+	}, "policy reload")
+	c := h.conn()
+	o := h.fs.offer(h.prof.DeviceID, func(e *protocol.TaskEnvelope) { e.Spec.Ports = []int{8000} }, nil)
+	c.send(protocol.TypeOffer, o)
+	c.expect("accept", 5*time.Second)
+	c.expect("started", 5*time.Second)
+
+	// A port the app does not have, or another attempt: nothing is opened.
+	c.send(protocol.TypeTunnelOpen, &protocol.TunnelOpen{TunnelID: "t0", AttemptID: o.AttemptID, Port: 22,
+		Secret: strings.Repeat("s", 40)})
+	c.send(protocol.TypeTunnelOpen, &protocol.TunnelOpen{TunnelID: "t1", AttemptID: protocol.NewID(), Port: 8000,
+		Secret: strings.Repeat("s", 40)})
+	// The app's port: the agent connects with the secret in a header and pipes bytes both ways.
+	secret := strings.Repeat("k", 43)
+	c.send(protocol.TypeTunnelOpen, &protocol.TunnelOpen{TunnelID: "t2", AttemptID: o.AttemptID, Port: 8000,
+		Secret: secret})
+	var hit tunnelHit
+	select {
+	case hit = <-h.fs.tunnels:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the agent did not open the tunnel")
+	}
+	if hit.id != "t2" || hit.secret != secret || hit.query != "" {
+		t.Fatalf("tunnel %q, secret %q, query %q: the secret goes in a header only", hit.id, hit.secret, hit.query)
+	}
+	app := <-appSide
+	go func() {
+		buf := make([]byte, 4)
+		if _, err := io.ReadFull(app, buf); err == nil {
+			_, _ = app.Write([]byte("pong"))
+		}
+	}()
+	_ = hit.c.WriteMessage(websocket.BinaryMessage, []byte("ping"))
+	_ = hit.c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, got, err := hit.c.ReadMessage(); err != nil || string(got) != "pong" {
+		t.Fatalf("through the tunnel: %q %v", got, err)
+	}
+	_ = hit.c.Close()
+
+	// The owner turns apps off: the running app stops.
+	writePolicy(strings.Replace(appPolicy, "allow: true", "allow: false", 1))
+	if ab := c.expect("abort", 15*time.Second); ab["reason"] != protocol.AbortPolicy {
+		t.Fatalf("abort: %v", ab)
 	}
 }

@@ -36,6 +36,7 @@ DeclineReason = Literal[
     "resources_exceed_limits",
     "egress_not_allowed",
     "image_not_allowed",
+    "apps_not_allowed",
     "kill_switch",
     "busy",
     "other",
@@ -106,6 +107,9 @@ class ShareInfo(_Model):
     accept_from: Literal["all-members"] | list[str] = "all-members"
     accept_new_members: bool = False
     active_now: bool = Field(description="Time window active and idle requirement met right now")
+    # Apps (tasks with ports, pool-run step 2): the owner must allow them, for at most app_hours each.
+    allow_apps: bool = False
+    app_hours: float = Field(default=0, ge=0, le=168)
 
 
 class RunningAttempt(_Model):
@@ -186,6 +190,8 @@ class TaskSpec(_Model):
     outputs_path: str = "/out"
     checkpoint: TaskCheckpoint | None = None
     inputs: list[TaskInput] = Field(default_factory=list)
+    # An app: ports it listens on, reached only through the server's tunnel (the container has no network).
+    ports: list[Annotated[int, Field(ge=1, le=65535)]] = Field(default_factory=list, max_length=10)
 
 
 class TaskEnvelope(_Model):
@@ -445,6 +451,18 @@ class Preempt(_Msg):
     reason: str = ""
 
 
+class TunnelOpen(_Msg):
+    """Open a tunnel to an app's port (pool-run step 2): the agent connects to the server's agent tunnel
+    endpoint for `tunnel_id` with `secret` (it reaches the agent only over its signed-in session), and pipes the
+    bytes to `port` inside the attempt's container."""
+
+    type: Literal["tunnel_open"] = "tunnel_open"
+    tunnel_id: str = Field(max_length=64)
+    attempt_id: str
+    port: int = Field(ge=1, le=65535)
+    secret: str = Field(min_length=32, max_length=128)
+
+
 class Revoke(_Msg):
     type: Literal["revoke"] = "revoke"
     group: str
@@ -510,6 +528,7 @@ ServerMessage = Annotated[
     | Cancel
     | Preempt
     | Revoke
+    | TunnelOpen
     | Error,
     Field(discriminator="type"),
 ]
@@ -544,6 +563,7 @@ ALL_MESSAGE_TYPES: dict[str, type[_Msg]] = {
         Cancel,
         Preempt,
         Revoke,
+        TunnelOpen,
         Error,
     )
 }

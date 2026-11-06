@@ -19,7 +19,7 @@ check them against `protocol/fixtures/` and `protocol/schema/`.
 
 ```sh
 cd agent
-go build -o bin/pool-agent ./cmd/pool-agent      # Linux
+CGO_ENABLED=0 go build -o bin/pool-agent ./cmd/pool-agent      # Linux (static: needed for apps)
 GOOS=windows go build -o bin/pool-agent.exe ./cmd/pool-agent   # compiles; UNTESTED on Windows
 ```
 
@@ -35,6 +35,7 @@ pool-agent enroll --server https://pool.example.org --code ABCDE-FGHJK --name la
 # 2. Share with a group. A new device shares NOTHING until the owner adds a share.
 pool-agent share ml-test-lab                  # half the CPU and RAM, 20Gi disk, no GPU, at any time
 pool-agent share ml-test-lab --cpu-percent 25 --gpu --only-when-idle 10m   # change only these settings
+pool-agent share ml-test-lab --allow-apps --app-hours 8   # also run apps (jobs with ports); off by default
 pool-agent unshare ml-test-lab                # stop; that group's running jobs stop within seconds
 #    Or edit the local policy by hand (all options: "Local policy reference" below):
 $EDITOR ~/.config/pool-agent/profiles/default/policy.yaml
@@ -80,6 +81,7 @@ shares:
     accept_from: all-members          # or a list of user handles: [alice, bob]
     accept_new_members: false         # accept jobs from members on probation
     on_owner_return: checkpoint-and-stop   # or: pause | throttle
+    apps: { allow: false, max_hours: 8 }   # apps (jobs with ports): off by default; max_hours 0-168 (8 if 0)
 priority: [research-team]             # order used when several groups want the machine
 isolation:
   allow_tiers: [T1, T2, T3]           # T0 (bare metal) is off by default
@@ -137,6 +139,9 @@ Rules:
    GPU jobs can only use GPU tiers.
 10. CPU, memory, disk and GPU fit within the share limits and the device's
     free capacity (shared across profiles).
+11. An app (a task with ports) only if this agent can run apps (a static
+    binary), the share allows apps, and its time limit is at most the share's
+    `apps.max_hours`.
 
 Decline reasons are the ones listed in the design doc §3.3.
 
@@ -148,6 +153,7 @@ Decline reasons are the ones listed in the design doc §3.3.
 | T2 | T1 plus `--runtime runsc`, offered only when `docker info` lists a `runsc` runtime |
 | GPU | `--device nvidia.com/gpu=all` (CDI). GPU tier is T1 only. **UNTESTED**: no GPU here |
 | T0, T3 | Not implemented |
+| Apps | The same rules, also `--network none`. The agent's own binary is mounted read-only at `/.pool/pool-agent`. For each connection the server announces (`tunnel_open`), the agent checks that the attempt runs here and has that port, connects to the server's tunnel with the one-time secret, and runs `docker exec -i pool-ATTEMPT /.pool/pool-agent pipe 127.0.0.1:PORT`. `pipe` connects only to `127.0.0.1` |
 
 **How a container is set up:**
 

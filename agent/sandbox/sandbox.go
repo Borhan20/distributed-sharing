@@ -51,6 +51,11 @@ type Spec struct {
 	PidsLimit   int
 	MaxRuntime  time.Duration
 	OutputsPath string // inside the container, default /out
+	// Ports an app listens on (pool-run step 2). The container still has no network: the agent reaches a
+	// port with `docker exec ... /.pool/pool-agent pipe 127.0.0.1:PORT` (Runtime.Tunnel).
+	Ports []int
+	// Helper is the static pool-agent binary mounted read-only at HelperPath in an app's container.
+	Helper string
 	// RegistryAuth, when set, is a short-lived token to pull a private image.
 	RegistryAuth *RegistryAuth
 }
@@ -104,7 +109,12 @@ type Runtime interface {
 	KillAll(ctx context.Context, profile string) (int, error)
 	// Cleanup removes the attempt's local files.
 	Cleanup(attemptID string) error
+	// Tunnel connects to an app's port inside its running container (pool-run step 2).
+	Tunnel(ctx context.Context, attemptID string, port int) (io.ReadWriteCloser, error)
 }
+
+// HelperPath is where an app's container sees the pool-agent binary (for `pool-agent pipe`).
+const HelperPath = "/.pool/pool-agent"
 
 // Info describes what the runtime can do on this device.
 type Info struct {
@@ -113,6 +123,7 @@ type Info struct {
 	Rootless      bool
 	Runsc         bool
 	ServerVersion string
+	Apps          bool // can run apps: it has a static helper to reach their ports
 }
 
 // ContainerName returns the container name for an attempt.
@@ -187,6 +198,12 @@ func CreateArgs(s Spec, outMount string) ([]string, error) {
 	}
 	if s.Tier == protocol.T2 {
 		args = append(args, "--runtime", "runsc")
+	}
+	if len(s.Ports) > 0 {
+		if s.Helper == "" || strings.ContainsAny(s.Helper, ",=") {
+			return nil, errors.New("apps need a static pool-agent binary to reach their ports (build it with CGO_ENABLED=0)")
+		}
+		args = append(args, "--mount", "type=bind,src="+s.Helper+",dst="+HelperPath+",readonly")
 	}
 	if s.GPUs > 0 {
 		// CDI device name from the NVIDIA Container Toolkit. UNTESTED here (no GPU).

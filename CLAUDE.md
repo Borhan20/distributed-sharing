@@ -45,7 +45,7 @@ docker run -d --name pool-test-pg -p 127.0.0.1:55432:5432 \
 | Python tests | `uv run pytest -q protocol cli control-plane` |
 | Protocol schema up to date | `uv run python -m pool_protocol.export --check` (regenerate without `--check`) |
 | Go | `cd agent && go vet ./... && go test ./...` |
-| Agent binary for e2e | `cd agent && go build -o bin/pool-agent ./cmd/pool-agent` |
+| Agent binary | `cd agent && CGO_ENABLED=0 go build -o bin/pool-agent ./cmd/pool-agent` (static: apps need it; e2e uses it) |
 | End to end | `uv run pytest -q -m e2e tests/e2e` (needs Docker and the agent binary) |
 | Web | `cd web && npm run typecheck && npx vitest run` (`npm test` watches and never exits) |
 | Web API types | export `openapi.json` from `create_app().openapi()`, then `npm run gen:api` (see `web/README.md`) |

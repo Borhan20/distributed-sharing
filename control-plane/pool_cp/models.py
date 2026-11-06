@@ -315,6 +315,8 @@ class Job(Base):
     # What pool read from the image (registry.ImageInfo), and the CPU types it runs on (None: not known, any).
     image_info: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     architectures: Mapped[list[str] | None] = mapped_column(ARRAY(String(32)))
+    # An app's ports (pool-run step 2): reached only through the server's tunnel. None or empty: a program.
+    ports: Mapped[list[int] | None] = mapped_column(ARRAY(Integer))
     __table_args__ = (Index("ix_jobs_active", "group_id", "created_at",
                             postgresql_where="state IN ('pending','running')"),)
 
